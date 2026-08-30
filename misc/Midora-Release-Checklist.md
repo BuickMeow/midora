@@ -12,6 +12,7 @@
 ## 2. Project Format 兼容
 
 - [ ] `PersistenceContractV1.FileFormatVersion == 1`，且没有原地改变 Format 1 schema/field semantics。
+- [ ] 当前 writer 使用 `PersistenceContractV2.FileFormatVersion == 2`，Manifest 与 Event Instrument schema 均为 v2。
 - [ ] JSON schema set SHA-256、protobuf descriptor hash 与代表性 golden wire bytes 全部通过。
 - [ ] 1.0.0-dev 期间保存的真实完整作品能够由候选版本打开、编译、编辑、保存副本并再次打开。
 - [ ] 保存副本后源文件未被修改；普通保存仍保持备份、校验和原子发布。

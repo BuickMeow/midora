@@ -256,6 +256,14 @@ public static class SemanticValidator
         {
             AddError("MIDORA1210", "The Event Instrument Root Note or Template Length is invalid.", source, diagnostics);
         }
+        if (instrument.PreRollTicks < 0 || instrument.PreRollTicks > instrument.TemplateLengthTicks)
+        {
+            AddError(
+                "MIDORA1217",
+                "Event Instrument Pre-Roll Ticks must be between zero and Template Length Ticks.",
+                source,
+                diagnostics);
+        }
         if (instrument.SubVoices.Count is < 1 or > 256)
         {
             AddError("MIDORA1211", "An Event Instrument must contain 1–256 SubVoices.", source, diagnostics);
@@ -999,6 +1007,20 @@ public static class SemanticValidator
                         || note.StartTick > long.MaxValue - Math.Max(note.LengthTicks, 0))
                     {
                         AddError("MIDORA1320", "The Logical Note position, length, note, or velocity is invalid, or its time range exceeds Int64.", noteSource, diagnostics);
+                    }
+                    if (boundInstrument is not null
+                        && boundInstrument.PreRollTicks is >= 0
+                        && boundInstrument.PreRollTicks <= boundInstrument.TemplateLengthTicks
+                        && contentRangeRepresentable
+                        && note.StartTick >= segment.ContentOffsetTick
+                        && note.StartTick < segment.ContentOffsetTick + segment.LengthTicks
+                        && note.StartTick - segment.ContentOffsetTick < boundInstrument.PreRollTicks)
+                    {
+                        AddError(
+                            "MIDORA1321",
+                            "The Logical Note does not leave enough active Segment content before its anchor for the Event Instrument Pre-Roll.",
+                            noteSource,
+                            diagnostics);
                     }
                 }
             }

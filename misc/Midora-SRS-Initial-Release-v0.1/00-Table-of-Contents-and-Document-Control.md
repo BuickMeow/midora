@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-29**
+> 最近修订日期：**2026-08-30**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,12 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-08-30 修订摘要
+
+- Event Instrument Definition 新增 `Pre-Roll Ticks`，默认 0、合法范围 `0..Template Length`。仅 Logical Segment 正式实例把 template/instance origin 从 Logical Note anchor `A` 提前到 `A-O`；Logical Gate Start/End、Mapping `gateLength` 和短/长音分类保持原语义。Initial State、模板事件实际 tick、Logical Parameter 状态、Overlap、Usage 生命周期与 Unit 占用使用提前后的 origin；origin 不得越过所属 Segment 有效起点，违反时编译 Error，禁止 Clamp、丢弃前缀、自动扩展或跨 Segment。
+- Event Instrument/SubVoice standalone Preview 与 Segment Pitch Ruler audition 不应用 Pre-Roll。中途播放、跳转、循环及局部 Preview 继续使用统一冷启动：不补发范围前 NoteOn，也不执行隐藏音频预滚；播放、MIDI 导出与音频渲染只消费已经统一应用 Pre-Roll 的 canonical 结果。
+- 由于 Format 1 已冻结且无法表示 Pre-Roll，当前 writer 提升为 Project Format 2；Event Instrument protobuf v2 wrapper 固定必填 `pre_roll_ticks` field 4。Format 1 reader/schema/descriptor/golden 保持不变；打开 V1 时 detached 迁移并为每个 Definition 显式设置 0，完整验证后一次提交，保存只写 Format 2。
 
 ## 2026-08-29 修订摘要
 

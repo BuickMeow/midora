@@ -359,6 +359,8 @@ loopEnd > loopStart
 播放系统不补发该 Note On。
 ```
 这是中途冷启动的明确限制。
+
+对于 Pre-Roll 实例，如果播放/跳转/循环起点位于 Instance Origin 之后，系统同样不补发 origin 之前的模板 Note On，也不在输出起点前隐藏渲染并丢弃 PCM 来恢复 sample 相位。即使 Logical Gate anchor 尚未到达，该实例的范围前 Note On 仍属于已经错过的历史。非 Note 状态继续按 13.8.2 恢复。
 ### 13.8.2 必须恢复非 Note 状态
 从中途播放时，必须在播放起点恢复当前有效的非 Note 状态，包括：
 ```text
@@ -1329,6 +1331,8 @@ Event Instrument Library 直接预览某个 Event Instrument 时：
 Event Instrument 预览不参与项目时间线编译；
 但可以借用当前播放光标处 Tempo 作为默认试听速度。
 ```
+
+Event Instrument standalone Preview 不应用 Definition 的 `Pre-Roll Ticks`；预览任务把模板 tick 0 直接放在自身 preview origin，等效使用 `Pre-Roll Ticks = 0`。该规则避免一个不绑定 Logical Segment/Logical Note anchor 的试听入口虚构负时间或额外等待。SubVoice standalone Preview 同理。
 ---
 ## 13.22 Event Instrument 虚拟键盘预览
 ### 13.22.1 键盘显示
@@ -1500,6 +1504,8 @@ velocity = 当前 Event Instrument 预览 velocity
 实际 Gate Length = 在本次固定 previewTempo 下由按住时长换算的 tick 长度
 不创建或修改 Project Note
 ```
+
+Pitch Ruler audition 不创建 Logical Segment Instance，因此不应用 Event Instrument `Pre-Roll Ticks`，按等效值 0 从预览 Gate Start 展开模板。它仍使用当前绑定 Definition 的其他正式生命周期与 Mapping 语义。
 
 单音符放置手势不启动声音 Preview；只使用第 18、20 章规定的虚线视觉草稿。该视觉草稿不创建额外 Project 对象，不单独进入 Undo / Redo。Pitch Ruler 点击没有 Project 编辑副作用，只报告预览不可用。
 ---

@@ -632,6 +632,53 @@ internal static class ObjectPropertiesProjection
             return CreateConductorEdit(project, workspace.Selection.Primary, edits);
         }
 
+        if (workspace is InstrumentWorkspaceViewModel timingWorkspace
+            && timingWorkspace.ObjectId is MidoraId timingInstrumentId
+            && (edits.ContainsKey("instrument.templateLength")
+                || edits.ContainsKey("instrument.preRollTicks")
+                || edits.ContainsKey("instrument.loopStart")
+                || edits.ContainsKey("instrument.loopEnd")))
+        {
+            Func<MidoraProject, IProjectEditCommand> timingFactory = current =>
+            {
+                EventInstrument currentInstrument = current.EventInstruments.Single(
+                    item => item.Id == timingInstrumentId);
+                long templateLength = TryValue("instrument.templateLength", out string length)
+                    ? Long(length, "Template Length")
+                    : currentInstrument.TemplateLengthTicks;
+                long preRoll = TryValue("instrument.preRollTicks", out string offset)
+                    ? Long(offset, "Pre-Roll Ticks")
+                    : currentInstrument.PreRollTicks;
+                long? loopStart = TryValue("instrument.loopStart", out string loopStartText)
+                    ? NullableLong(loopStartText, "Loop Start")
+                    : currentInstrument.LoopStartTick;
+                long? loopEnd = TryValue("instrument.loopEnd", out string loopEndText)
+                    ? NullableLong(loopEndText, "Loop End")
+                    : currentInstrument.LoopEndTick;
+                bool isolation = TryValue("instrument.isolation", out string isolationText)
+                    ? Bool(isolationText, "Channel Isolation")
+                    : currentInstrument.RequiresChannelIsolation;
+                return ProjectDomainEditCommands.UpdateEventInstrumentTimingLoopAndIsolation(
+                    timingInstrumentId,
+                    templateLength,
+                    preRoll,
+                    loopStart,
+                    loopEnd,
+                    isolation);
+            };
+            IEnumerable<Func<MidoraProject, IProjectEditCommand>> remaining = edits
+                .Where(edit => edit.Key is not "instrument.templateLength"
+                    and not "instrument.preRollTicks"
+                    and not "instrument.loopStart"
+                    and not "instrument.loopEnd"
+                    and not "instrument.isolation")
+                .Select(edit => new Func<MidoraProject, IProjectEditCommand>(current =>
+                    CreateEditCommand(current, workspace, edit.Key, edit.Value)));
+            return new SequentialProjectEditCommand(
+                "Update Properties",
+                new[] { timingFactory }.Concat(remaining));
+        }
+
         return new SequentialProjectEditCommand(
             "Update Properties",
             edits.Select(edit => new Func<MidoraProject, IProjectEditCommand>(current =>
@@ -798,6 +845,7 @@ internal static class ObjectPropertiesProjection
                 "instrument.description" => ProjectDomainEditCommands.UpdateEventInstrumentDescription(instrumentId, value),
                 "instrument.root" => ProjectDomainEditCommands.UpdateEventInstrumentRootNote(instrumentId, Int(value, "Root Note")),
                 "instrument.templateLength" => ProjectDomainEditCommands.UpdateEventInstrumentTemplateLength(instrumentId, Long(value, "Template Length")),
+                "instrument.preRollTicks" => ProjectDomainEditCommands.UpdateEventInstrumentPreRoll(instrumentId, Long(value, "Pre-Roll Ticks")),
                 "instrument.isolation" => ProjectDomainEditCommands.UpdateEventInstrumentIsolation(instrumentId, Bool(value, "Channel Isolation")),
                 "instrument.overlapPolicy" or "instrument.overlapScope" =>
                     ProjectDomainEditCommands.UpdateEventInstrumentOverlap(
@@ -1856,6 +1904,10 @@ internal static class ObjectPropertiesProjection
              Field("instrument.description", "DESCRIPTION", instrument.Description ?? string.Empty),
              Field("instrument.root", "ROOT MIDI NOTE", instrument.RootNote),
              Field("instrument.templateLength", "TEMPLATE LENGTH TICKS", instrument.TemplateLengthTicks),
+             Field(
+                 "instrument.preRollTicks",
+                 $"PRE-ROLL TICKS (0–{instrument.TemplateLengthTicks.ToString(CultureInfo.InvariantCulture)})",
+                 instrument.PreRollTicks),
              Field("instrument.isolation", "REQUIRES CHANNEL ISOLATION", instrument.RequiresChannelIsolation),
              Field("instrument.overlapPolicy", "OVERLAP POLICY", instrument.OverlapPolicy),
              Field("instrument.overlapScope", "OVERLAP SCOPE", instrument.OverlapScope),

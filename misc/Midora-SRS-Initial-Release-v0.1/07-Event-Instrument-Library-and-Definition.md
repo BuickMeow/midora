@@ -510,6 +510,7 @@ Event Instrument 定义应至少承担以下职责：
 描述模板内部 MIDI 事件和高级事件的组织入口
 提供 Root Note 和音高映射基础
 提供 Template Length
+提供 Pre-Roll Ticks
 提供实例隔离策略
 提供生命周期策略入口
 提供重叠策略入口
@@ -531,6 +532,7 @@ Event Instrument 定义应至少承担以下职责：
 | 备注 / 描述 | 是 | 初版支持纯文本备注 / 描述。 |
 | Root Note | 是 | 用于默认 Note → Event 音高映射。 |
 | Template Length | 是 | 事件乐器模板自身长度。 |
+| Pre-Roll Ticks | 是 | Logical Note 可听锚点相对模板 tick 0 的非负提前量；只作用于 Logical Segment 触发实例。 |
 | SubVoice 集合 | 是，限系统级入口 | 具体 SubVoice 结构由 第 8 章《SubVoice 与 MIDI 事件编辑》 细化。 |
 | MIDI / 高级事件集合 | 否，入口属于本章，细节属 第 9 章《曲线、Logical Parameter 与映射》 | 本章只确认 Event Instrument 可以包含这些事件。 |
 | Mapping Function 集合 | 是，限归属与名称规则承接 | 具体签名和编辑方式由第 9 章《曲线、Logical Parameter 与映射》规定。 |
@@ -558,6 +560,7 @@ Definition 显示顺序
 ```text
 Root Note
 Template Length
+Pre-Roll Ticks
 SubVoice 集合
 事件内容入口
 Mapping Function 集合
@@ -591,6 +594,7 @@ Reset 策略
 拥有当前 Project 内唯一名称
 拥有 Root Note
 拥有 Template Length
+拥有 Pre-Roll Ticks，默认 0
 至少包含一条 SubVoice
 拥有 Per-Note Instance Isolation 设置
 拥有生命周期策略设置
@@ -657,6 +661,46 @@ Template Length 必须大于等于最后一个事件所在 tick。
 因为 第 4 章《时间、Conductor Track 与全局音乐事件》 已确认 TPQ 可在创建 Project 时设置，创建后禁止修改。
 所以默认 1 个四分音符应按当前 Project 的 TPQ 换算。
 ```
+
+### 7.27.1 Pre-Roll Ticks
+
+`Pre-Roll Ticks` 是 Event Instrument Definition 的持久时间锚点属性，用于让 Logical Segment 中的 Logical Note 表示模板中已提前播放若干 tick 后的逻辑 Gate 起点。
+
+定义：
+
+```text
+O = Pre-Roll Ticks
+0 <= O <= Template Length
+默认 O = 0
+```
+
+它不是延迟、播放光标补偿或消费者专用设置。对于 Logical Note 的 Project absolute anchor tick `A`：
+
+```text
+Event Instrument Instance / template origin = A - O
+template tick t 的 Project tick = A - O + t
+Logical Gate Start = A
+Logical Gate End = A + Logical Gate Length，随后服从 Segment End 等现有硬边界裁剪
+```
+
+因此 `O` 只把模板起点和实例占用起点提前，不改变 Logical Note 保存的 start、length、pitch 或 velocity，不把 `MappingContext.gateLength` 改为 `O + gateLength`，也不改变短音/长音按 Logical Gate Length 与 Template Length 比较的规则。
+
+适用范围固定为：
+
+```text
+Logical Segment 中由 Logical Note 生成的正式 Event Instrument Instance
+```
+
+以下入口不应用该偏移，按等效 `O = 0` 处理：
+
+```text
+Event Instrument standalone Preview
+SubVoice standalone Preview
+Segment Editor Pitch Ruler / pitch audition held Preview
+不创建 Logical Segment Instance 的其他试听入口
+```
+
+单独编辑 Template Length 时，如果新值小于保持不变的 `Pre-Roll Ticks`，编辑命令必须拒绝该修改并恢复原值；不得静默 Clamp、缩短 Pre-Roll 或改写模板事件。在 Properties Dialog 中同时编辑 Template Length、Pre-Roll Ticks、Loop 边界和 Per-Note Instance Isolation 时，必须只验证并原子提交完整的最终值组合，不得因旧字段值或固定命令顺序拒绝一个最终合法的组合。修改 Pre-Roll Ticks 必须进入 Undo / Redo、标记 Project 已修改，并影响所有引用该 Definition 的 Usage。
 ---
 ## 7.28 SubVoice 集合入口
 Event Instrument 必须包含一个或多个 SubVoice。
@@ -1132,6 +1176,7 @@ Event Instrument 定义编辑属于项目可撤销编辑行为。
 ```text
 修改 Root Note
 修改 Template Length
+修改 Pre-Roll Ticks
 新增、删除、编辑 SubVoice
 新增、删除、编辑事件内容
 新增、删除、编辑 Mapping Function
@@ -1193,6 +1238,7 @@ Per-Note Instance Isolation 关闭时，共享范围限于同一 Event Instrumen
 ```text
 Root Note
 Template Length
+Pre-Roll Ticks
 SubVoice 集合
 事件内容
 Mapping Function
@@ -1238,6 +1284,7 @@ Root Note 缺失或非法
 Template Length 缺失或非法
 Template Length 小于等于 0
 Template Length 小于最后事件所在 tick
+Pre-Roll Ticks 缺失或不在 0..Template Length 范围内
 Event Instrument 缺少必要 SubVoice
 Mapping Function 名称为空
 Mapping Function 名称在单个 Event Instrument 内冲突
@@ -1266,6 +1313,7 @@ Event Instrument 使用了可能显著增加 Channel Unit 占用的设置
 Event Instrument 是 MIDI 事件模板，不是 SF2 preset
 Root Note 只作为默认映射基准，不自动改写已有事件
 Template Length 是模板长度，不等同于 Gate Length
+Pre-Roll Ticks 只提前 Logical Segment 实例的模板原点，不改变 Logical Note 的 Gate Length
 最小合法 Event Instrument 默认不自带 Note，因此可能无声
 修改 Event Instrument 会影响所有引用处
 如需变体，应复制后修改

@@ -76,6 +76,41 @@ public sealed class ProjectOpenCoordinatorTests
     }
 
     [Fact]
+    public async Task FormatUpgradeCandidateRequiresSaveAsAndProtectsTheLegacySourcePath()
+    {
+        using MidoraProject project = new(192, CreatedAt);
+        MidoraProjectPackageV1 packages = new("2.0.0");
+        string legacyPath = Path.GetFullPath("Legacy-Format-1.midora");
+        MidoraProjectOpenResultV1 opened = new(
+            project,
+            new("1.0.0", "1.0.0"),
+            IsModified: true,
+            Diagnostics: [],
+            RequiresFormatUpgrade: true);
+        using ProjectOpenCandidate candidate = new(packages, opened, legacyPath);
+        using ProjectCompilationSession compilation = new(project);
+
+        ProjectDocumentSession document = candidate.CreateDocumentSession(compilation);
+        ProjectPersistenceCoordinator persistence = candidate.CreatePersistenceCoordinator(document);
+
+        Assert.Equal(ProjectDocumentOrigin.Unsaved, candidate.Origin);
+        Assert.Equal(legacyPath, candidate.SourceProjectPath);
+        Assert.Null(candidate.CurrentProjectPath);
+        Assert.False(document.HasPersistentOrigin);
+        Assert.True(document.NeedsSaveBeforeClose);
+        Assert.Equal([ProjectOpenCandidate.FormatUpgradeDirtyReason], document.ExternalDirtyReasons);
+        Assert.Null(persistence.CurrentProjectPath);
+        Assert.Equal(candidate.FileInformation, persistence.FileInformation);
+        Assert.Equal(legacyPath, persistence.ProtectedSourceProjectPath);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            persistence.SaveProjectAsync(legacyPath, overwriteAuthorized: true));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            persistence.SaveCopyAsync(legacyPath, overwriteAuthorized: true));
+        Assert.Null(persistence.CurrentProjectPath);
+        Assert.True(document.NeedsSaveBeforeClose);
+    }
+
+    [Fact]
     public async Task RecoveredMetadataMarksDocumentModifiedUntilSuccessfulSave()
     {
         using TemporaryDirectory temporary = new();

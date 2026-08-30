@@ -3108,11 +3108,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 compilation.SetEffectiveSoundFontConfigurations(
                     preferences.GetEnabledSoundFontConfigurations());
                 ProjectDocumentSession document = candidate.CreateDocumentSession(compilation);
-                ProjectPersistenceCoordinator persistence = new(
-                    document,
-                    new MidoraProjectPackageV1(MidoraSoftwareVersion.InformationalVersion),
-                    candidate.CurrentProjectPath,
-                    candidate.FileInformation);
+                ProjectPersistenceCoordinator persistence =
+                    candidate.CreatePersistenceCoordinator(document);
                 CreatePlaybackServices(
                     compilation,
                     preferences,

@@ -51,6 +51,7 @@ public static class EventInstrumentLibrary
             Color = source.Color,
             RootNote = source.RootNote,
             TemplateLengthTicks = source.TemplateLengthTicks,
+            PreRollTicks = source.PreRollTicks,
             RequiresChannelIsolation = source.RequiresChannelIsolation,
             OverlapPolicy = source.OverlapPolicy,
             OverlapScope = source.OverlapScope,

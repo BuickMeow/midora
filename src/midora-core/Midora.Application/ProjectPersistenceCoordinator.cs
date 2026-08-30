@@ -26,6 +26,7 @@ public sealed class ProjectPersistenceCoordinator
     private readonly object _sync = new();
     private readonly ProjectDocumentSession _document;
     private readonly MidoraProjectPackageV1 _packages;
+    private readonly string? _protectedSourceProjectPath;
     private string? _currentProjectPath;
     private MidoraProjectFileInformationV1? _fileInformation;
     private bool _operationActive;
@@ -34,7 +35,8 @@ public sealed class ProjectPersistenceCoordinator
         ProjectDocumentSession document,
         MidoraProjectPackageV1 packages,
         string? currentProjectPath = null,
-        MidoraProjectFileInformationV1? fileInformation = null)
+        MidoraProjectFileInformationV1? fileInformation = null,
+        string? protectedSourceProjectPath = null)
     {
         _document = document ?? throw new ArgumentNullException(nameof(document));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
@@ -45,17 +47,26 @@ public sealed class ProjectPersistenceCoordinator
                 "The Project path must agree with the document's persistent origin.",
                 nameof(currentProjectPath));
         }
-        if (hasPath != (fileInformation is not null))
+        if (hasPath && fileInformation is null)
         {
             throw new ArgumentException(
-                "Persisted Projects require file-version information and unsaved Projects cannot have it.",
+                "Persisted Projects require file-version information.",
                 nameof(fileInformation));
+        }
+        if (hasPath && protectedSourceProjectPath is not null)
+        {
+            throw new ArgumentException(
+                "A persisted Project cannot also carry a protected migration source path.",
+                nameof(protectedSourceProjectPath));
         }
 
         _currentProjectPath = currentProjectPath is null
             ? null
             : NormalizePath(currentProjectPath, nameof(currentProjectPath));
         _fileInformation = fileInformation;
+        _protectedSourceProjectPath = protectedSourceProjectPath is null
+            ? null
+            : NormalizePath(protectedSourceProjectPath, nameof(protectedSourceProjectPath));
     }
 
     public ProjectDocumentSession Document => _document;
@@ -81,6 +92,8 @@ public sealed class ProjectPersistenceCoordinator
             }
         }
     }
+
+    public string? ProtectedSourceProjectPath => _protectedSourceProjectPath;
 
     public bool IsOperationActive
     {
@@ -128,6 +141,7 @@ public sealed class ProjectPersistenceCoordinator
                         "An unsaved Project requires a target path for its first save.");
                 }
                 targetPath = NormalizePath(firstSaveTargetPath, nameof(firstSaveTargetPath));
+                RequireNotProtectedSourcePath(targetPath, operation.ProtectedSourceProjectPath);
                 effectiveOverwriteAuthorization = overwriteAuthorized;
             }
             else
@@ -181,6 +195,9 @@ public sealed class ProjectPersistenceCoordinator
                 throw new InvalidOperationException(
                     "Save Copy cannot overwrite the current Project file; use Save Project.");
             }
+            RequireNotProtectedSourcePath(
+                normalizedTarget,
+                operation.ProtectedSourceProjectPath);
 
             return await _packages.SaveCopyAsync(
                 _document.Project,
@@ -206,7 +223,10 @@ public sealed class ProjectPersistenceCoordinator
                     "Another Project persistence operation is already active.");
             }
             _operationActive = true;
-            return new(_currentProjectPath, _fileInformation);
+            return new(
+                _currentProjectPath,
+                _fileInformation,
+                _protectedSourceProjectPath);
         }
     }
 
@@ -244,7 +264,20 @@ public sealed class ProjectPersistenceCoordinator
     private static bool PathsEqual(string left, string right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
+    private static void RequireNotProtectedSourcePath(
+        string targetPath,
+        string? protectedSourceProjectPath)
+    {
+        if (protectedSourceProjectPath is not null
+            && PathsEqual(targetPath, protectedSourceProjectPath))
+        {
+            throw new InvalidOperationException(
+                "A migrated Format 1 source file is read-only. Save the upgraded Project to a different path.");
+        }
+    }
+
     private readonly record struct OperationSnapshot(
         string? CurrentProjectPath,
-        MidoraProjectFileInformationV1? FileInformation);
+        MidoraProjectFileInformationV1? FileInformation,
+        string? ProtectedSourceProjectPath);
 }

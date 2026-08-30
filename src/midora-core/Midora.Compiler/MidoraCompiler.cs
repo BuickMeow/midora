@@ -165,6 +165,7 @@ public sealed partial class MidoraCompiler : IDisposable
                 || participatingInstrumentIds.Contains(instrument.Id))
             .ToDictionary(value => value.Id);
         List<RawInstance> instances = [];
+        int instanceExpansionDiagnosticStart = diagnostics.Count;
         int recompiledTracks = 0;
         int reusedTracks = 0;
         int recompiledSegments = 0;
@@ -209,6 +210,15 @@ public sealed partial class MidoraCompiler : IDisposable
                 earliestDirtyTick = expansion.EarliestDirtyTick;
             }
         }
+
+        ApplyDestructiveOverlapPolicies(
+            project,
+            instances,
+            diagnostics,
+            instanceExpansionDiagnosticStart,
+            request.HeldPreviewGateOpen,
+            request.HeldPreviewFinalGateLengthTicks,
+            cancellationToken);
 
         CompilerRunTelemetry telemetry = new(recompiledTracks, reusedTracks)
         {
@@ -903,7 +913,6 @@ public sealed partial class MidoraCompiler : IDisposable
                 .Select(voice => voice.EventMappings.ToDictionary(value => value.Target))
                 .ToArray();
         int sourceOrder = initialSourceOrder;
-        List<AcceptedInstance> activePolicyInstances = [];
         foreach (Segment segment in new[] { requestedSegment })
         {
             Dictionary<MidoraId, LogicalParameterLane> lanes = segment.ParameterLanes
@@ -917,68 +926,237 @@ public sealed partial class MidoraCompiler : IDisposable
                     continue;
                 }
 
-                long projectStart = checked(
+                long logicalGateStart = checked(
                     segment.ProjectStartTick + (note.StartTick - segment.ContentOffsetTick));
+                long instanceStart = checked(logicalGateStart - instrument.PreRollTicks);
                 long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
-                long gateEnd = AddDurationClamped(projectStart, note.LengthTicks, segmentEnd);
-                Dictionary<MidoraId, double> parameterValues = EvaluateParameters(definitions, lanes, note.StartTick);
+                long gateEnd = AddDurationClamped(logicalGateStart, note.LengthTicks, segmentEnd);
+                Dictionary<MidoraId, double> parameterValues = EvaluateParameters(
+                    definitions,
+                    lanes,
+                    checked(note.StartTick - instrument.PreRollTicks));
                 int instanceSourceOrder = sourceOrder++;
-                activePolicyInstances.RemoveAll(value => value.Instance.EndTick <= projectStart);
-                AcceptedInstance[] conflicts = activePolicyInstances.Where(value =>
-                    value.Instance.EndTick > projectStart
-                    && (instrument.OverlapScope == OverlapScope.AnyPitch || value.Note.Note == note.Note)).ToArray();
-                if (conflicts.Length != 0 && instrument.OverlapPolicy == OverlapPolicy.CutNewRejectNew)
-                {
-                    diagnostics.Add(new("MIDORA2203", DiagnosticSeverity.Warning,
-                        "The new instance overlaps an active instance and was not generated under the Cut New / Reject New policy.",
-                        new(track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
-                    continue;
-                }
-                if (conflicts.Length != 0 && instrument.OverlapPolicy == OverlapPolicy.CutPrevious)
-                {
-                    if (conflicts.Any(value => value.ProjectStartTick == projectStart))
-                    {
-                        diagnostics.Add(new("MIDORA2204", DiagnosticSeverity.Error,
-                            "Multiple same-tick instances do not have a deterministic truncation order under Cut Previous.",
-                            new(track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
-                    }
-                    else
-                    {
-                        foreach (AcceptedInstance previous in conflicts)
-                        {
-                            Dictionary<MidoraId, double> previousParameters = EvaluateParameters(
-                                definitions, lanes, previous.Note.StartTick);
-                            RawInstance shortened = ExpandInstance(
-                                project, track, previous.Segment, previous.Note, instrument,
-                                previous.ProjectStartTick, projectStart, previous.SegmentEndTick,
-                                previousParameters, definitions, lanes, functions,
-                                eventMappingsByVoice,
-                                previous.SourceOrder,
-                                diagnostics,
-                                heldPreviewGateOpen,
-                                heldPreviewFinalGateLengthTicks,
-                                cancellationToken);
-                            result[previous.ResultIndex] = shortened;
-                            previous.Instance = shortened;
-                            activePolicyInstances.Remove(previous);
-                        }
-                    }
-                }
                 RawInstance instance = ExpandInstance(
-                    project, track, segment, note, instrument, projectStart, gateEnd, segmentEnd,
+                    project, track, segment, note, instrument,
+                    instanceStart, logicalGateStart, gateEnd, segmentEnd,
                     parameterValues, definitions, lanes, functions, eventMappingsByVoice,
                     instanceSourceOrder, diagnostics,
                     heldPreviewGateOpen,
                     heldPreviewFinalGateLengthTicks,
                     cancellationToken);
                 result.Add(instance);
-                activePolicyInstances.Add(new(
-                    result.Count - 1, segment, note, projectStart, segmentEnd,
-                    instanceSourceOrder, instance));
             }
         }
         nextSourceOrder = sourceOrder;
         return result.ToArray();
+    }
+
+    private void ApplyDestructiveOverlapPolicies(
+        MidoraProject project,
+        List<RawInstance> instances,
+        List<CompilerDiagnostic> diagnostics,
+        int instanceExpansionDiagnosticStart,
+        bool heldPreviewGateOpen,
+        long? heldPreviewFinalGateLengthTicks,
+        CancellationToken cancellationToken)
+    {
+        if (instances.Count == 0)
+        {
+            return;
+        }
+
+        Dictionary<MidoraId, int> trackOrder = project.LogicalTracksInArrangementOrder()
+            .Select((track, index) => (track.Id, index))
+            .ToDictionary(value => value.Id, value => value.index);
+        foreach (LogicalTrack track in project.Tracks)
+        {
+            trackOrder.TryAdd(track.Id, trackOrder.Count);
+        }
+
+        int[] deterministicOrder = Enumerable.Range(0, instances.Count)
+            .OrderBy(index => instances[index].StartTick)
+            .ThenBy(index => trackOrder.GetValueOrDefault(instances[index].TrackId, int.MaxValue))
+            .ThenBy(index => instances[index].SourceOrder)
+            .ThenBy(index => instances[index].TrackId)
+            .ThenBy(index => instances[index].SegmentId)
+            .ThenBy(index => instances[index].InstanceId)
+            .ToArray();
+        Dictionary<(MidoraId UsageId, MidoraId InstrumentId), List<int>> activeByUsage = [];
+        bool[] retained = Enumerable.Repeat(true, instances.Count).ToArray();
+        HashSet<OverlapInstanceKey> regenerated = [];
+        HashSet<OverlapInstanceKey> rejected = [];
+        List<CompilerDiagnostic> regeneratedDiagnostics = [];
+        List<CompilerDiagnostic> overlapDiagnostics = [];
+
+        foreach (int currentIndex in deterministicOrder)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RawInstance current = instances[currentIndex];
+            if (current.OverlapPolicy is not OverlapPolicy.CutPrevious
+                and not OverlapPolicy.CutNewRejectNew)
+            {
+                continue;
+            }
+
+            (MidoraId UsageId, MidoraId InstrumentId) usageKey =
+                (current.UsageId, current.InstrumentId);
+            if (!activeByUsage.TryGetValue(usageKey, out List<int>? active))
+            {
+                active = [];
+                activeByUsage.Add(usageKey, active);
+            }
+            active.RemoveAll(index => instances[index].EndTick <= current.StartTick);
+            int[] conflicts = active.Where(index =>
+                    instances[index].EndTick > current.StartTick
+                    && (current.OverlapScope == OverlapScope.AnyPitch
+                        || instances[index].Pitch == current.Pitch))
+                .ToArray();
+            if (conflicts.Length == 0)
+            {
+                active.Add(currentIndex);
+                continue;
+            }
+
+            if (current.OverlapPolicy == OverlapPolicy.CutNewRejectNew)
+            {
+                retained[currentIndex] = false;
+                rejected.Add(OverlapInstanceKey.For(current));
+                overlapDiagnostics.Add(new(
+                    "MIDORA2203",
+                    DiagnosticSeverity.Warning,
+                    "The new instance overlaps an active instance and was not generated under the Cut New / Reject New policy.",
+                    new(
+                        current.TrackId,
+                        current.SegmentId,
+                        current.InstanceId,
+                        current.InstrumentId,
+                        Tick: current.StartTick)));
+                continue;
+            }
+
+            if (conflicts.Any(index => instances[index].StartTick == current.StartTick))
+            {
+                overlapDiagnostics.Add(new(
+                    "MIDORA2204",
+                    DiagnosticSeverity.Error,
+                    "Multiple same-tick instances do not have a deterministic truncation order under Cut Previous.",
+                    new(
+                        current.TrackId,
+                        current.SegmentId,
+                        current.InstanceId,
+                        current.InstrumentId,
+                        Tick: current.StartTick)));
+                active.Add(currentIndex);
+                continue;
+            }
+
+            foreach (int previousIndex in conflicts)
+            {
+                RawInstance previous = instances[previousIndex];
+                regenerated.Add(OverlapInstanceKey.For(previous));
+                instances[previousIndex] = ReexpandForCutPrevious(
+                    project,
+                    previous,
+                    current.StartTick,
+                    regeneratedDiagnostics,
+                    heldPreviewGateOpen,
+                    heldPreviewFinalGateLengthTicks,
+                    cancellationToken);
+                active.Remove(previousIndex);
+            }
+            active.Add(currentIndex);
+        }
+
+        if (regenerated.Count != 0 || rejected.Count != 0)
+        {
+            for (int index = diagnostics.Count - 1;
+                index >= instanceExpansionDiagnosticStart;
+                index--)
+            {
+                CompilerDiagnostic diagnostic = diagnostics[index];
+                if (diagnostic.Code is not "MIDORA2101" and not "MIDORA2102")
+                {
+                    continue;
+                }
+                OverlapInstanceKey key = OverlapInstanceKey.For(diagnostic.Source);
+                if (regenerated.Contains(key) || rejected.Contains(key))
+                {
+                    diagnostics.RemoveAt(index);
+                }
+            }
+        }
+        diagnostics.AddRange(regeneratedDiagnostics);
+        diagnostics.AddRange(overlapDiagnostics);
+
+        int destination = 0;
+        for (int source = 0; source < instances.Count; source++)
+        {
+            if (!retained[source])
+            {
+                continue;
+            }
+            if (destination != source)
+            {
+                instances[destination] = instances[source];
+            }
+            destination++;
+        }
+        if (destination != instances.Count)
+        {
+            instances.RemoveRange(destination, instances.Count - destination);
+        }
+    }
+
+    private RawInstance ReexpandForCutPrevious(
+        MidoraProject project,
+        RawInstance previous,
+        long replacementGateEnd,
+        List<CompilerDiagnostic> diagnostics,
+        bool heldPreviewGateOpen,
+        long? heldPreviewFinalGateLengthTicks,
+        CancellationToken cancellationToken)
+    {
+        EventInstrument instrument = previous.SourceInstrument;
+        Segment segment = previous.SourceSegment;
+        LogicalNote note = previous.SourceNote;
+        Dictionary<MidoraId, LogicalParameterDefinition> definitions = instrument.LogicalParameters
+            .ToDictionary(value => value.Id);
+        Dictionary<MidoraId, CSharpMappingFunction> functions = instrument.MappingFunctions
+            .ToDictionary(value => value.Id);
+        Dictionary<TemplateEventMappingTarget, SubVoiceEventMapping>[] eventMappingsByVoice =
+            instrument.SubVoices
+                .Select(voice => voice.EventMappings.ToDictionary(value => value.Target))
+                .ToArray();
+        Dictionary<MidoraId, LogicalParameterLane> lanes = segment.ParameterLanes
+            .Where(value => definitions.ContainsKey(value.ParameterId))
+            .ToDictionary(value => value.ParameterId);
+        Dictionary<MidoraId, double> parameterValues = EvaluateParameters(
+            definitions,
+            lanes,
+            checked(note.StartTick - instrument.PreRollTicks));
+        long logicalGateStart = checked(
+            segment.ProjectStartTick + (note.StartTick - segment.ContentOffsetTick));
+        long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
+        return ExpandInstance(
+            project,
+            previous.SourceTrack,
+            segment,
+            note,
+            instrument,
+            previous.StartTick,
+            logicalGateStart,
+            replacementGateEnd,
+            segmentEnd,
+            parameterValues,
+            definitions,
+            lanes,
+            functions,
+            eventMappingsByVoice,
+            previous.SourceOrder,
+            diagnostics,
+            heldPreviewGateOpen,
+            heldPreviewFinalGateLengthTicks,
+            cancellationToken);
     }
 
     private static long AddDurationClamped(long startTick, long duration, long endTick) =>
@@ -999,7 +1177,8 @@ public sealed partial class MidoraCompiler : IDisposable
         Segment segment,
         LogicalNote note,
         EventInstrument instrument,
-        long projectStart,
+        long instanceStart,
+        long logicalGateStart,
         long gateEnd,
         long segmentEnd,
         Dictionary<MidoraId, double> initialParameters,
@@ -1014,20 +1193,31 @@ public sealed partial class MidoraCompiler : IDisposable
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        long playbackGateLength = heldPreviewGateOpen ? long.MaxValue : gateEnd - projectStart;
+        long instanceGateEndLocalTick = heldPreviewGateOpen
+            ? long.MaxValue
+            : gateEnd - instanceStart;
+        long logicalGateLength = heldPreviewGateOpen
+            ? long.MaxValue
+            // Cut Previous may terminate an instance while it is still inside its
+            // Pre-Roll prefix, before the Logical Gate Start. Zero is the explicit
+            // truncation-only MappingContext sentinel for that case; ordinary source
+            // Logical Notes are still required to have a positive Gate Length.
+            : Math.Max(0, gateEnd - logicalGateStart);
         long mappingGateLength = heldPreviewGateOpen
             ? long.MaxValue
-            : heldPreviewFinalGateLengthTicks ?? playbackGateLength;
+            : heldPreviewFinalGateLengthTicks ?? logicalGateLength;
         bool shortNote = !heldPreviewGateOpen
             && mappingGateLength < instrument.TemplateLengthTicks;
+        bool longNote = heldPreviewGateOpen
+            || mappingGateLength > instrument.TemplateLengthTicks;
         HashSet<MidoraId> usedEnvelopeIds = GetUsedEnvelopeIds(instrument);
         long release = instrument.Envelopes.Where(value => usedEnvelopeIds.Contains(value.Id))
             .Select(value => value.ReleaseTicks).DefaultIfEmpty().Max();
         bool releaseTriggered = !heldPreviewGateOpen && (shortNote
             ? instrument.ShortLifecycle != ShortNoteLifecycle.OneShot
-            : instrument.LongLifecycle != LongNoteLifecycle.EndAtTemplate);
-        long? releaseStartLocalTick = releaseTriggered ? playbackGateLength : null;
-        long maximumDuration = segmentEnd - projectStart;
+            : longNote && instrument.LongLifecycle != LongNoteLifecycle.EndAtTemplate);
+        long? releaseStartLocalTick = releaseTriggered ? instanceGateEndLocalTick : null;
+        long maximumDuration = segmentEnd - instanceStart;
         long naturalDuration;
         if (heldPreviewGateOpen)
         {
@@ -1038,7 +1228,7 @@ public sealed partial class MidoraCompiler : IDisposable
             naturalDuration = instrument.ShortLifecycle switch
             {
                 ShortNoteLifecycle.CutAtNoteOff => AddDurationsClamped(
-                    playbackGateLength,
+                    instanceGateEndLocalTick,
                     release,
                     maximumDuration),
                 ShortNoteLifecycle.OneShot => Math.Min(
@@ -1046,11 +1236,11 @@ public sealed partial class MidoraCompiler : IDisposable
                     maximumDuration),
                 ShortNoteLifecycle.Tail => Math.Max(
                     Math.Min(instrument.TemplateLengthTicks, maximumDuration),
-                    AddDurationsClamped(playbackGateLength, release, maximumDuration)),
-                _ => playbackGateLength
+                    AddDurationsClamped(instanceGateEndLocalTick, release, maximumDuration)),
+                _ => instanceGateEndLocalTick
             };
         }
-        else if (instrument.LongLifecycle == LongNoteLifecycle.EndAtTemplate)
+        else if (!longNote || instrument.LongLifecycle == LongNoteLifecycle.EndAtTemplate)
         {
             naturalDuration = Math.Min(instrument.TemplateLengthTicks, maximumDuration);
         }
@@ -1060,14 +1250,14 @@ public sealed partial class MidoraCompiler : IDisposable
                 ? instrument.TemplateLengthTicks - instrument.LoopEndTick.Value
                 : 0;
             naturalDuration = AddDurationsClamped(
-                playbackGateLength,
+                instanceGateEndLocalTick,
                 Math.Max(release, loopTailLength),
                 maximumDuration);
         }
-        long actualEnd = projectStart + naturalDuration;
-        if (actualEnd < projectStart)
+        long actualEnd = instanceStart + naturalDuration;
+        if (actualEnd < instanceStart)
         {
-            actualEnd = projectStart;
+            actualEnd = instanceStart;
         }
 
         RawSubVoice[] voices = new RawSubVoice[instrument.SubVoices.Count];
@@ -1084,7 +1274,7 @@ public sealed partial class MidoraCompiler : IDisposable
                 note.Id,
                 instrument.Id,
                 voice.Id,
-                Tick: projectStart,
+                Tick: instanceStart,
                 EventInstrumentUsageId: track.EventInstrumentUsageId ?? default);
             List<RawMidiEvent> events = [];
             MidiInitialState state = MergeState(project.GlobalInitialState, instrument.InitialState, voice.InitialState);
@@ -1092,7 +1282,7 @@ public sealed partial class MidoraCompiler : IDisposable
             HashSet<MidiValueTarget> tickZeroTargets = GetTickZeroTargets(voice);
             EmitReset(
                 events,
-                projectStart,
+                instanceStart,
                 usedTargets.Where(static target => target.Kind != MidiValueKind.ControlChange
                     || target.Number != AllSoundOffController),
                 project.GlobalResetDefaults,
@@ -1100,7 +1290,7 @@ public sealed partial class MidoraCompiler : IDisposable
                 ref sequence);
             EmitInitialState(
                 events,
-                projectStart,
+                instanceStart,
                 state,
                 tickZeroTargets,
                 source with { Origin = SourceOrigin.MergedInitialState },
@@ -1111,8 +1301,9 @@ public sealed partial class MidoraCompiler : IDisposable
                 events,
                 instrument,
                 voice,
-                projectStart,
-                playbackGateLength,
+                instanceStart,
+                instanceGateEndLocalTick,
+                longNote,
                 actualEnd,
                 source,
                 ref sequence);
@@ -1122,15 +1313,15 @@ public sealed partial class MidoraCompiler : IDisposable
                 foreach (EventOccurrence occurrence in EnumerateOccurrences(
                     instrument,
                     templateEvent.Tick,
-                    playbackGateLength,
-                    shortNote,
-                    actualEnd - projectStart))
+                    instanceGateEndLocalTick,
+                    longNote,
+                    actualEnd - instanceStart))
                 {
-                    if (occurrence.LocalTick >= actualEnd - projectStart)
+                    if (occurrence.LocalTick >= actualEnd - instanceStart)
                     {
                         continue;
                     }
-                    long tick = projectStart + occurrence.LocalTick;
+                    long tick = instanceStart + occurrence.LocalTick;
                     bool afterGate = tick >= gateEnd;
                     if (tick >= actualEnd
                         || (shortNote && instrument.ShortLifecycle == ShortNoteLifecycle.CutAtNoteOff && afterGate)
@@ -1174,8 +1365,7 @@ public sealed partial class MidoraCompiler : IDisposable
                         bool sustainAcrossLoop = ShouldSustainNoteAcrossLoop(
                             instrument,
                             templateEvent,
-                            playbackGateLength,
-                            shortNote);
+                            longNote);
                         EmitTemplateEvent(events, eventMappings, templateEvent, tick, gateEnd, actualEnd,
                             releaseTriggered, pitchDelta, note.Velocity,
                             context, parametersAtTick, envelopesAtTick, functions,
@@ -1213,12 +1403,13 @@ public sealed partial class MidoraCompiler : IDisposable
                 segment,
                 note,
                 state,
-                projectStart,
+                instanceStart,
                 gateEnd,
                 actualEnd,
-                playbackGateLength,
+                instanceGateEndLocalTick,
                 mappingGateLength,
                 shortNote,
+                longNote,
                 releaseStartLocalTick,
                 usedEnvelopeIds,
                 definitions,
@@ -1227,9 +1418,10 @@ public sealed partial class MidoraCompiler : IDisposable
                 source,
                 ref sequence,
                 diagnostics);
-            EmitParameterMappings(events, instrument, segment, projectStart, actualEnd, note, pitchDelta,
-                playbackGateLength,
+            EmitParameterMappings(events, instrument, segment, instanceStart, actualEnd, note, pitchDelta,
+                instanceGateEndLocalTick,
                 mappingGateLength,
+                longNote,
                 releaseStartLocalTick,
                 usedEnvelopeIds,
                 definitions,
@@ -1250,10 +1442,11 @@ public sealed partial class MidoraCompiler : IDisposable
 
         MidoraId usageId = track.EventInstrumentUsageId ?? track.Id;
         return new RawInstance(
-            note.Id, track.Id, segment.Id, instrument.Id, usageId, note.Note, projectStart, actualEnd, segmentEnd,
+            note.Id, track.Id, segment.Id, instrument.Id, usageId, note.Note, instanceStart, actualEnd, segmentEnd,
             instrument.RequiresChannelIsolation,
             instrument.OverlapPolicy, instrument.OverlapScope,
-            sourceOrder, voices);
+            sourceOrder, voices,
+            track, segment, note, instrument);
     }
 
     private void EmitTemplateEvent(
@@ -1392,12 +1585,10 @@ public sealed partial class MidoraCompiler : IDisposable
     private static bool ShouldSustainNoteAcrossLoop(
         EventInstrument instrument,
         TemplateEvent value,
-        long gateLength,
-        bool shortNote)
+        bool longNote)
     {
         if (value.Kind != TemplateEventKind.Note
-            || shortNote
-            || gateLength <= instrument.TemplateLengthTicks
+            || !longNote
             || instrument.LongLifecycle != LongNoteLifecycle.HoldLastState
             || instrument.LoopStartTick is not long loopStart
             || instrument.LoopEndTick is not long loopEnd
@@ -1477,12 +1668,11 @@ public sealed partial class MidoraCompiler : IDisposable
     private static IEnumerable<EventOccurrence> EnumerateOccurrences(
         EventInstrument instrument,
         long eventTick,
-        long gateLength,
-        bool shortNote,
+        long instanceGateEndLocalTick,
+        bool longNote,
         long maximumLocalTick)
     {
-        if (shortNote || !instrument.LoopStartTick.HasValue || !instrument.LoopEndTick.HasValue
-            || gateLength <= instrument.TemplateLengthTicks)
+        if (!longNote || !instrument.LoopStartTick.HasValue || !instrument.LoopEndTick.HasValue)
         {
             if (eventTick < maximumLocalTick)
             {
@@ -1503,7 +1693,7 @@ public sealed partial class MidoraCompiler : IDisposable
         if (eventTick >= loopEnd)
         {
             long occurrence = AddDurationsClamped(
-                gateLength,
+                instanceGateEndLocalTick,
                 eventTick - loopEnd,
                 long.MaxValue);
             if (occurrence < maximumLocalTick)
@@ -1515,9 +1705,9 @@ public sealed partial class MidoraCompiler : IDisposable
         long loopLength = loopEnd - loopStart;
         long relative = eventTick - loopStart;
         for (long iterationStart = loopStart;
-            iterationStart < gateLength && iterationStart < maximumLocalTick;)
+            iterationStart < instanceGateEndLocalTick && iterationStart < maximumLocalTick;)
         {
-            long remaining = gateLength - iterationStart;
+            long remaining = instanceGateEndLocalTick - iterationStart;
             if (relative >= remaining)
             {
                 yield break;
@@ -1629,7 +1819,8 @@ public sealed partial class MidoraCompiler : IDisposable
         EventInstrument instrument,
         SubVoice voice,
         long projectStart,
-        long gateLength,
+        long instanceGateEndLocalTick,
+        bool longNote,
         long actualEnd,
         SourceReference source,
         ref long sequence)
@@ -1644,7 +1835,11 @@ public sealed partial class MidoraCompiler : IDisposable
             int? previousOutputValue = null;
             for (long localTick = 0; projectStart + localTick < actualEnd; localTick++)
             {
-                long templateTick = MapLongTickToTemplate(instrument, localTick, gateLength);
+                long templateTick = MapLongTickToTemplate(
+                    instrument,
+                    localTick,
+                    instanceGateEndLocalTick,
+                    longNote);
                 if (templateTick < points[0].Tick || templateTick >= instrument.TemplateLengthTicks)
                 {
                     continue;
@@ -1679,9 +1874,10 @@ public sealed partial class MidoraCompiler : IDisposable
         long projectStart,
         long gateEnd,
         long actualEnd,
-        long playbackGateLength,
+        long instanceGateEndLocalTick,
         long mappingGateLength,
         bool shortNote,
+        bool longNote,
         long? releaseStartLocalTick,
         IReadOnlySet<MidoraId> usedEnvelopeIds,
         IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> definitions,
@@ -1718,8 +1914,8 @@ public sealed partial class MidoraCompiler : IDisposable
                 foreach (EventOccurrence occurrence in EnumerateOccurrences(
                     instrument,
                     templateEvent.Tick,
-                    playbackGateLength,
-                    shortNote,
+                    instanceGateEndLocalTick,
+                    longNote,
                     actualEnd - projectStart))
                 {
                     if (occurrence.LocalTick >= actualEnd - projectStart)
@@ -1775,7 +1971,8 @@ public sealed partial class MidoraCompiler : IDisposable
                 long templateTick = MapLongTickToTemplate(
                     instrument,
                     localTick,
-                    playbackGateLength);
+                    instanceGateEndLocalTick,
+                    longNote);
                 MappingContextV2 context = new(
                     currentRawValue,
                     note.Note,
@@ -1870,8 +2067,9 @@ public sealed partial class MidoraCompiler : IDisposable
         long actualEnd,
         LogicalNote note,
         int pitchDelta,
-        long playbackGateLength,
+        long instanceGateEndLocalTick,
         long mappingGateLength,
+        bool longNote,
         long? releaseStartLocalTick,
         IReadOnlySet<MidoraId> usedEnvelopeIds,
         IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> definitions,
@@ -1922,7 +2120,8 @@ public sealed partial class MidoraCompiler : IDisposable
                         long templateTick = MapLongTickToTemplate(
                             instrument,
                             instanceTick,
-                            playbackGateLength);
+                            instanceGateEndLocalTick,
+                            longNote);
                         MappingContextV2 context = new(
                             current,
                             note.Note,
@@ -2125,16 +2324,22 @@ public sealed partial class MidoraCompiler : IDisposable
             ? end
             : Interpolate(start, end, elapsed, duration - 1);
 
-    private static long MapLongTickToTemplate(EventInstrument instrument, long localTick, long gateLength)
+    private static long MapLongTickToTemplate(
+        EventInstrument instrument,
+        long localTick,
+        long instanceGateEndLocalTick,
+        bool longNote)
     {
-        if (!instrument.LoopStartTick.HasValue || !instrument.LoopEndTick.HasValue
-            || gateLength <= instrument.TemplateLengthTicks || localTick < instrument.LoopStartTick.Value)
+        if (!longNote
+            || !instrument.LoopStartTick.HasValue
+            || !instrument.LoopEndTick.HasValue
+            || localTick < instrument.LoopStartTick.Value)
         {
             return localTick;
         }
-        if (localTick >= gateLength)
+        if (localTick >= instanceGateEndLocalTick)
         {
-            return checked(instrument.LoopEndTick.Value + (localTick - gateLength));
+            return checked(instrument.LoopEndTick.Value + (localTick - instanceGateEndLocalTick));
         }
         long loopLength = instrument.LoopEndTick.Value - instrument.LoopStartTick.Value;
         return instrument.LoopStartTick.Value + ((localTick - instrument.LoopStartTick.Value) % loopLength);
@@ -3798,7 +4003,11 @@ public sealed partial class MidoraCompiler : IDisposable
         OverlapPolicy OverlapPolicy,
         OverlapScope OverlapScope,
         int SourceOrder,
-        RawSubVoice[] Voices);
+        RawSubVoice[] Voices,
+        LogicalTrack SourceTrack,
+        Segment SourceSegment,
+        LogicalNote SourceNote,
+        EventInstrument SourceInstrument);
 
     private readonly record struct EventMappingStatePoint(
         long LocalTick,
@@ -3818,22 +4027,20 @@ public sealed partial class MidoraCompiler : IDisposable
         long StartTick,
         long EndTick);
 
-    private sealed class AcceptedInstance(
-        int resultIndex,
-        Segment segment,
-        LogicalNote note,
-        long projectStartTick,
-        long segmentEndTick,
-        int sourceOrder,
-        RawInstance instance)
+    private readonly record struct OverlapInstanceKey(
+        MidoraId TrackId,
+        MidoraId SegmentId,
+        MidoraId InstanceId)
     {
-        public int ResultIndex { get; } = resultIndex;
-        public Segment Segment { get; } = segment;
-        public LogicalNote Note { get; } = note;
-        public long ProjectStartTick { get; } = projectStartTick;
-        public long SegmentEndTick { get; } = segmentEndTick;
-        public int SourceOrder { get; } = sourceOrder;
-        public RawInstance Instance { get; set; } = instance;
+        public static OverlapInstanceKey For(RawInstance instance) => new(
+            instance.TrackId,
+            instance.SegmentId,
+            instance.InstanceId);
+
+        public static OverlapInstanceKey For(SourceReference source) => new(
+            source.TrackId,
+            source.SegmentId,
+            source.LogicalNoteId);
     }
 
     private readonly record struct EventOccurrence(long LocalTick, long TemplateTick);
@@ -4265,6 +4472,7 @@ internal static class SourceFingerprint
         Add(ref hash, instrument.Name);
         Add(ref hash, instrument.RootNote);
         Add(ref hash, instrument.TemplateLengthTicks);
+        Add(ref hash, instrument.PreRollTicks);
         Add(ref hash, instrument.RequiresChannelIsolation ? 1 : 0);
         Add(ref hash, (int)instrument.OverlapPolicy);
         Add(ref hash, (int)instrument.OverlapScope);

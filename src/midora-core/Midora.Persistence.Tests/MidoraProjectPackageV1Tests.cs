@@ -350,9 +350,9 @@ public sealed class MidoraProjectPackageV1Tests
     }
 
     [Theory]
-    [InlineData("fileFormatVersion", 2)]
-    [InlineData("minimumReadableVersion", 2)]
-    [InlineData("manifestSchemaVersion", 2)]
+    [InlineData("fileFormatVersion", 3)]
+    [InlineData("minimumReadableVersion", 3)]
+    [InlineData("manifestSchemaVersion", 3)]
     public async Task FutureManifestVersionIsRejectedDuringVersionPreflight(
         string propertyName,
         int futureVersion)
@@ -369,11 +369,11 @@ public sealed class MidoraProjectPackageV1Tests
 
         Assert.Equal(MidoraPackageStageV1.VersionPreflight, failure.Stage);
         Assert.Equal("manifest.json", failure.PackagePath);
-        Assert.Equal(1, failure.SupportedFileFormatVersion);
-        Assert.Equal(1, failure.SupportedManifestSchemaVersion);
-        Assert.Equal(propertyName == "fileFormatVersion" ? 2 : 1, failure.FileFormatVersion);
-        Assert.Equal(propertyName == "minimumReadableVersion" ? 2 : 1, failure.MinimumReadableVersion);
-        Assert.Equal(propertyName == "manifestSchemaVersion" ? 2 : 1, failure.ManifestSchemaVersion);
+        Assert.Equal(2, failure.SupportedFileFormatVersion);
+        Assert.Equal(2, failure.SupportedManifestSchemaVersion);
+        Assert.Equal(propertyName == "fileFormatVersion" ? 3 : 2, failure.FileFormatVersion);
+        Assert.Equal(propertyName == "minimumReadableVersion" ? 3 : 2, failure.MinimumReadableVersion);
+        Assert.Equal(propertyName == "manifestSchemaVersion" ? 3 : 2, failure.ManifestSchemaVersion);
     }
 
     [Fact]
@@ -464,7 +464,9 @@ public sealed class MidoraProjectPackageV1Tests
         using Stream manifestStream = manifestEntry.Open();
         using MemoryStream buffer = new();
         manifestStream.CopyTo(buffer);
-        ManifestJsonV1 manifest = ManifestCodecV1.Parse(buffer.ToArray());
+        ManifestJsonV2 manifest = ManifestCodecV2.Parse(buffer.ToArray());
+        Assert.Equal(PersistenceContractV2.FileFormatVersion, manifest.FileFormatVersion);
+        Assert.Equal(PersistenceContractV2.ManifestSchemaVersion, manifest.ManifestSchemaVersion);
         Assert.Equal(
             expected.Skip(1).OrderBy(path => path, StringComparer.Ordinal),
             manifest.Files.Select(item => item.Path));
@@ -501,7 +503,7 @@ public sealed class MidoraProjectPackageV1Tests
             json = reader.ReadToEnd();
         }
         original.Delete();
-        string current = $"\"{propertyName}\": 1";
+        string current = $"\"{propertyName}\": {PersistenceContractV2.FileFormatVersion}";
         string replacement = $"\"{propertyName}\": {value}";
         Assert.Contains(current, json, StringComparison.Ordinal);
         ZipArchiveEntry updated = archive.CreateEntry("manifest.json", CompressionLevel.Optimal);

@@ -203,6 +203,7 @@ Segment 包含 Logical Note
 Segment 包含 Logical Parameter Lane
 Segment 保存完整内容与当前有效裁剪窗口
 Segment 末尾形成 Reset 边界
+Segment 有效起点是 Pre-Roll 后实例 origin 的硬左边界
 Segment 不直接绑定 Event Instrument；它通过所在 Logical Track 的绑定被解释
 ```
 Segment 不是 Pattern。
@@ -322,6 +323,18 @@ Segment 内原 Note 数据不被修改
 自动续接 Note
 自动在新 Segment Start 处生成 Note On
 ```
+
+如果 Logical Note anchor 位于保留区，但其 Event Instrument `Pre-Roll Ticks` 使 Instance Origin 落在 Segment 有效起点之前：
+
+```text
+当前 Segment 编译产生 Error
+不得 Clamp 到 Segment Start
+不得丢弃前缀后继续生成
+不得自动向左扩张或移动 Segment
+不得跨前一个 Segment 的硬边界执行
+```
+
+这是源数据仍可保存、但该 Definition/Segment 使用组合不可正式消费的语义错误。用户必须显式向左扩张 Segment 的有效窗口、向右移动 Logical Note，或降低 Event Instrument 的 Pre-Roll Ticks。
 ### 11.8.6 多 Note 混合裁剪
 如果裁剪区同时影响多个 Logical Note：
 ```text
@@ -493,6 +506,7 @@ Logical Parameter Lane 可能变为断裂 / 不适用
 ### 11.11.1 定义
 Logical Note 是 Segment 内触发 Event Instrument Instance 的高层 Note 对象。
 Logical Note 不等同于 SubVoice 内部模板 Note。
+Logical Note start 是 Logical Gate anchor；当 Event Instrument `Pre-Roll Ticks > 0` 时，它不等于模板/实例 origin。
 Logical Note 至少包含：
 ```text
 稳定 ID
@@ -568,6 +582,8 @@ UI 必须明确显示其处于非活动裁剪区
 当前不参与编译
 UI 必须清楚显示超出部分非活动
 ```
+
+Logical Note 的 Pre-Roll 前缀不是隐藏裁剪内容。只有当 `anchor - Pre-Roll Ticks` 仍位于同一 Segment 当前有效窗口内时，该 Note 才可参与正式编译；Segment 左边界不提供隐式前滚空间。
 ---
 ## 11.12 Logical Parameter 系统入口
 ### 11.12.1 Logical Parameter 编曲控制要求
@@ -984,11 +1000,13 @@ Logical Parameter 在没有活动 Note / 实例时：
 之后若有新实例，读取该状态
 ```
 ### 11.17.6 Note On 时读取当前参数状态
-如果 Note 起点前已有参数有效值，而 Note 起点处没有新参数点：
+如果 Instance Origin 前已有参数有效值，而该实际起点处没有新参数点：
 ```text
-Note 起点实例应读取该参数当前有效值
+实例应从 Instance Origin 读取该参数当前有效值
 用于初始输出 / 后续状态
 ```
+
+对于 Pre-Roll 实例，后续每个模板/派生事件按其实际 absolute tick 读取参数状态；Logical Note anchor 之后才生效的值不得倒灌到前缀。
 如果需要在同一 tick 的 Note On 前设置 Mod / Exp / Pitch Bend 等目标状态：
 ```text
 编译器应在该 Note On 前插入对应参数映射输出事件
@@ -1202,6 +1220,8 @@ Segment 起点 Reset 边界语义
 解析活动实例上下文
 ```
 具体算法由第 13 章《播放与预览》规定。
+
+该入口继续服从范围冷启动：若某实例的 Pre-Roll origin 早于预览起点，则不补发其范围前 Note On，也不为重建 sample 相位执行隐藏音频预滚。
 ---
 ## 11.23 诊断入口
 ### 11.23.1 Logical Track Usage / Definition 错误
@@ -1218,6 +1238,8 @@ Mute / Solo 不隐藏项目数据错误
 仍诊断
 因为数据保存在项目中
 ```
+
+Logical Note anchor 虽在有效窗口内、但 `anchor - Pre-Roll Ticks` 早于该 Segment 有效起点时，不属于“隐藏内容不参与”的普通裁剪情况；它必须产生可定位到 Logical Note、Segment 与 Event Instrument Definition 的编译 Error。
 ### 11.23.4 断裂参数 Lane
 断裂参数 Lane：
 ```text
@@ -1264,6 +1286,7 @@ C# 运行时异常：
 ```text
 Segment 有效窗口裁剪
 Logical Note 触发 Event Instrument Instance
+Pre-Roll 后 Instance Origin 计算与 Segment 左边界验证
 Logical Parameter 有效状态解析
 Logical Parameter 与 SubVoice 原始事件合成
 同 tick 排序

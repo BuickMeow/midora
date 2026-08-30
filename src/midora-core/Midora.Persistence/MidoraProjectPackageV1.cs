@@ -52,7 +52,8 @@ public sealed record MidoraProjectOpenResultV1(
     MidoraProject Project,
     MidoraProjectFileInformationV1 FileInformation,
     bool IsModified,
-    IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics) : IDisposable, IAsyncDisposable
+    IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics,
+    bool RequiresFormatUpgrade = false) : IDisposable, IAsyncDisposable
 {
     public void Dispose() => Project.Dispose();
 
@@ -113,8 +114,8 @@ public sealed class MidoraPackageVersionCompatibilityExceptionV1 : MidoraPackage
     public int FileFormatVersion { get; }
     public int MinimumReadableVersion { get; }
     public int ManifestSchemaVersion { get; }
-    public int SupportedFileFormatVersion => PersistenceContractV1.FileFormatVersion;
-    public int SupportedManifestSchemaVersion => PersistenceContractV1.SchemaVersion;
+    public int SupportedFileFormatVersion => PersistenceContractV2.FileFormatVersion;
+    public int SupportedManifestSchemaVersion => PersistenceContractV2.ManifestSchemaVersion;
 }
 
 public sealed class MidoraProjectPackageV1
@@ -169,7 +170,7 @@ public sealed class MidoraProjectPackageV1
         {
             throw new MidoraPackageExceptionV1(
                 MidoraPackageStageV1.Structure,
-                "The Midora package contains invalid v1 Project data.",
+                "The Midora package contains invalid Project data.",
                 targetPath: path,
                 innerException: exception);
         }
@@ -261,7 +262,7 @@ public sealed class MidoraProjectPackageV1
         {
             throw new MidoraPackageExceptionV1(
                 MidoraPackageStageV1.Serialization,
-                "The current Project cannot be serialized as the supported v1 package slice.",
+                "The current Project cannot be serialized as the current package format.",
                 targetPath: target,
                 innerException: exception);
         }
@@ -322,7 +323,7 @@ public sealed class MidoraProjectPackageV1
                 {
                     throw new MidoraPackageExceptionV1(
                         MidoraPackageStageV1.Serialization,
-                        "The current Project cannot be serialized as the supported v1 package slice.",
+                        "The current Project cannot be serialized as the current package format.",
                         targetPath: target,
                         temporaryPath: temporaryDirectory,
                         innerException: exception);
@@ -511,17 +512,25 @@ public sealed class MidoraProjectPackageV1
                 MidoraPackagePathsV1.Manifest,
                 innerException: exception);
         }
-        if (versionHeader.FileFormatVersion > PersistenceContractV1.FileFormatVersion
-            || versionHeader.MinimumReadableVersion > PersistenceContractV1.FileFormatVersion
-            || versionHeader.ManifestSchemaVersion > PersistenceContractV1.SchemaVersion)
+        if (versionHeader.FileFormatVersion > PersistenceContractV2.FileFormatVersion
+            || versionHeader.MinimumReadableVersion > PersistenceContractV2.FileFormatVersion
+            || versionHeader.ManifestSchemaVersion > PersistenceContractV2.ManifestSchemaVersion)
         {
             throw new MidoraPackageVersionCompatibilityExceptionV1(path, versionHeader);
         }
 
-        ManifestJsonV1 manifest;
+        PackageManifestView manifest;
         try
         {
-            manifest = ManifestCodecV1.Parse(manifestBytes);
+            manifest = versionHeader.FileFormatVersion switch
+            {
+                PersistenceContractV1.FileFormatVersion => PackageManifestView.FromV1(
+                    ManifestCodecV1.Parse(manifestBytes)),
+                PersistenceContractV2.FileFormatVersion => PackageManifestView.FromV2(
+                    ManifestCodecV2.Parse(manifestBytes)),
+                _ => throw new InvalidDataException(
+                    $"Unsupported Midora file-format version {versionHeader.FileFormatVersion}.")
+            };
         }
         catch (Exception exception) when (exception is InvalidDataException
             or System.Text.Json.JsonException)
@@ -534,8 +543,18 @@ public sealed class MidoraProjectPackageV1
                 innerException: exception);
         }
 
-        Dictionary<string, ManifestFileEntryJsonV1> index = ValidateManifestIndex(manifest, path);
+        bool requiresFormatUpgrade = manifest.FileFormatVersion == PersistenceContractV1.FileFormatVersion;
+        Dictionary<string, ManifestFileEntryJsonV1> index = ValidateManifestIndex(manifest.Files, path);
         List<MidoraPackageDiagnosticV1> diagnostics = CollectExtraEntryDiagnostics(entries, index);
+        if (requiresFormatUpgrade)
+        {
+            diagnostics.Add(new(
+                MidoraPackageDiagnosticSeverityV1.Information,
+                MidoraPackageDiagnosticCategoryV1.VersionCompatibility,
+                "MIDORA-PERSIST-FORMAT-MIGRATED",
+                "The Format 1 Project was migrated in memory. Saving will write Format 2.",
+                MidoraPackagePathsV1.Manifest));
+        }
 
         byte[] projectBytes = await ReadRequiredValidatedAsync(
             MidoraPackagePathsV1.Project, "core-json", entries, index, path, cancellationToken)
@@ -550,7 +569,7 @@ public sealed class MidoraProjectPackageV1
             throw StructureFailure(path, MidoraPackagePathsV1.Project, "project.json is invalid.", exception);
         }
         diagnostics.AddRange(CollectOrphanObjectDiagnostics(index, projectIndex));
-        bool isModified = false;
+        bool isModified = requiresFormatUpgrade;
         ProjectSettingsJsonV1 projectSettings;
         try
         {
@@ -593,6 +612,7 @@ public sealed class MidoraProjectPackageV1
             await RestoreProjectObjectsAsync(
                 project,
                 projectIndex,
+                manifest.FileFormatVersion,
                 entries,
                 index,
                 path,
@@ -687,7 +707,8 @@ public sealed class MidoraProjectPackageV1
                     manifest.CreatedWithSoftwareVersion,
                     manifest.LastSavedWithSoftwareVersion),
                 isModified,
-                diagnostics);
+                diagnostics,
+                requiresFormatUpgrade);
         }
         catch
         {
@@ -718,7 +739,7 @@ public sealed class MidoraProjectPackageV1
         {
             content.Add(
                 $"event-instruments/ei_{instrument.Id}.pb",
-                EventInstrumentProtobufCodecV1.Serialize(instrument));
+                EventInstrumentProtobufCodecV2.Serialize(instrument));
         }
         foreach (EventInstrumentUsage usage in project.EventInstrumentUsages)
         {
@@ -773,22 +794,22 @@ public sealed class MidoraProjectPackageV1
         {
             Path = item.Key,
             Kind = GetExpectedKind(item.Key),
-            SchemaVersion = PersistenceContractV1.SchemaVersion,
+            SchemaVersion = GetCurrentSchemaVersion(item.Key),
             Sha256 = Convert.ToHexStringLower(SHA256.HashData(item.Value))
         })
             .Concat(pureMidiPackEntries)
             .ToArray();
-        ManifestJsonV1 manifest = new()
+        ManifestJsonV2 manifest = new()
         {
             Magic = "midora-project",
-            FileFormatVersion = PersistenceContractV1.FileFormatVersion,
-            MinimumReadableVersion = PersistenceContractV1.FileFormatVersion,
-            ManifestSchemaVersion = PersistenceContractV1.SchemaVersion,
+            FileFormatVersion = PersistenceContractV2.FileFormatVersion,
+            MinimumReadableVersion = PersistenceContractV2.FileFormatVersion,
+            ManifestSchemaVersion = PersistenceContractV2.ManifestSchemaVersion,
             CreatedWithSoftwareVersion = fileInformation.CreatedWithSoftwareVersion,
             LastSavedWithSoftwareVersion = fileInformation.LastSavedWithSoftwareVersion,
             Files = manifestFiles
         };
-        content.Add(MidoraPackagePathsV1.Manifest, ManifestCodecV1.Serialize(manifest));
+        content.Add(MidoraPackagePathsV1.Manifest, ManifestCodecV2.Serialize(manifest));
         return new(content, pureMidiPackEntries);
     }
 
@@ -1165,12 +1186,12 @@ public sealed class MidoraProjectPackageV1
     }
 
     private static Dictionary<string, ManifestFileEntryJsonV1> ValidateManifestIndex(
-        ManifestJsonV1 manifest,
+        IReadOnlyList<ManifestFileEntryJsonV1> files,
         string targetPath)
     {
         Dictionary<string, ManifestFileEntryJsonV1> result = new(StringComparer.Ordinal);
         HashSet<string> insensitivePaths = new(StringComparer.OrdinalIgnoreCase);
-        foreach (ManifestFileEntryJsonV1 item in manifest.Files)
+        foreach (ManifestFileEntryJsonV1 item in files)
         {
             if (item.Path == MidoraPackagePathsV1.Manifest
                 || !result.TryAdd(item.Path, item)
@@ -1251,6 +1272,7 @@ public sealed class MidoraProjectPackageV1
     private static async Task RestoreProjectObjectsAsync(
         MidoraProject project,
         ProjectJsonV1 projectIndex,
+        int fileFormatVersion,
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         IReadOnlyDictionary<string, ManifestFileEntryJsonV1> manifestIndex,
         string targetPath,
@@ -1265,6 +1287,9 @@ public sealed class MidoraProjectPackageV1
             ObjectPayloadV1 payload = await ReadObjectPayloadAsync(
                 item.Path,
                 "event-instrument-pb",
+                fileFormatVersion == PersistenceContractV1.FileFormatVersion
+                    ? PersistenceContractV1.SchemaVersion
+                    : PersistenceContractV2.EventInstrumentSchemaVersion,
                 entries,
                 manifestIndex,
                 targetPath,
@@ -1283,9 +1308,15 @@ public sealed class MidoraProjectPackageV1
             }
             try
             {
-                EventInstrument instrument = EventInstrumentProtobufCodecV1.Restore(
-                    project,
-                    payload.Bytes);
+                EventInstrument instrument = fileFormatVersion switch
+                {
+                    PersistenceContractV1.FileFormatVersion =>
+                        RestoreFormat1EventInstrument(project, payload.Bytes),
+                    PersistenceContractV2.FileFormatVersion =>
+                        EventInstrumentProtobufCodecV2.Restore(project, payload.Bytes),
+                    _ => throw new InvalidDataException(
+                        $"Unsupported Event Instrument file-format version {fileFormatVersion}.")
+                };
                 if (instrument.Id != expectedId)
                 {
                     throw new InvalidDataException(
@@ -1320,6 +1351,7 @@ public sealed class MidoraProjectPackageV1
             ObjectPayloadV1 payload = await ReadObjectPayloadAsync(
                 item.Path,
                 "event-instrument-usage-pb",
+                PersistenceContractV2.ReusedComponentSchemaVersion,
                 entries,
                 manifestIndex,
                 targetPath,
@@ -1374,6 +1406,7 @@ public sealed class MidoraProjectPackageV1
             ObjectPayloadV1 payload = await ReadObjectPayloadAsync(
                 item.Path,
                 "midi-channel-root-pb",
+                PersistenceContractV2.ReusedComponentSchemaVersion,
                 entries,
                 manifestIndex,
                 targetPath,
@@ -1433,6 +1466,7 @@ public sealed class MidoraProjectPackageV1
             ObjectPayloadV1 payload = await ReadObjectPayloadAsync(
                 item.Path,
                 logical ? "logical-track-pb" : "pure-midi-track-pb",
+                PersistenceContractV2.ReusedComponentSchemaVersion,
                 entries,
                 manifestIndex,
                 targetPath,
@@ -1515,6 +1549,7 @@ public sealed class MidoraProjectPackageV1
     private static async Task<ObjectPayloadV1> ReadObjectPayloadAsync(
         string packagePath,
         string expectedKind,
+        int expectedSchemaVersion,
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         IReadOnlyDictionary<string, ManifestFileEntryJsonV1> manifestIndex,
         string targetPath,
@@ -1528,7 +1563,7 @@ public sealed class MidoraProjectPackageV1
                 "project.json references an object that is absent from manifest.json.");
         }
         if (manifestEntry.Kind != expectedKind
-            || manifestEntry.SchemaVersion != PersistenceContractV1.SchemaVersion)
+            || manifestEntry.SchemaVersion != expectedSchemaVersion)
         {
             throw StructureFailure(
                 targetPath,
@@ -1755,8 +1790,22 @@ public sealed class MidoraProjectPackageV1
         _ when path.StartsWith("midi-channel-roots/", StringComparison.Ordinal) => "midi-channel-root-pb",
         _ when path.StartsWith("midi-tracks/", StringComparison.Ordinal) => "pure-midi-track-pb",
         _ when path.StartsWith("midi-content/", StringComparison.Ordinal) => "pure-midi-content-pack",
-        _ => throw new InvalidDataException($"No v1 manifest kind is defined for '{path}'.")
+        _ => throw new InvalidDataException($"No manifest kind is defined for '{path}'.")
     };
+
+    private static int GetCurrentSchemaVersion(string path) =>
+        path.StartsWith("event-instruments/", StringComparison.Ordinal)
+            ? PersistenceContractV2.EventInstrumentSchemaVersion
+            : PersistenceContractV2.ReusedComponentSchemaVersion;
+
+    private static EventInstrument RestoreFormat1EventInstrument(
+        MidoraProject project,
+        ReadOnlySpan<byte> bytes)
+    {
+        EventInstrument instrument = EventInstrumentProtobufCodecV1.Restore(project, bytes);
+        instrument.PreRollTicks = 0;
+        return instrument;
+    }
 
     private static bool IsKnownKind(string kind) => kind is
         "core-json" or "settings-json" or "conductor-json" or
@@ -2093,4 +2142,23 @@ public sealed class MidoraProjectPackageV1
     private sealed record PackageContentV1(
         Dictionary<string, byte[]> MemoryFiles,
         IReadOnlyList<ManifestFileEntryJsonV1> PureMidiPackEntries);
+
+    private sealed record PackageManifestView(
+        int FileFormatVersion,
+        string CreatedWithSoftwareVersion,
+        string LastSavedWithSoftwareVersion,
+        IReadOnlyList<ManifestFileEntryJsonV1> Files)
+    {
+        public static PackageManifestView FromV1(ManifestJsonV1 value) => new(
+            value.FileFormatVersion,
+            value.CreatedWithSoftwareVersion,
+            value.LastSavedWithSoftwareVersion,
+            value.Files);
+
+        public static PackageManifestView FromV2(ManifestJsonV2 value) => new(
+            value.FileFormatVersion,
+            value.CreatedWithSoftwareVersion,
+            value.LastSavedWithSoftwareVersion,
+            value.Files);
+    }
 }

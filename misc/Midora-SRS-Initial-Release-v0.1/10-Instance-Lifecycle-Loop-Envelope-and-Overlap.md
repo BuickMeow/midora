@@ -29,6 +29,19 @@ Tail 区域上限
 Loop 区间合法性上限
 End At Template Length 的结束边界
 ```
+
+### 10.1.1.1 Logical anchor、Pre-Roll 与 Instance Origin
+
+对于 Logical Segment 中的 Event Instrument Instance，Logical Note start 是逻辑 Gate anchor，而 Event Instrument Definition 的 `Pre-Roll Ticks` 把模板与实例 origin 提前：
+
+```text
+A = Logical Note absolute start / Logical Gate Start
+O = Event Instrument Pre-Roll Ticks
+I = Event Instrument Instance / template origin = A - O
+template tick t 的 absolute tick = I + t
+```
+
+`I` 是 Initial State、模板 tick 0 输出、Overlap 与资源占用的实例开始位置；`A` 仍是 Gate Start。Pre-Roll 不是负 Gate、额外 Gate Length 或播放延迟。只有 Logical Segment 正式实例使用 `O`；Event Instrument/SubVoice standalone Preview、Segment Pitch Ruler audition 等非 Logical Segment 实例按 `O = 0`。
 ### 10.1.2 Gate Length
 `Gate Length` 等于 Logical Track 中触发 Note 的长度。
 系统级定义：
@@ -41,6 +54,12 @@ Logical Track 触发 Note 的 Gate Length 不允许为 0。
 ```text
 Gate Length 必须 > 0
 ```
+
+Pre-Roll 不参与短音/长音分类，也不改变 Gate Length。未发生 Segment End 裁剪时，从 Instance Origin 到 Gate End 的实例局部 Gate horizon 为：
+
+```text
+Pre-Roll Ticks + Gate Length
+```
 ### 10.1.3 Gate End
 `Gate End` 是 Logical Track 触发 Note 的逻辑结束点。
 关键规则：
@@ -49,6 +68,8 @@ Gate End 不等于实际 MIDI Note Off
 Gate End 通常触发 Midora Release 阶段
 实际 MIDI Note Off 可以晚于 Gate End
 ```
+
+设 Logical Note anchor 为 `A`、长度为 `L`，则未被硬边界裁剪时 `Gate End = A + L`。Segment End 早于该位置时仍按既有规则把有效 Gate End 裁剪到 Segment End；Pre-Roll 不把 Gate End 向前移动。
 ### 10.1.4 Release Start
 `Release Start` 通常等于 Gate End。
 当 Gate End 到达，且当前策略允许 Release 时：
@@ -859,10 +880,12 @@ Segment 强制裁剪
 Project End Marker 后续裁剪规则
 Overlap 策略对旧实例的截断
 ```
+
+本节全部 Rendered Instance Length 都从 Instance Origin 计量。对 Pre-Roll 为 `O` 的 Logical Segment 实例，任何由 Logical Gate End 决定的局部生命周期边界都位于 `O + effective Gate Length`；由 Template Length 自身决定的边界仍从模板 origin 计量，不再额外加一次 `O`。
 ### 10.15.1 Cut At Note Off
 当短音策略为 `Cut At Note Off` 且存在 Envelope Release 时：
 ```text
-Rendered Instance Length = Gate Length + Release Length + 必要 MIDI Note Off + 必要 Reset
+Rendered Instance Length = Pre-Roll Ticks + effective Gate Length + Release Length + 必要 MIDI Note Off
 ```
 如果存在多个 Release：
 ```text
@@ -910,6 +933,8 @@ Initial State Defaults 在 lane 首次启用或非重叠复用实例开始时输
 Initial State Defaults 与用户 tick 0 手动画的同类事件冲突时，用户事件优先
 共享 lane 内仍重叠的后续实例不重复输出 Initial State Defaults
 ```
+
+存在 Pre-Roll 时，“实例开始”指提前后的 Instance Origin `A - O`，不是 Logical Gate Start `A`。Reset Defaults、Initial State 和模板 tick 0 用户状态事件都按该实际 tick 排序；不得延迟到 anchor 后再建立状态。
 ### 10.16.2 Reset Defaults
 `Reset Defaults` 表示 lane 启用/非重叠复用前建立确定性基线，以及裁剪、Segment 结束或释放 Channel Unit 前恢复安全状态的项目 / 系统级规则。
 规则：
@@ -994,6 +1019,8 @@ Reset
 ```
 Release 阶段视为旧实例尚未结束。
 Reset 阶段至少在资源占用上视为尚未完全释放。
+
+Overlap 区间起点必须使用提前后的 Instance Origin。Pre-Roll 因而可能使两个视觉上未重叠的 Logical Note 产生实例生命周期重叠；`Cut Previous` 的“新实例起点”同样指该 origin，而不是 Logical Gate anchor。
 ### 10.17.5 Per-Note Instance Isolation 开启
 当 Per-Note Instance Isolation 开启时：
 ```text
@@ -1039,6 +1066,7 @@ Warn   -> 产生 Warning；若不存在其他失败条件，重叠实例保留�
 允许旧实例进入 Release
 截断点作为旧实例新的 Gate End / Release Start
 ```
+当使用 Pre-Roll 且新实例 origin 落在旧实例的 Logical Gate Start 之前时，旧实例在前缀内被截断。此时旧实例的截断专用 MappingContext `gateLength` 固定为 0；该值只表示 Overlap Policy 已在 Gate 开始前终止既有实例，不放宽普通 Logical Note 的 `Gate Length > 0` 约束。
 如果 Cut Previous 后旧实例进入 Release，导致旧实例仍与新实例在时间上重叠：
 ```text
 允许这种 Release 重叠
@@ -1124,9 +1152,11 @@ Logical Parameter 在没有活动实例时不直接输出 MIDI 事件。
 ### 10.19.3 Note On 到达时的参数状态读取
 当 Logical Note 触发 Event Instrument Instance 时：
 ```text
-实例应读取当前 tick 的 Logical Parameter 有效状态。
+实例应从提前后的 Instance Origin 开始，按每个模板/派生事件的实际 absolute tick 读取 Logical Parameter 有效状态。
 如果需要在同 tick 的 Note On 前设置目标状态，编译器应在 Note On 前插入对应参数映射输出事件。
 ```
+
+不得把 Logical Gate anchor tick 的未来参数状态倒灌到 Pre-Roll 区间。用户若希望前缀使用某一参数状态，必须令该状态在 Instance Origin 已经有效。
 这适用于例如：
 ```text
 Note On 前先设置 Mod / Expression
@@ -1208,6 +1238,7 @@ Project End Marker 不直接改写实例自然 Rendered Instance Length。
 ```text
 短音策略
 长音策略
+Pre-Roll Ticks
 Loop 启用状态
 Loop Start / Loop End
 Envelope Preset 创建 / 删除 / 修改
@@ -1218,7 +1249,7 @@ Envelope Preset 引用关系
 修改生命周期相关设置应使 Project 进入已修改状态。
 不以该 Event Instrument 是否已被 Logical Track 使用为条件。
 ### 10.22.3 保存
-短音策略、长音策略、Loop 设置、Envelope Preset 必须保存进 `.midora` Project。
+短音策略、长音策略、Pre-Roll Ticks、Loop 设置、Envelope Preset 必须保存进 `.midora` Project。
 系统不得依赖运行时重新推断。
 ### 10.22.4 引用处更新
 修改 Event Instrument 生命周期设置后：
@@ -1237,6 +1268,7 @@ Logical Track 播放、整曲播放、MIDI 导出、音频渲染应使用同一�
 生命周期策略直接影响 MIDI 导出的事件内容，包括：
 ```text
 实例展开
+Pre-Roll 后的实例 / 模板 origin
 Note Off
 Tail
 Release
@@ -1257,6 +1289,7 @@ Envelope 值越界
 Envelope 阶段时长为负
 断裂 Envelope 引用
 非法生命周期策略组合
+Pre-Roll Ticks 不在 0..Template Length 范围内
 Loop / Envelope 在 Per-Note Instance Isolation 关闭时被实际启用
 Loop 边界处非法 Note 跨越
 其他相关章节规定的生命周期非法状态

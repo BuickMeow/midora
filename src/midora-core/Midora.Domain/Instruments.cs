@@ -732,6 +732,7 @@ public sealed class EventInstrument
     public MidoraColor Color { get; set; } = MidoraColor.DefaultInstrument;
     public int RootNote { get; set; } = 60;
     public long TemplateLengthTicks { get; set; }
+    public long PreRollTicks { get; set; }
     public bool RequiresChannelIsolation { get; set; }
     public OverlapPolicy OverlapPolicy { get; set; } = OverlapPolicy.Reject;
     public OverlapScope OverlapScope { get; set; } = OverlapScope.SamePitch;

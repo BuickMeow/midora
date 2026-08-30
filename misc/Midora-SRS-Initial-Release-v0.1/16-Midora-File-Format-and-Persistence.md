@@ -460,7 +460,7 @@ Project 可打开。
 Project 标记为已修改。
 保存时写出完整 settings 文件。
 ```
-当前 Format 1 不包含 `settings/export-settings.json`、`settings/playback-settings.json` 或 `settings/audio-render-settings.json`。Format 1 冻结前的旧开发包不属于兼容基线；冻结后的 Format 1 不得通过隐藏兼容字段重新建立这些 Project 模型。
+冻结 Format 1 不包含 `settings/export-settings.json`、`settings/playback-settings.json` 或 `settings/audio-render-settings.json`；Format 2 继续不包含这些模型。Format 1 冻结前的旧开发包不属于兼容基线；冻结后的 Format 1 不得通过隐藏兼容字段重新建立这些 Project 模型。
 
 ### 16.7.2 project-settings.json
 保存 TPQ 与其他正式 Project 级、非 metadata、非 Reset 的系统设置。TPQ 是 Project 语义，不是文件格式语义；Format 1 固定只接受整数 `1..32767`。每个 Time Signature 仍必须满足 `4 × ticksPerQuarterNote % denominator == 0`，读取和保存均须校验。
@@ -558,6 +558,7 @@ schemaVersion
 备注 / 描述
 Root Note
 Template Length
+Pre-Roll Ticks
 SubVoice 集合
 SubVoice 顺序
 SubVoice 内事件与曲线
@@ -1839,3 +1840,71 @@ minimumReadableVersion = fileFormatVersion = 1
 ```
 
 只有另行定义并验证前向兼容 reader 后，未来格式才可声明更低的 `minimumReadableVersion`。
+
+---
+
+## 16.32 Format 2：Event Instrument Pre-Roll Ticks
+
+### 16.32.1 提升原因与版本字段
+
+Event Instrument Definition 的 `Pre-Roll Ticks` 是 Format 1 无法表达的新持久化语义，因此当前 writer 必须写 Format 2，不得向冻结 V1 protobuf 增加字段、复用字段号、根据未知字段猜值或修改 V1 descriptor/golden：
+
+```text
+fileFormatVersion = 2
+minimumReadableVersion = 2
+manifestSchemaVersion = 2
+```
+
+产品 SemVer、Project 用户版本与 Mapping ABI 不因本次格式提升自动改变。Format 2 保持 Format 1 的 package 顶层路径、manifest/file kind、除 Event Instrument 外的组件 schema 以及 Pure MIDI content-pack wire；“保持”不代表旧软件可前向读取，Format 1 reader 仍必须因版本预检拒绝 Format 2。
+
+### 16.32.2 Event Instrument protobuf v2
+
+Format 2 的 Event Instrument component schemaVersion 提升为 v2。Edition 2024 wire 使用显式 presence，并以冻结 V1 Definition payload 加必填 Pre-Roll 字段组成 V2 wrapper：
+
+```proto
+message EventInstrumentV2 {
+  uint32 schema_version = 1;
+  string object_type = 2;
+  midora.persistence.v1.EventInstrumentV1 definition = 3;
+  int64 pre_roll_ticks = 4;
+  reserved 5 to max;
+}
+```
+
+四个字段在格式层都必须存在；`definition` 必须继续通过冻结 V1 Event Instrument codec 的严格验证，wrapper 不允许覆盖或重新解释其字段。`pre_roll_ticks` 字段号 4 永久保留，字段语义固定为：
+
+```text
+0 <= pre_roll_ticks <= template_length_ticks
+0 表示不提前，且与 Format 1 行为等价
+```
+
+V2 reader 必须要求字段存在并执行严格有符号 Int64、范围和 unknown/duplicate-field 校验；不得把缺失字段默认为 0。V2 deterministic wire golden 必须至少覆盖 0、Template Length 上界、负值、超上界、缺失字段、未知字段及字段顺序无关的确定性写出。
+
+### 16.32.3 Format 1 detached migration
+
+新软件必须继续使用冻结 V1 reader 打开有效 Format 1，然后执行 detached migration：
+
+```text
+1. 使用 V1 schema/descriptor/codec 完整读取并验证源包。
+2. 在未发布的独立候选 Project 中复制全部源数据。
+3. 为每个 Event Instrument Definition 显式设置 Pre-Roll Ticks = 0。
+4. 保留全部 stable ID、Definition/Usage/Root/Track membership、顺序、Segment 内容、Pure MIDI page pack 语义和用户 metadata。
+5. 对完整候选执行当前 Domain 与 Format 2 语义验证；全部成功后才一次提交为活动 Project。
+```
+
+迁移不得覆盖、重写或在原 Format 1 包中追加字段。迁移成功后 Project 处于“已迁移未保存”状态；普通 Save 经既有升级确认写 Format 2，Save Copy 也只写 Format 2。迁移失败必须保留当前 Project 与源文件不变，不得提交部分 Definition 或把缺失字段解释为损坏 V2。
+
+### 16.32.4 当前格式测试门
+
+除第 16.31.3 节持续保留的 Format 1 自动兼容门外，Format 2 必须增加：
+
+```text
+Format 2 JSON schema set 与 protobuf v2 descriptor hash
+Format 2 deterministic package/wire golden
+Format 1 -> detached Format 2 migration golden
+V1 Pre-Roll=0 行为与迁移后 Full/Incremental/canonical 结果等价
+Format 2 Pre-Roll 非零 round-trip、Save Copy、损坏隔离与事务故障注入
+旧软件对 Format 2 的版本预检拒绝
+```
+
+不得通过修改 Format 1 schema、descriptor、golden 或 reader 来完成这些测试。

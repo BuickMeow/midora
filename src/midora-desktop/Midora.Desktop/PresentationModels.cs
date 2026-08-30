@@ -2978,6 +2978,7 @@ public sealed class InstrumentWorkspaceViewModel(
     private string _instrumentColorText = "#6B7280";
     private string _instrumentRootNoteText = "60";
     private string _instrumentTemplateLengthText = "1";
+    private string _instrumentPreRollTicksText = "0";
     private long? _loopStartTick;
     private long? _loopEndTick;
     private long _templateLengthTicks = 1;
@@ -3239,6 +3240,7 @@ public sealed class InstrumentWorkspaceViewModel(
     public string InstrumentColorText { get => _instrumentColorText; set => Set(ref _instrumentColorText, value ?? string.Empty); }
     public string InstrumentRootNoteText { get => _instrumentRootNoteText; set => Set(ref _instrumentRootNoteText, value ?? string.Empty); }
     public string InstrumentTemplateLengthText { get => _instrumentTemplateLengthText; set => Set(ref _instrumentTemplateLengthText, value ?? string.Empty); }
+    public string InstrumentPreRollTicksText { get => _instrumentPreRollTicksText; set => Set(ref _instrumentPreRollTicksText, value ?? string.Empty); }
     public long? LoopStartTick { get => _loopStartTick; private set => Set(ref _loopStartTick, value); }
     public long? LoopEndTick { get => _loopEndTick; private set => Set(ref _loopEndTick, value); }
     public long TemplateLengthTicks { get => _templateLengthTicks; private set => Set(ref _templateLengthTicks, Math.Max(1, value)); }
@@ -3351,8 +3353,9 @@ public sealed class InstrumentWorkspaceViewModel(
         InstrumentColorText = $"#{instrument.Color.Red:X2}{instrument.Color.Green:X2}{instrument.Color.Blue:X2}";
         InstrumentRootNoteText = instrument.RootNote.ToString(System.Globalization.CultureInfo.InvariantCulture);
         InstrumentTemplateLengthText = instrument.TemplateLengthTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        InstrumentPreRollTicksText = instrument.PreRollTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         AddInstrumentInitialStateFields(instrument.InitialState);
-        Summary = $"Root {MidiNoteName(instrument.RootNote)} · Template {instrument.TemplateLengthTicks} ticks · {instrument.SubVoices.Count} SubVoices";
+        Summary = $"Root {MidiNoteName(instrument.RootNote)} · Template {instrument.TemplateLengthTicks} ticks · Pre-Roll {instrument.PreRollTicks} ticks · {instrument.SubVoices.Count} SubVoices";
         RequiresChannelIsolation = instrument.RequiresChannelIsolation;
         ShortLifecycle = instrument.ShortLifecycle;
         LongLifecycle = instrument.LongLifecycle;

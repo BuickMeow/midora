@@ -97,6 +97,8 @@
 | INV-086 | 主应用取得单实例所有权后自动回收上次异常退出遗留的 audio-cache session 与 Pure MIDI session backing directory；当前目录必须同时满足直接子项、版本 manifest 和活动锁已释放才可删除。`SessionContent` 旧裸 GUID 目录只在名称及 `mt_<positive id>.mpk` 内容结构均严格可识别时兼容回收。活动、未知、清单不匹配、越界或 reparse-point 路径必须保留；逐项删除失败不得阻止启动、新 Project 或新 session。 |
 | INV-087 | Pure MIDI opaque SysEx 的唯一音频特权是可识别且校验有效的 Roland GS DT1 Part Mode 与 Yamaha XG Part Mode。导入必须按 payload target Channel 归属派生 Track；Compiler 保留原 opaque/SMF 数据并额外产生有类型、带来源和正式顺序的 canonical audio event，范围中途起播恢复 Root 当前活动连通区间内最近状态；音频投影重定向到 1-channel Unit channel 0 并以完整规范化 SysEx 发送，随后在同一顺序点显式建立 BASSMIDI Unit 的等价 Melodic/Percussion mode。任意其他 SysEx/Meta、Reset、无效校验和及 continuation 仍不进入音频后端。 |
 | INV-088 | Midora 产品 SemVer、Project file format、component schema、Mapping ABI、IPC/cache generation 与用户 Project Version 是独立版本轴。产品版本只有一个构建源。自 `1.0.0-dev` 冻结点起，后续新 1.x 软件必须持续读取有效 Format 1；Format 1 的 JSON/protobuf/content-pack wire 与字段语义不得原地改变，不能表示的新持久化语义必须进入新格式、独立 reader 和 detached migration。 |
+| INV-089 | Event Instrument Definition 的 `Pre-Roll Ticks` 固定为 `0..Template Length`、默认 0。仅 Logical Segment Instance 使用：对 Logical Note anchor `A`、偏移 `O`，Instance/template origin=`A-O`，Logical Gate Start/End 仍为 `A`/`A+effective Gate Length`，Mapping `gateLength` 不含 `O`。Initial State、实际 tick 参数、Overlap、Usage 连通区间和 Unit 占用从 origin 起算；origin 早于所属 Segment 有效起点或发生 tick 溢出必须 Error，不得 Clamp、丢弃前缀、自动扩展或跨 Segment。standalone Instrument/SubVoice Preview 与 Pitch Ruler audition 按 `O=0`；中途冷启动不补发范围前 NoteOn，也不做音频预滚。全部正式消费者只消费已应用该语义的 canonical。 |
+| INV-090 | Event Instrument Pre-Roll 是 Format 1 无法表达的新语义，当前 writer 使用 Project Format 2、manifest schema v2 与 Event Instrument protobuf v2 wrapper，其中 `pre_roll_ticks` 为必填 field 4。冻结 V1 reader/descriptor/golden 不变；V1 打开必须 detached 迁移到候选 Domain，并为每个 Definition 显式设置 0，完整验证后一次提交。保存只写 Format 2，不覆盖来源 V1，不支持保存回 V1。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -106,7 +108,7 @@
 | tick、TPQ、Tempo、拍号、Marker | 第 4 章 |
 | Port、Channel Unit、资源不足 | 第 5 章 |
 | 程序级多 SF2/SFZ 列表、目标 Bank/Program 映射、无 Enabled SoundFont、BASS 直接读取与缓存身份 | 第 6、13、15、17 章 |
-| Event Instrument 定义与内部索引 | 第 7、24 章 |
+| Event Instrument 定义、Pre-Roll Ticks 与内部索引 | 第 7、9～13、16、18、24 章 |
 | SubVoice、Note/CC/RPN 等事件 | 第 8 章 |
 | Logical Parameter、映射和 C# 函数 | 第 9 章 |
 | Release、Loop、Envelope、Overlap | 第 10 章 |

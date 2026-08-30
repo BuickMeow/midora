@@ -16,6 +16,9 @@
     <Protobuf Include="Schemas\Proto\midora-event-instrument-v1.proto"
               GrpcServices="None"
               AdditionalProtocArguments="--csharp_opt=internal_access" />
+    <Protobuf Include="Schemas\Proto\midora-event-instrument-v2.proto"
+              GrpcServices="None"
+              AdditionalProtocArguments="--csharp_opt=internal_access" />
     <Protobuf Include="Schemas\Proto\midora-logical-track-v1.proto"
               GrpcServices="None"
               AdditionalProtocArguments="--csharp_opt=internal_access" />
@@ -29,6 +32,9 @@
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="Never" />
     <Content Include="Schemas\Json\midora-json-v1.schema-set.sha256"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Never" />
+    <Content Include="Schemas\Json\midora-json-v2.schema-set.sha256"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="Never" />
     <Content Include="Schemas\Proto\*.descriptor.sha256"

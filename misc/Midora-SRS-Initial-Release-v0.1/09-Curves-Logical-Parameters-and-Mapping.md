@@ -603,9 +603,22 @@ Project End Marker
 预渲染上下文
 ```
 这些由 第 10 章《实例生命周期、Loop、Envelope 与重叠》、第 11 章《Logical Track、Segment 与编曲语义》、第 12 章《编译系统与 Canonical Compiled Result》、第 13 章《播放与预览》 继续细化。
+
+Event Instrument Definition 的 `Pre-Roll Ticks` 大于 0 时，`projectTick` 和 `segmentLocalTick` 必须表示当前模板/派生事件提前后的实际时间位置，而不是 Logical Note 的可见 anchor tick。设 anchor 为 `A`、Pre-Roll 为 `O`，则 template tick `t` 对应 `projectTick = A - O + t`；`templateTick` 仍保持 `t`，不得因 Pre-Roll 重写模板局部坐标。
 ### 9.7.7 gateLength 与 held Preview
 
 普通编译和固定长度预览中的 `gateLength` 必须是已知、合法的最终 Gate Length。
+
+对于使用 `Pre-Roll Ticks` 的 Logical Segment 实例，`gateLength` 仍是从 Logical Gate Start 到有效 Gate End 的逻辑长度；它不得包含 Pre-Roll，也不得改为实例 origin 到 Gate End 的局部时间跨度。换言之，未被 Segment End 裁剪时：
+
+```text
+MappingContext.gateLength = Logical Note.length
+instance-local Gate horizon = Pre-Roll Ticks + MappingContext.gateLength
+```
+
+发生 Segment End 裁剪时，`gateLength` 继续按既有有效 Logical Gate 长度缩短，instance-local Gate horizon 相应为 `Pre-Roll Ticks + effective gateLength`。
+
+`Cut Previous` 的截断点使用新实例的提前后 origin。若该点早于旧实例的 Logical Gate Start，旧实例的截断专用 MappingContext 必须使用 `gateLength = 0`；这是 Overlap Policy 对既有实例的确定性截断哨兵，不表示 Project 中允许零长度 Logical Note，也不得扩展到普通编译输入。
 
 只有第 13.22.7、13.24.5 节定义的 held Preview 因果 Gate 子上下文允许在 Gate End 尚未发生时使用：
 

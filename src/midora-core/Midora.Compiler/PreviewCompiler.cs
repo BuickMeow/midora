@@ -226,7 +226,7 @@ public sealed class PreviewCompiler
                 pitch,
                 request.Velocity,
                 gateLength)
-            : instrument;
+            : CreateTimelineIndependentPreviewInstrument(context, instrument);
         AddInstrumentContext(context, compileInstrument);
 
         LogicalTrack track = new(context) { Name = "Event Instrument Preview" };
@@ -390,7 +390,8 @@ public sealed class PreviewCompiler
             0,
             GetTempoAt(source.Conductor, projectStartTick)));
         context.Conductor.TimeSignatures.Add(new TimeSignatureChange(context, 0, 4, 4));
-        AddInstrumentContext(context, instrument);
+        EventInstrument previewInstrument = CreateTimelineIndependentPreviewInstrument(context, instrument);
+        AddInstrumentContext(context, previewInstrument);
         LogicalTrack track = new(context)
         {
             Id = sourceTrack.Id,
@@ -551,6 +552,36 @@ public sealed class PreviewCompiler
         EventInstrument instrument)
     {
         context.EventInstruments.Add(instrument);
+    }
+
+    private static EventInstrument CreateTimelineIndependentPreviewInstrument(
+        MidoraProject context,
+        EventInstrument source)
+    {
+        EventInstrument result = new(context)
+        {
+            Id = source.Id,
+            Name = source.Name,
+            Description = source.Description,
+            Color = source.Color,
+            RootNote = source.RootNote,
+            TemplateLengthTicks = source.TemplateLengthTicks,
+            PreRollTicks = 0,
+            RequiresChannelIsolation = source.RequiresChannelIsolation,
+            OverlapPolicy = source.OverlapPolicy,
+            OverlapScope = source.OverlapScope,
+            ShortLifecycle = source.ShortLifecycle,
+            LongLifecycle = source.LongLifecycle,
+            LoopStartTick = source.LoopStartTick,
+            LoopEndTick = source.LoopEndTick
+        };
+        CopyState(source.InitialState, result.InitialState);
+        result.LogicalParameters.AddRange(source.LogicalParameters);
+        result.SubVoices.AddRange(source.SubVoices);
+        result.Envelopes.AddRange(source.Envelopes);
+        result.MappingFunctions.AddRange(source.MappingFunctions);
+        result.ParameterMappings.AddRange(source.ParameterMappings);
+        return result;
     }
 
     private static void AddPreviewLogicalTrack(

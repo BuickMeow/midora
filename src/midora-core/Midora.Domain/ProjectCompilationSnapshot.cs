@@ -378,6 +378,7 @@ internal static partial class ProjectCompilationSnapshot
             Color = source.Color,
             RootNote = source.RootNote,
             TemplateLengthTicks = source.TemplateLengthTicks,
+            PreRollTicks = source.PreRollTicks,
             RequiresChannelIsolation = source.RequiresChannelIsolation,
             OverlapPolicy = source.OverlapPolicy,
             OverlapScope = source.OverlapScope,

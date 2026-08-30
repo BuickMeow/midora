@@ -2552,6 +2552,9 @@ public partial class MainWindow : Window
                 "TemplateLength" => ProjectDomainEditCommands.UpdateEventInstrumentTemplateLength(
                     instrumentId,
                     long.Parse(workspace.InstrumentTemplateLengthText, NumberStyles.Integer, CultureInfo.InvariantCulture)),
+                "PreRollTicks" => ProjectDomainEditCommands.UpdateEventInstrumentPreRoll(
+                    instrumentId,
+                    long.Parse(workspace.InstrumentPreRollTicksText, NumberStyles.Integer, CultureInfo.InvariantCulture)),
                 _ => throw new InvalidOperationException("Unknown Event Instrument configuration field.")
             };
             _session.Execute(command);

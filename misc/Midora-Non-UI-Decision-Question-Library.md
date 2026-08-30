@@ -590,13 +590,13 @@ Q-NUI-026～027 是本轮新增问题；其后 Q-NUI-002～025 的状态、产�
 - 状态：已按推荐实施待确认
 - 发现日期：2026-08-06
 - SRS 依据：第 1 章/.NET 10 技术边界、第 21.3 节正确性与确定性优先级、INV-027；Mapping ABI 的 `Microsoft.NETCore.App.Ref 10.0.10` 仍由 INV-029 独立固定。
-- 已确认事实：仓库全部项目目标框架为 `net10.0`，此前没有 `global.json`、NuGet lock files 或单命令非 UI 发布门；同一工作树会使用机器默认 SDK和当次解析出的传递包图。当前完整验证环境安装并使用 `.NET SDK 10.0.302`，对应 .NET 10.0.10 runtime/reference pack；所有直接 PackageReference 已有显式版本。
+- 已确认事实：仓库全部项目目标框架为 `net10.0`，此前没有 `global.json`、NuGet lock files 或单命令非 UI 发布门；同一工作树会使用机器默认 SDK和当次解析出的传递包图。2026-08-06 的完整验证环境使用 `.NET SDK 10.0.302`；2026-08-30 将仓库精确固定版本显式升级为 `.NET SDK 10.0.400`。Mapping ABI 所需 reference pack 仍由 INV-029 独立固定；所有直接 PackageReference 已有显式版本。
 - 不确定点：SRS 固定 .NET 10 和 Mapping reference pack，但未固定一般项目的 SDK feature band、是否允许 patch roll-forward、是否提交每项目 NuGet lock file，也未规定开发期可移植测试缺少原生 BASS/SF2 时应失败还是 Skip。
 - 影响范围：开发/CI 机器准备、依赖还原、编译器与 Native AOT 产物可复现性、测试发现完整性和发布门维护；不改变 Project 文件、canonical、MIDI/WAVE、运行时用户设置或音乐语义。
-- 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目的当前精确计数全部通过且零 Skip；新增/删除测试必须显式评审并更新基线。
-- 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有 10.0.302 的机器会在仓库根目录直接拒绝构建，安全升级 SDK/包时必须显式更新 `global.json`、lock files、基线并重跑完整门。
+- 推荐方案：提交 `global.json`，精确使用当前批准的 SDK `10.0.400`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交当前 38 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目的当前精确计数全部通过且零 Skip；新增/删除测试必须显式评审并更新基线。
+- 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有当前精确固定版本的机器会在仓库根目录直接拒绝构建；安全升级 SDK/包时必须显式更新 `global.json`、基线及当前构建契约，评估 lock files，并重跑完整门。
 - 备选方案及差异：A. SDK 使用 `latestPatch` roll-forward，安全补丁采用更方便，但不同时间/机器可能产生不同 AOT 与编译输出。B. 只固定直接包版本、不提交 lock files，文件较少但传递图仍可变化。C. 不固定 SDK，仅在发布记录中手工写版本；日常构建仍可能漂移，不推荐。
-- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前自动测试基线为 862 tests、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
+- 当前实施状态：已按推荐实现并在本机完整运行发布门；2026-08-30 的 SDK 10.0.400 升级同步刷新 ILLink/Native AOT 隐式依赖锁为 10.0.11，并通过固定 BASS 校验及 Native AOT Worker 发布验证。完整发布门仍须按当前测试基线独立执行。
 - 需要产品所有者回答：是否采用推荐方案？如需允许 SDK patch roll-forward，请明确选择 A；NuGet 锁文件与正式零 Skip 门建议保留。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。

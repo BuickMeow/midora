@@ -440,7 +440,7 @@ D:\Programing\midora\misc\Midora-Non-UI-Decision-Question-Library.md
 十二、构建、测试和 Git 规则
 ================================================================
 
-1. 仓库固定 .NET SDK 10.0.302；使用 locked restore。缺少固定 SDK/包时报告真实环境问题，不静默换版本。
+1. 仓库固定 .NET SDK 10.0.400；使用 locked restore。缺少固定 SDK/包时报告真实环境问题，不静默换版本。
 
 2. 各 solution 共享跨目录 ProjectReference 和 obj/Release。构建必须串行，避免 CS2012 文件锁；不要并行 build 六个 solution。
 

@@ -19,6 +19,7 @@ namespace Midora.Desktop.Tests;
 /// intentionally excluded from normal cost by requiring an explicit sample
 /// path, but remains repeatable for future regressions.
 /// </summary>
+[Collection(DesktopSharedPresentationStateCollection.Name)]
 public sealed class WpfMemoryProbeTests(ITestOutputHelper output)
 {
     [Fact]

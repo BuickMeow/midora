@@ -1,4 +1,5 @@
 using System.Collections.Specialized;
+using System.Reflection;
 using Midora.Application;
 using Midora.Compiler;
 using Midora.Desktop.Presentation.Interaction;
@@ -11,6 +12,7 @@ using Xunit;
 
 namespace Midora.Desktop.Tests;
 
+[Collection(DesktopSharedPresentationStateCollection.Name)]
 public sealed class DesktopSessionControllerTests
 {
     [Fact]
@@ -335,6 +337,28 @@ public sealed class DesktopSessionControllerTests
         ProjectTreeNode repairedNode = session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.Diagnostics);
         Assert.Equal($"Diagnostics ({session.IssueSummary})", repairedNode.Title);
         Assert.NotEqual(failedTitle, repairedNode.Title);
+    }
+
+    [Fact]
+    public async Task LateCompilationNotificationFromClosedProjectIsIgnored()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Closed compilation notification",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        ProjectCompilationSession closedCompilation = session.Document!.Compilation;
+        await session.CloseProjectAsync();
+        long refreshPasses = session.ModelRefreshPassCount;
+        MethodInfo callback = typeof(DesktopSessionController).GetMethod(
+            "OnCompilationChanged",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        _ = callback.Invoke(session, [closedCompilation, EventArgs.Empty]);
+
+        Assert.False(session.HasProject);
+        Assert.Equal(refreshPasses, session.ModelRefreshPassCount);
     }
 
     [Fact]

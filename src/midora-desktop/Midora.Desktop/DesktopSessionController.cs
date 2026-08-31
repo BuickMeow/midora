@@ -90,7 +90,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly object _modelRefreshGate = new();
     private ModelRefreshKind _pendingModelRefreshKinds;
     private ProjectChangeSet? _pendingContentChanges;
+    private ProjectContext? _pendingModelRefreshContext;
     private bool _modelRefreshScheduled;
+    private int _activeModelRefreshPasses;
+    private TaskCompletionSource<bool>? _modelRefreshIdleCompletion;
     private long? _pendingSelectionRestoreStateId;
     private long? _pendingSelectionHistoryCaptureStateId;
     private bool _workspaceSelectionHistoryPruneRequested;
@@ -1688,6 +1691,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         bool scheduleDispatcher = false;
         lock (_modelRefreshGate)
         {
+            ProjectContext? context = _context;
+            if (context is null) return;
+            _pendingModelRefreshContext = context;
             _pendingSelectionHistoryCaptureStateId = stateId;
             if (!_modelRefreshScheduled)
             {
@@ -1983,13 +1989,14 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public void RefreshProjectRuntimeInformation()
     {
-        if (_context is null)
+        ProjectContext? context = _context;
+        if (context is null)
         {
             return;
         }
-        CompilationStatistics statistics = _context.Compilation.LastAttempt.Statistics;
+        CompilationStatistics statistics = context.Compilation.LastAttempt.Statistics;
         long totalEditingTimeMilliseconds =
-            _context.Compilation.SnapshotTotalEditingTimeMilliseconds();
+            context.Compilation.SnapshotTotalEditingTimeMilliseconds();
         foreach (SettingsWorkspaceViewModel workspace in
             Workspaces.OfType<SettingsWorkspaceViewModel>())
         {
@@ -2046,8 +2053,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         ProjectContext? previous = _context;
         if (previous is null) return;
+        Task refreshesIdle = DetachProjectContextFromRefreshes(previous);
         Unsubscribe(previous);
-        _context = null;
+        await refreshesIdle;
         TimelineRasterCacheSession.Clear();
         foreach (WorkspaceViewModel workspace in Workspaces)
             workspace.CancelBackgroundPresentationWork();
@@ -2056,7 +2064,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _forwardNavigation.Clear();
         _workspaceSelectionHistory.Clear();
         _workspaceSelectionBookmarkCache.Clear();
-        ResetPendingModelRefresh();
         _projectTreeStructureStamp = null;
         _diagnosticScopeWorkspace = null;
         ProjectTree.Clear();
@@ -2090,16 +2097,19 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private async Task ActivateAsync(ProjectContext next)
     {
+        ArgumentNullException.ThrowIfNull(next);
+        ProjectContext? previous = _context;
+        if (previous is not null)
+        {
+            Task refreshesIdle = DetachProjectContextFromRefreshes(previous);
+            Unsubscribe(previous);
+            await refreshesIdle;
+        }
+        AttachProjectContextToRefreshes(next);
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
         _mutedSharedGroupIds.Clear();
         _soloSharedGroupIds.Clear();
-        ProjectContext? previous = _context;
-        if (previous is not null)
-        {
-            Unsubscribe(previous);
-        }
-        _context = next;
         ProjectSegmentIndex.Warm(next.Compilation.Project);
         _displayCurrentTick = next.Playback?.CurrentTick ?? 0;
         Subscribe(next);
@@ -2111,7 +2121,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _forwardNavigation.Clear();
         _workspaceSelectionHistory.Clear();
         _workspaceSelectionBookmarkCache.Clear();
-        ResetPendingModelRefresh();
         _projectTreeStructureStamp = null;
         ActiveWorkspace = null;
         _revision = 1;
@@ -2796,28 +2805,55 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
     }
 
-    private void OnDocumentHistoryChanged(object? sender, EventArgs e) =>
-        ScheduleModelRefresh(ModelRefreshKind.History);
+    private void OnDocumentHistoryChanged(object? sender, EventArgs e)
+    {
+        ProjectContext? context = _context;
+        if (context is null || !ReferenceEquals(sender, context.Document)) return;
+        ScheduleModelRefresh(ModelRefreshKind.History, sourceContext: context);
+    }
 
     private void OnDocumentContentChanged(
         object? sender,
-        ProjectContentChangedEventArgs e) =>
-        ScheduleModelRefresh(ModelRefreshKind.Content, ToChangeSet(e));
+        ProjectContentChangedEventArgs e)
+    {
+        ProjectContext? context = _context;
+        if (context is null || !ReferenceEquals(sender, context.Document)) return;
+        ScheduleModelRefresh(
+            ModelRefreshKind.Content,
+            ToChangeSet(e),
+            context);
+    }
 
-    private void OnCompilationChanged(object? sender, EventArgs e) =>
-        ScheduleModelRefresh(ModelRefreshKind.Compilation);
+    private void OnCompilationChanged(object? sender, EventArgs e)
+    {
+        ProjectContext? context = _context;
+        if (context is null || !ReferenceEquals(sender, context.Compilation)) return;
+        ScheduleModelRefresh(ModelRefreshKind.Compilation, sourceContext: context);
+    }
 
-    private void OnPlaybackStateChanged(object? sender, EventArgs e) =>
-        ScheduleModelRefresh(ModelRefreshKind.Playback);
+    private void OnPlaybackStateChanged(object? sender, EventArgs e)
+    {
+        ProjectContext? context = _context;
+        if (context is null || !ReferenceEquals(sender, context.Playback)) return;
+        ScheduleModelRefresh(ModelRefreshKind.Playback, sourceContext: context);
+    }
 
     private void ScheduleModelRefresh(
         ModelRefreshKind kind,
-        ProjectChangeSet? changes = null)
+        ProjectChangeSet? changes = null,
+        ProjectContext? sourceContext = null)
     {
         bool scheduleDispatcher = false;
         bool runSynchronously = false;
         lock (_modelRefreshGate)
         {
+            ProjectContext? current = _context;
+            if (current is null
+                || sourceContext is not null && !ReferenceEquals(current, sourceContext))
+            {
+                return;
+            }
+            _pendingModelRefreshContext = current;
             _pendingModelRefreshKinds |= kind;
             if (changes is not null)
             {
@@ -2852,6 +2888,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         ModelRefreshKind kinds;
         ProjectChangeSet? changes;
+        ProjectContext? refreshContext;
         long? restoreStateId;
         long? selectionHistoryCaptureStateId;
         bool pruneSelectionHistory;
@@ -2859,12 +2896,14 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             kinds = _pendingModelRefreshKinds;
             changes = _pendingContentChanges;
+            refreshContext = _pendingModelRefreshContext;
             restoreStateId = _pendingSelectionRestoreStateId;
             selectionHistoryCaptureStateId = _pendingSelectionHistoryCaptureStateId;
             pruneSelectionHistory = (kinds & ModelRefreshKind.History) != 0
                 && _workspaceSelectionHistoryPruneRequested;
             _pendingModelRefreshKinds = ModelRefreshKind.None;
             _pendingContentChanges = null;
+            _pendingModelRefreshContext = null;
             _pendingSelectionRestoreStateId = null;
             _pendingSelectionHistoryCaptureStateId = null;
             if (pruneSelectionHistory)
@@ -2872,93 +2911,149 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 _workspaceSelectionHistoryPruneRequested = false;
             }
             _modelRefreshScheduled = false;
-        }
-        if (kinds == ModelRefreshKind.None
-            && restoreStateId is null
-            && selectionHistoryCaptureStateId is null)
-        {
-            return;
-        }
-
-        ModelRefreshPassCount++;
-        List<WorkspaceViewModel> selectionChanged = restoreStateId is long stateId
-            && Document?.CurrentStateId == stateId
-            ? RestoreWorkspaceSelections(stateId)
-            : [];
-        HashSet<WorkspaceViewModel> rebuilt = [];
-        if ((kinds & ModelRefreshKind.Content) != 0)
-        {
-            _revision++;
-            rebuilt = RefreshChanged(changes ?? ProjectChangeSet.Everything);
-        }
-        foreach (WorkspaceViewModel workspace in selectionChanged)
-        {
-            if (!rebuilt.Contains(workspace))
+            if (kinds == ModelRefreshKind.None
+                && restoreStateId is null
+                && selectionHistoryCaptureStateId is null
+                || refreshContext is null
+                || !ReferenceEquals(_context, refreshContext))
             {
-                RefreshWorkspaceSelection(workspace);
+                return;
             }
+            _activeModelRefreshPasses = checked(_activeModelRefreshPasses + 1);
         }
 
-        if (selectionHistoryCaptureStateId is long captureStateId
-            && Document?.CurrentStateId == captureStateId)
+        try
         {
-            StoreCurrentWorkspaceSelections(captureStateId);
-        }
-
-        if ((kinds & ModelRefreshKind.History) != 0 && pruneSelectionHistory)
-        {
-            PruneWorkspaceSelectionHistory();
-        }
-        if ((kinds & (ModelRefreshKind.Content | ModelRefreshKind.History)) != 0)
-        {
-            RefreshDocumentStateProperties();
-        }
-
-        if ((kinds & ModelRefreshKind.Compilation) != 0)
-        {
-            ProjectCompilationState state = _context?.Compilation.CompilationState
-                ?? ProjectCompilationState.NotCompiled;
-            if (state is ProjectCompilationState.NotCompiled
-                or ProjectCompilationState.Succeeded
-                or ProjectCompilationState.Failed)
+            ModelRefreshPassCount++;
+            List<WorkspaceViewModel> selectionChanged = restoreStateId is long stateId
+                && Document?.CurrentStateId == stateId
+                ? RestoreWorkspaceSelections(stateId)
+                : [];
+            HashSet<WorkspaceViewModel> rebuilt = [];
+            if ((kinds & ModelRefreshKind.Content) != 0)
             {
-                RefreshDiagnostics();
-                RefreshDiagnosticProjectTreeNode();
-                RefreshProjectRuntimeInformation();
+                _revision++;
+                rebuilt = RefreshChanged(changes ?? ProjectChangeSet.Everything);
             }
-            RefreshCompilationProperties();
-        }
-
-        if ((kinds & ModelRefreshKind.Playback) != 0)
-        {
-            if (_context?.Playback is PlaybackController
+            foreach (WorkspaceViewModel workspace in selectionChanged)
+            {
+                if (!rebuilt.Contains(workspace))
                 {
-                    State: PlaybackState.Error,
-                    LastError: Exception failure
-                })
-            {
-                SetStatusMessage($"Playback failed: {failure.Message}", isError: true);
+                    RefreshWorkspaceSelection(workspace);
+                }
             }
-            else if (_context?.Compilation.AudioCacheWarning is
-                     { Code: not AudioCacheWarningCode.None } warning)
+
+            if (selectionHistoryCaptureStateId is long captureStateId
+                && Document?.CurrentStateId == captureStateId)
             {
-                SetStatusMessage("Audio cache warning: " + warning.Message);
+                StoreCurrentWorkspaceSelections(captureStateId);
             }
-            RefreshProperties();
+
+            if ((kinds & ModelRefreshKind.History) != 0 && pruneSelectionHistory)
+            {
+                PruneWorkspaceSelectionHistory();
+            }
+            if ((kinds & (ModelRefreshKind.Content | ModelRefreshKind.History)) != 0)
+            {
+                RefreshDocumentStateProperties();
+            }
+
+            if ((kinds & ModelRefreshKind.Compilation) != 0)
+            {
+                ProjectCompilationState state = refreshContext.Compilation.CompilationState;
+                if (state is ProjectCompilationState.NotCompiled
+                    or ProjectCompilationState.Succeeded
+                    or ProjectCompilationState.Failed)
+                {
+                    RefreshDiagnostics();
+                    RefreshDiagnosticProjectTreeNode();
+                    RefreshProjectRuntimeInformation();
+                }
+                RefreshCompilationProperties();
+            }
+
+            if ((kinds & ModelRefreshKind.Playback) != 0)
+            {
+                if (refreshContext.Playback is PlaybackController
+                    {
+                        State: PlaybackState.Error,
+                        LastError: Exception failure
+                    })
+                {
+                    SetStatusMessage($"Playback failed: {failure.Message}", isError: true);
+                }
+                else if (refreshContext.Compilation.AudioCacheWarning is
+                         { Code: not AudioCacheWarningCode.None } warning)
+                {
+                    SetStatusMessage("Audio cache warning: " + warning.Message);
+                }
+                RefreshProperties();
+            }
+        }
+        finally
+        {
+            CompleteModelRefreshPass();
         }
     }
 
-    private void ResetPendingModelRefresh()
+    private Task DetachProjectContextFromRefreshes(ProjectContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
         lock (_modelRefreshGate)
         {
-            _pendingModelRefreshKinds = ModelRefreshKind.None;
-            _pendingContentChanges = null;
-            _pendingSelectionRestoreStateId = null;
-            _pendingSelectionHistoryCaptureStateId = null;
-            _workspaceSelectionHistoryPruneRequested = false;
-            _modelRefreshScheduled = false;
+            if (!ReferenceEquals(_context, context)) return Task.CompletedTask;
+            _context = null;
+            ResetPendingModelRefreshCore();
+            if (_activeModelRefreshPasses == 0) return Task.CompletedTask;
+            return (_modelRefreshIdleCompletion ??= new(
+                TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
+    }
+
+    private void AttachProjectContextToRefreshes(ProjectContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        lock (_modelRefreshGate)
+        {
+            if (_context is not null || _activeModelRefreshPasses != 0)
+            {
+                throw new InvalidOperationException(
+                    "A Project context cannot be attached while another context is active.");
+            }
+            ResetPendingModelRefreshCore();
+            _context = context;
+        }
+    }
+
+    private void CompleteModelRefreshPass()
+    {
+        TaskCompletionSource<bool>? completion = null;
+        lock (_modelRefreshGate)
+        {
+            _activeModelRefreshPasses--;
+            if (_activeModelRefreshPasses < 0)
+            {
+                _activeModelRefreshPasses = 0;
+                throw new InvalidOperationException("The model refresh pass count became negative.");
+            }
+            if (_activeModelRefreshPasses == 0)
+            {
+                completion = _modelRefreshIdleCompletion;
+                _modelRefreshIdleCompletion = null;
+            }
+        }
+        completion?.TrySetResult(true);
+    }
+
+    private void ResetPendingModelRefreshCore()
+    {
+        _pendingModelRefreshKinds = ModelRefreshKind.None;
+        _pendingContentChanges = null;
+        _pendingModelRefreshContext = null;
+        _pendingSelectionRestoreStateId = null;
+        _pendingSelectionHistoryCaptureStateId = null;
+        _workspaceSelectionHistoryPruneRequested = false;
+        _modelRefreshScheduled = false;
     }
 
     private static ProjectChangeSet ToChangeSet(ProjectContentChangedEventArgs source)

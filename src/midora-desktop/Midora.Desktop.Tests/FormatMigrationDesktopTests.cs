@@ -7,6 +7,7 @@ using Xunit;
 
 namespace Midora.Desktop.Tests;
 
+[Collection(DesktopSharedPresentationStateCollection.Name)]
 public sealed class FormatMigrationDesktopTests
 {
     [Fact]

@@ -20,6 +20,7 @@ namespace Midora.Desktop.Tests;
 /// These state the required behavior through real TimelineSurface/Dispatcher
 /// paths and must not be weakened into implementation-detail tests.
 /// </summary>
+[Collection(DesktopSharedPresentationStateCollection.Name)]
 public sealed class SelectionUiFailureReproductionTests
 {
     [Fact]

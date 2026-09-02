@@ -24,6 +24,39 @@ public enum ArrangementSharedGroupDropZone
 
 public static class TimelineToolPolicy
 {
+    public const int RightDoubleClickIntervalMilliseconds = 300;
+    public const double RightDoubleClickToleranceDips = 6;
+
+    public static bool IsRightDoubleClick(
+        long elapsedMilliseconds,
+        double horizontalDistance,
+        double verticalDistance) =>
+        elapsedMilliseconds >= 0
+        && elapsedMilliseconds < RightDoubleClickIntervalMilliseconds
+        && double.IsFinite(horizontalDistance)
+        && double.IsFinite(verticalDistance)
+        && Math.Abs(horizontalDistance) <= RightDoubleClickToleranceDips
+        && Math.Abs(verticalDistance) <= RightDoubleClickToleranceDips;
+
+    public static TimelineToolMode ResolveDrawSelectToggle(TimelineToolMode current) =>
+        current == TimelineToolMode.Select
+            ? TimelineToolMode.Draw
+            : TimelineToolMode.Select;
+
+    public static long ResolvePositiveFixedStepCreationDelta(
+        long pointerDeltaTicks,
+        long operationStepTicks)
+    {
+        if (operationStepTicks < 1)
+            throw new ArgumentOutOfRangeException(nameof(operationStepTicks));
+        if (pointerDeltaTicks <= 0) return 0;
+        // Equivalent to ceil(pointerDelta / step) without overflowing the
+        // numerator near long.MaxValue. The caller adds this delta to the
+        // frozen initial Note length rather than snapping the final length.
+        long units = checked(((pointerDeltaTicks - 1) / operationStepTicks) + 1);
+        return checked(units * operationStepTicks);
+    }
+
     public static long ResolveResizeMinimumLength(long currentLengthTicks, long operationStepTicks)
     {
         if (currentLengthTicks < 1)
@@ -237,7 +270,25 @@ public static class TimelineToolPolicy
         TimelineItemKind itemKind,
         TimelineItemEditKind editKind) =>
         toolMode == TimelineToolMode.Draw
-        && editKind == TimelineItemEditKind.Move
+        && SupportsCopyDragCore(surfaceMode, itemKind, editKind);
+
+    public static bool SupportsSelectionFloatingToolCopyDrag(
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind,
+        TimelineItemEditKind editKind) =>
+        SupportsCopyDragCore(surfaceMode, itemKind, editKind);
+
+    public static bool SupportsSelectionFloatingToolResize(TimelineItemKind itemKind) =>
+        itemKind == TimelineItemKind.Segment
+        || itemKind is TimelineItemKind.LogicalNote
+            or TimelineItemKind.DirectMidiNote
+            or TimelineItemKind.TemplateNote;
+
+    private static bool SupportsCopyDragCore(
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind,
+        TimelineItemEditKind editKind) =>
+        editKind == TimelineItemEditKind.Move
         && ((surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll
                 && itemKind is TimelineItemKind.Segment
                     or TimelineItemKind.LogicalNote

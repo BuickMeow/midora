@@ -589,7 +589,7 @@ public static partial class ProjectDomainEditCommands
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             _ = FindLogicalParameter(instrument, parameterId);
             _ = FindSubVoice(instrument, subVoiceId);
-            ValidateMidiStateValue(target, value: null);
+            MidiStateValueRules.Validate(target, value: null);
             ValidateIntegerTargetSettings(rounding, overflow);
             LogicalParameterMapping[] peers = instrument.ParameterMappings
                 .Where(value => value.SubVoiceId == subVoiceId && value.Target == target)

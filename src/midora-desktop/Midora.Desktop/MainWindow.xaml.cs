@@ -24,6 +24,7 @@ using Midora.Domain;
 using Midora.MidiExport;
 using Midora.AudioRender;
 using Midora.Compiler;
+using Midora.Persistence;
 
 namespace Midora.Desktop;
 
@@ -68,6 +69,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _timelineSelectionMaterialization;
     private long _nextProjectRuntimeInformationRefresh;
     private TimelineSelectionOperationContext? _timelineSelectionOperationContext;
+    private TimelineSurface? _lastTimelineCommandSurface;
 
     private enum TimelineSelectionObjectKind
     {
@@ -187,7 +189,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true || dialog.Request is null) return;
+        if (ShowModalDialog(dialog) != true || dialog.Request is null) return;
         NewProjectCreationRequest request = dialog.Request;
         Exception? audioInitializationFailure = null;
         if (await RunOperationAsync(
@@ -252,7 +254,49 @@ public partial class MainWindow : Window
         }
         if (!StopPlaybackForProjectCommand("Save Project")) return false;
         string? firstPath = null;
-        if (_session.Persistence?.CurrentProjectPath is null)
+        ProjectPersistenceCoordinator? persistence = _session.Persistence;
+        if (persistence?.RequiresFormatUpgrade == true)
+        {
+            int sourceFormat = persistence.LegacySourceFileFormatVersion
+                ?? throw new InvalidOperationException(
+                    "The migrated Project has no source format version.");
+            string sourcePath = persistence.ProtectedSourceProjectPath
+                ?? throw new InvalidOperationException(
+                    "The migrated Project has no source path.");
+            MidoraLegacyProjectUpgradePlanV3? upgradePlan = null;
+            bool prepared = await RunOperationAsync(
+                "Prepare Project Upgrade",
+                async cancellationToken => upgradePlan =
+                    await _session.PrepareLegacyProjectUpgradeAsync(cancellationToken),
+                canCancel: false);
+            if (!prepared || upgradePlan is null)
+            {
+                return false;
+            }
+            MessageBoxResult decision = MessageDialog.Show(
+                $"This Project was opened from Format {sourceFormat}. Saving will create a permanent exact-byte backup beside the original file, then replace the original path with Format {PersistenceContractV3.FileFormatVersion}.\n\nSource:\n{sourcePath}\n\nOriginal-byte backup:\n{upgradePlan.PermanentBackupPath}\n\nContinue?",
+                "Upgrade Project Format",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (decision != MessageBoxResult.Yes)
+            {
+                return false;
+            }
+            string? backupPath = null;
+            bool upgraded = await RunOperationAsync(
+                "Upgrade and Save Project",
+                async () => backupPath = await _session.UpgradeLegacyProjectInPlaceAsync(upgradePlan));
+            if (upgraded && backupPath is not null)
+            {
+                RecordRecentDirectory(
+                    RecentDirectoryPurpose.SaveAndSaveCopy,
+                    Path.GetDirectoryName(sourcePath));
+                RecordRecentProject(sourcePath);
+                _session.Notice = $"Project upgraded to Format {PersistenceContractV3.FileFormatVersion}. Original bytes preserved at: {backupPath}";
+            }
+            return upgraded;
+        }
+        if (persistence?.CurrentProjectPath is null)
         {
             SaveFileDialog dialog = CreateProjectSaveDialog("Save Midora Project");
             if (dialog.ShowDialog(this) != true) return false;
@@ -299,7 +343,7 @@ public partial class MainWindow : Window
             return;
         }
         ApplicationPreferencesDialog dialog = new(_preferences) { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.Result is null) return;
+        if (ShowModalDialog(dialog) != true || dialog.Result is null) return;
 
         ApplicationPreferences preferences = dialog.Result;
         bool rebuildAudioWorker = _session.RequiresAudioWorkerRebuild(preferences);
@@ -670,7 +714,7 @@ public partial class MainWindow : Window
             {
                 Owner = this
             };
-            if (dialog.ShowDialog() != true) return;
+            if (ShowModalDialog(dialog) != true) return;
             if (dialog.CreatesInstrument)
             {
                 RunSynchronous("Create Logical Track with Event Instrument", () =>
@@ -698,7 +742,7 @@ public partial class MainWindow : Window
         {
             if (_session.Project is not MidoraProject project) return;
             NewRawMidiTrackDialog dialog = new(project.MidiChannelRoots) { Owner = this };
-            if (dialog.ShowDialog() != true) return;
+            if (ShowModalDialog(dialog) != true) return;
             RunSynchronous("Create Raw MIDI Track", () =>
                 _session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot(
                     dialog.TrackName,
@@ -1244,6 +1288,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _lastTimelineCommandSurface = surface;
         menu.Items.Clear();
         MenuItem Add(string header, RoutedEventHandler handler, string? gesture = null, bool enabled = true)
         {
@@ -1557,7 +1602,7 @@ public partial class MainWindow : Window
             return;
         }
         ObjectPropertiesDialog dialog = new(_session, workspace) { Owner = this };
-        _ = dialog.ShowDialog();
+        _ = ShowModalDialog(dialog);
         _session.RefreshWorkspaceSelection(workspace);
     }
 
@@ -1581,7 +1626,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() == true)
+        if (ShowModalDialog(dialog) == true)
         {
             RunSynchronous($"Rename {kind}", () =>
                 _session.RenameProjectTreeNode(node, dialog.Value));
@@ -1679,7 +1724,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         MidoraId? instrumentId = ReferenceEquals(dialog.SelectedValue, unbound)
             ? null
             : (MidoraId?)dialog.SelectedValue;
@@ -2348,7 +2393,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        return dialog.ShowDialog() == true && dialog.SelectedValue is MidoraId selected
+        return ShowModalDialog(dialog) == true && dialog.SelectedValue is MidoraId selected
             ? selected
             : null;
     }
@@ -2580,7 +2625,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Change Event Instrument Color", () => _session.Execute(
             ProjectDomainEditCommands.UpdateEventInstrumentColor(
                 instrumentId,
@@ -2589,7 +2634,7 @@ public partial class MainWindow : Window
 
     private void OnInstrumentInitialStateFieldLostFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
-        if (sender is not TextBox { Tag: PropertyField field }
+        if (sender is not TextBox { Tag: PropertyField field } textBox
             || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
             {
                 ObjectId: MidoraId instrumentId
@@ -2604,16 +2649,18 @@ public partial class MainWindow : Window
         }
         RunSynchronous("Update Event Instrument Initial State", () =>
         {
-            string text = field.Value.Trim();
-            int? value = text.Length == 0
-                ? null
-                : int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+            MidiValueTarget target = ParseConfigurationMidiTarget(field.Key);
+            int? value = ParseAndClampInitialStateValue(
+                textBox.Text,
+                target,
+                "Event Instrument Initial State");
             _session.Execute(ProjectDomainEditCommands.UpdateEventInstrumentInitialStateValue(
                 instrumentId,
-                ParseConfigurationMidiTarget(field.Key),
+                target,
                 value));
         });
         _session.RefreshWorkspace(workspace);
+        textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();
     }
 
     private void OnSubVoiceConfigurationLostFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -2670,7 +2717,7 @@ public partial class MainWindow : Window
 
     private void OnSubVoiceInitialStateFieldLostFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
-        if (sender is not TextBox { Tag: PropertyField property }
+        if (sender is not TextBox { Tag: PropertyField property } textBox
             || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
             {
                 ObjectId: MidoraId instrumentId,
@@ -2686,21 +2733,36 @@ public partial class MainWindow : Window
         }
         bool succeeded = RunSynchronous("Update SubVoice Initial State", () =>
         {
-            string text = property.Value.Trim();
-            int? value = text.Length == 0
-                ? null
-                : int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+            MidiValueTarget target = ParseConfigurationMidiTarget(property.Key);
+            int? value = ParseAndClampInitialStateValue(
+                textBox.Text,
+                target,
+                "SubVoice Initial State");
             _session.Execute(ProjectDomainEditCommands.UpdateSubVoiceInitialStateValue(
                 instrumentId,
                 subVoiceId,
-                ParseConfigurationMidiTarget(property.Key),
+                target,
                 value));
         });
         _session.RefreshWorkspace(workspace);
-        if (!succeeded && sender is TextBox textBox)
+        textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();
+    }
+
+    private int? ParseAndClampInitialStateValue(
+        string source,
+        MidiValueTarget target,
+        string displayName)
+    {
+        string text = source.Trim();
+        if (text.Length == 0) return null;
+        int entered = int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+        int clamped = MidiStateValueRules.Clamp(target, entered);
+        if (clamped != entered)
         {
-            textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();
+            _session.SetStatusMessage(
+                $"{displayName}: {entered.ToString(CultureInfo.InvariantCulture)} was clamped to {clamped.ToString(CultureInfo.InvariantCulture)}.");
         }
+        return clamped;
     }
 
     private static MidiValueTarget ParseConfigurationMidiTarget(string key)
@@ -3107,7 +3169,7 @@ public partial class MainWindow : Window
             return;
         }
         MidiStateEntryDialog dialog = new() { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.Target is not MidiValueTarget target) return;
+        if (ShowModalDialog(dialog) != true || dialog.Target is not MidiValueTarget target) return;
         RunSynchronous("Add Instrument MIDI State", () =>
         {
             MidoraId? selectedSubVoice = sender switch
@@ -3188,7 +3250,7 @@ public partial class MainWindow : Window
         EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
         string name = UniqueName("Parameter", instrument.LogicalParameters.Select(item => item.Name));
         LogicalParameterDefinitionDialog dialog = new(name) { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.DefinitionEdit is not { } edit) return;
+        if (ShowModalDialog(dialog) != true || dialog.DefinitionEdit is not { } edit) return;
         RunSynchronous("Create Logical Parameter", () => ExecuteAndSelectCreated(
             ProjectDomainEditCommands.CreateLogicalParameter(
                 instrumentId,
@@ -3275,7 +3337,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true || dialog.DefinitionEdit is null) return;
+        if (ShowModalDialog(dialog) != true || dialog.DefinitionEdit is null) return;
         RunSynchronous("Migrate Logical Parameter Definition", () => _session.Execute(
             ProjectDomainEditCommands.MigrateLogicalParameterDefinition(
                 instrumentId,
@@ -3552,7 +3614,7 @@ public partial class MainWindow : Window
     {
         if (sender is not FrameworkElement { Tag: string scope }) return;
         MidiStateEntryDialog dialog = new() { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.Target is not MidiValueTarget target) return;
+        if (ShowModalDialog(dialog) != true || dialog.Target is not MidiValueTarget target) return;
         RunSynchronous("Add Project MIDI State", () => _session.Execute(
             scope == "reset"
                 ? ProjectDomainEditCommands.UpdateProjectResetDefaultValue(target, dialog.Value)
@@ -4094,7 +4156,7 @@ public partial class MainWindow : Window
             return false;
         }
         ObjectPropertiesDialog dialog = new(_session, workspace) { Owner = this };
-        _ = dialog.ShowDialog();
+        _ = ShowModalDialog(dialog);
         _session.RefreshWorkspaceSelection(workspace);
         return true;
     }
@@ -4270,7 +4332,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Rename Event Instrument", () =>
             _session.Execute(ProjectDomainEditCommands.RenameEventInstrument(row.Id, dialog.Value)));
     }
@@ -4469,7 +4531,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        _ = dialog.ShowDialog();
+        _ = ShowModalDialog(dialog);
     }
 
     private IReadOnlyDictionary<byte, byte>? ReviewMidiImportPortMapping(
@@ -4499,7 +4561,7 @@ public partial class MainWindow : Window
             {
                 Owner = this
             };
-            if (selection.ShowDialog() != true || selection.SelectedValue is not byte targetPort)
+            if (ShowModalDialog(selection) != true || selection.SelectedValue is not byte targetPort)
                 return null;
             result.Add(sourcePort, targetPort);
             used.Add(targetPort);
@@ -4769,7 +4831,7 @@ public partial class MainWindow : Window
             _ => string.Empty
         };
         TextInputDialog dialog = new("Rename Arrangement Object", "Enter the new name.", current) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Rename Arrangement Object", () =>
         {
             IProjectEditCommand command = descriptor.Kind switch
@@ -4807,7 +4869,7 @@ public partial class MainWindow : Window
         }
         MidiChannelRoot root = project.MidiChannelRoots.Single(value => value.Id == rootId);
         MidiChannelRootSettingsDialog dialog = new(root) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         int memberCount = project.PureMidiTracks.Count(
             value => value.MidiChannelRootId == root.Id);
         bool changesSharedFixedChannelMode = memberCount > 1
@@ -4854,7 +4916,7 @@ public partial class MainWindow : Window
             return;
         }
         MidiChannelRootSettingsDialog dialog = new(root) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Configure Shared MIDI Route", () => _session.Execute(
             ProjectDomainEditCommands.ConfigureMidiChannelRoot(
                 root.Id,
@@ -4902,7 +4964,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true
+        if (ShowModalDialog(dialog) != true
             || dialog.SelectedValue is not MidoraId eventInstrumentId
             || eventInstrumentId == usage.EventInstrumentId)
         {
@@ -4986,7 +5048,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true || dialog.SelectedValue is not MidoraId targetTrackId)
+        if (ShowModalDialog(dialog) != true || dialog.SelectedValue is not MidoraId targetTrackId)
             return;
         LogicalTrack target = project.Tracks.Single(value => value.Id == targetTrackId);
         if (project.ResolveEventInstrumentDefinitionId(source)
@@ -5045,7 +5107,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true || dialog.SelectedValue is not MidoraId targetTrackId)
+        if (ShowModalDialog(dialog) != true || dialog.SelectedValue is not MidoraId targetTrackId)
             return;
         PureMidiTrack target = project.PureMidiTracks.Single(value => value.Id == targetTrackId);
         MidiChannelRoot targetRoot = project.MidiChannelRoots.Single(
@@ -5315,7 +5377,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Rename Logical Track", () =>
             _session.Execute(ProjectDomainEditCommands.RenameLogicalTrack(track.Id, dialog.Value)));
     }
@@ -5337,7 +5399,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() == true && dialog.SelectedValue is MidoraId instrumentId)
+        if (ShowModalDialog(dialog) == true && dialog.SelectedValue is MidoraId instrumentId)
         {
             BindTrackToInstrument(track, instrumentId);
         }
@@ -6181,7 +6243,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Scale Selection", () => ExecuteSelectionOperation(context.Kind switch
         {
             TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.ScaleSegments(
@@ -6237,7 +6299,7 @@ public partial class MainWindow : Window
     {
         if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
         TransposeSelectionDialog dialog = new() { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Transpose Selection", () => ExecuteSelectionOperation(context.Kind switch
         {
             TimelineSelectionObjectKind.Segments =>
@@ -6279,7 +6341,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true || dialog.Program is not BatchEditExpressionProgram program)
+        if (ShowModalDialog(dialog) != true || dialog.Program is not BatchEditExpressionProgram program)
         {
             return;
         }
@@ -7479,7 +7541,7 @@ public partial class MainWindow : Window
             {
                 Owner = this
             };
-            if (midiDialog.ShowDialog() == true
+            if (ShowModalDialog(midiDialog) == true
                 && midiDialog.Result is DirectMidiEventLaneTarget target)
             {
                 workspace.AddDirectMidiLaneTarget(target);
@@ -7510,7 +7572,7 @@ public partial class MainWindow : Window
             return;
         }
         SelectionDialog dialog = new("Add Logical Parameter Lane", "Select a Logical Parameter from the bound Event Instrument.", options) { Owner = this };
-        if (dialog.ShowDialog() == true && dialog.SelectedValue is MidoraId parameterId)
+        if (ShowModalDialog(dialog) == true && dialog.SelectedValue is MidoraId parameterId)
         {
             RunSynchronous("Create Logical Parameter Lane", () => ExecuteAndSelectCreated(
                 ProjectDomainEditCommands.CreateLogicalParameterLane(segmentId, parameterId), workspace));
@@ -7771,11 +7833,11 @@ public partial class MainWindow : Window
                     voice.Id,
                     string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name)))
             { Owner = this };
-            if (voiceDialog.ShowDialog() != true || voiceDialog.SelectedValue is not MidoraId selectedVoiceId) return;
+            if (ShowModalDialog(voiceDialog) != true || voiceDialog.SelectedValue is not MidoraId selectedVoiceId) return;
             voiceId = selectedVoiceId;
         }
         MidiTargetDialog targetDialog = new("Add Event") { Owner = this };
-        if (targetDialog.ShowDialog() != true || targetDialog.Result is not MidiValueTarget target) return;
+        if (ShowModalDialog(targetDialog) != true || targetDialog.Result is not MidiValueTarget target) return;
         SubVoice targetVoice = instrument.SubVoices.Single(item => item.Id == voiceId.Value);
         TemplateEventMappingTarget mappingTarget = TemplateEventMidiTargets.ToMappingTarget(target);
         if (targetVoice.EventMappings.Any(item => item.Target == mappingTarget))
@@ -7848,7 +7910,7 @@ public partial class MainWindow : Window
             return;
         }
         ParameterMappingPropertiesDialog dialog = new(instrument) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Create Logical Parameter Mapping", () => ExecuteAndSelectCreated(
             ProjectDomainEditCommands.CreateLogicalParameterMapping(
                 instrumentId,
@@ -7877,7 +7939,7 @@ public partial class MainWindow : Window
         if (mapping is null) return;
 
         ParameterMappingPropertiesDialog dialog = new(instrument, mapping) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        if (ShowModalDialog(dialog) != true) return;
         RunSynchronous(
             "Update Logical Parameter Mapping",
             () => _session.Execute(
@@ -7970,7 +8032,7 @@ public partial class MainWindow : Window
                 return true;
             })
         { Owner = this };
-        _ = dialog.ShowDialog();
+        _ = ShowModalDialog(dialog);
     }
 
     private void OnMoveMappingStepClick(object sender, RoutedEventArgs e)
@@ -8024,7 +8086,7 @@ public partial class MainWindow : Window
                 return true;
             })
         { Owner = this };
-        _ = dialog.ShowDialog();
+        _ = ShowModalDialog(dialog);
     }
 
     private static IProjectEditCommand CreateTemplateEventCommand(
@@ -8148,7 +8210,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        dialog.ShowDialog();
+        _ = ShowModalDialog(dialog);
     }
 
     private void OnDiagnosticDoubleClick(object sender, MouseButtonEventArgs e)
@@ -8240,7 +8302,7 @@ public partial class MainWindow : Window
             project,
             initialDirectory)
         { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.Options is null) return;
+        if (ShowModalDialog(dialog) != true || dialog.Options is null) return;
         RecordRecentDirectory(
             RecentDirectoryPurpose.MidiExport,
             dialog.Options.OutputDirectory);
@@ -8333,7 +8395,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true || dialog.Options is null) return;
+        if (ShowModalDialog(dialog) != true || dialog.Options is null) return;
         RecordRecentDirectory(
             RecentDirectoryPurpose.AudioRender,
             Directory.Exists(dialog.Options.OutputPath)
@@ -8623,9 +8685,40 @@ public partial class MainWindow : Window
     private bool? ShowModalDialog(Window dialog)
     {
         ArgumentNullException.ThrowIfNull(dialog);
+        WorkspaceViewModel? sourceWorkspace = _session.ActiveWorkspace;
+        TimelineSurface? sourceSurface = GetFocusedTimelineSurface()
+            ?? _lastTimelineCommandSurface;
         if (!PrepareForModalSurface()) return false;
         if (dialog.Owner is null && IsVisible) dialog.Owner = this;
-        return dialog.ShowDialog();
+        try
+        {
+            return dialog.ShowDialog();
+        }
+        finally
+        {
+            RestoreModalCommandFocus(sourceWorkspace, sourceSurface);
+        }
+    }
+
+    private void RestoreModalCommandFocus(
+        WorkspaceViewModel? sourceWorkspace,
+        TimelineSurface? sourceSurface)
+    {
+        if (sourceWorkspace is null || sourceSurface is null) return;
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (!ReferenceEquals(_session.ActiveWorkspace, sourceWorkspace)
+                    || !_session.Workspaces.Contains(sourceWorkspace)
+                    || !sourceSurface.IsVisible
+                    || !sourceSurface.IsEnabled
+                    || !sourceSurface.Focusable)
+                {
+                    return;
+                }
+                sourceSurface.Focus();
+            }));
     }
 
     private void OnEditingSurfaceContextMenuOpening(object sender, ContextMenuEventArgs e)

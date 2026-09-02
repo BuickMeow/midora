@@ -26,6 +26,7 @@
         "dependencies": {
           "Midora.Audio": "[1.0.0-dev, )",
           "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.Common": "[1.0.0-dev, )",
           "Midora.NativeInterops.Bass": "[1.0.0-dev, )",
           "Midora.NativeInterops.BassMidi": "[1.0.0-dev, )"
         }

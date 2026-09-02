@@ -81,7 +81,10 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
             _packages,
             CurrentProjectPath,
             FileInformation,
-            _openResult.RequiresFormatUpgrade ? SourceProjectPath : null);
+            _openResult.RequiresFormatUpgrade ? SourceProjectPath : null,
+            _openResult.Presentation,
+            _openResult.IsPresentationModified,
+            _openResult.LegacySourceIdentity);
     }
 
     public void Dispose()

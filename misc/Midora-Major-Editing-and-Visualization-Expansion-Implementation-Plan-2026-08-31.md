@@ -1,7 +1,7 @@
 # Midora 大型编辑与可视化扩展实施方案（已定案记录）
 
 - 日期：2026-08-31
-- 状态：**非规范性决策记录与实施草案；两轮产品决策及后续迁移保存补充均已登记，未授权实施**
+- 状态：**非规范性决策记录与实施计划；阶段 1、2 已完成并经产品所有者验收；阶段 3 已获授权并进入实施；阶段 4～8 尚未授权实施**
 - 适用仓库基线：`b8ed363`
 - 目的：把本轮需求整理为可审查、可逐项定案、可分阶段实施的长期存档。
 
@@ -703,16 +703,17 @@ Save 开始时同时冻结音乐 Project source 与 presentation snapshot；Save
 固定内容：
 
 - 使用 Pin 图标与 Tooltip，不称 Lock；
-- Horizontal Resize 只对 Note 可用；Arrangement Segment 与 Event Point 不显示；
+- Note 与 Arrangement Segment 都显示方向可辨的左边界 Resize、右边界 Resize；Event Point 不显示 Resize；
 - Move：仅在选择集存在共同合法 delta 语义时可用；
+- Move 手势开始时按住 `Ctrl`，只在当前对象类型已有 Copy Drag 能力时触发 Copy+Move；不支持时 Invalid，不得退化为 Move；
 - 顶部 grip：用户手动移动工具框。
 
-大量选择时继续使用现有 delta-only 预览阈值，不强制画全部对象。鼠标旁显示 `+96 Ticks`、`-8 Keys, +192 Ticks` 等。选择 bounding metrics 在后台增量维护，不能每帧遍历全部选择。
+任何选择规模都显示 Snap、边界和 Clamp 后实际会提交的 delta，例如 `+96 Ticks`、`-8 Keys, +192 Ticks`。浮动工具不得建立独立预览阈值：小选择复用普通 Draw 的即时矢量预览，大选择复用同一平移/Resize raster tile；不得因超过阈值而只显示 delta 或让选择预览消失。选择 bounding metrics 在后台增量维护，不能每帧遍历全部选择，也不能为每个对象创建 WPF 控件。
 
 Pin 行为固定为：
 
-- 开启（默认）：相对选区/时间线世界位置固定，不做 viewport 自动跟随；平移视图时可以移出屏幕；
-- 关闭：跟随选择包围框，并始终保持在 viewport 内；选区出界时贴近视图边缘；
+- Follow（默认）：跟随选择包围框，并始终保持在 viewport 内；选区出界时贴近视图边缘；
+- Pin：相对选区/时间线世界位置固定，不做 viewport 自动跟随；平移视图时可以移出屏幕；
 - 两种状态都允许拖 grip 手动移动。
 
 工具框位置只保存为 session/workspace state，不进入 Project。
@@ -732,7 +733,7 @@ Pin 行为固定为：
 
 ### 5.18.2 右键双击
 
-所有三种 piano roll、全部 event/parameter lane 与 Arrangement 的可编辑时间线区域统一支持右键双击切换 Draw/Select；当前处于其他模式时切到 Select。右键单击菜单统一延迟一个 `SystemParameters.DoubleClickTime`，第二击到达时取消 pending menu 并切换模式；右键拖动超过阈值时取消菜单与双击候选。不能由对象区、空白区或不同 workspace 自行采用不同延迟。
+所有三种 piano roll、全部 event/parameter lane 与 Arrangement 的可编辑时间线区域统一支持右键双击切换 Draw/Select；当前处于其他模式时切到 Select。第一笔未拖动 Right Up 以单调时钟启动固定 300 ms 单击菜单/双击候选窗口；只有同一 Surface 合法内容区的第二个 Right Down 位于 `[0, 300 ms)` 且与首个 Right Up 的水平、垂直位移分别不超过 `6 DIP` 时才切换模式并取消菜单。实现不得使用 WPF `ClickCount`、Windows double-click time 或系统空间范围；右键拖动超过阈值时取消菜单与双击候选。对象区、空白区和不同 Workspace 不得采用不同时间或轴向位移阈值。
 
 ### 5.18.3 模态焦点恢复
 
@@ -847,7 +848,7 @@ create Definition
 - 明确的 page/chunk/tile、常驻内存、临时磁盘和取消响应预算；
 - 黑键 Velocity、Note delta Snap、Segment resize preview、Velocity marker、Initial State clamp、modal focus；
 - 新 Event Instrument 首次播放无声的根因修复；
-- 选择浮动工具框、Lock/Follow、手动位置、Move/Resize adapter 和大选区 delta-only UX；
+- 选择浮动工具框、默认 Follow/可选 Pin、手动位置、Move/Ctrl Copy+Move、Note/Arrangement Segment 双边 Resize adapter，以及所有规模共享 delta 与矢量/瓦片预览 UX；
 - 全时间线右键双击 Draw/Select 与延迟右键菜单状态机。
 
 交付给用户的重点测试清单：
@@ -857,8 +858,8 @@ create Definition
 - 三种钢琴卷帘验证黑/白键力度、创建 Note delta Snap、低缩放 Velocity marker；
 - Arrangement 批量 resize 预览、弹窗关闭后的快捷键焦点和 Initial State clamp；
 - 新建 Event Instrument 后不保存即绑定、写 Note、连续播放；
-- 工具框的贴边、锁定、手动拖位、移动/Resize、异构选择门控和百万对象 delta-only；
-- 右键单击、双击、拖动、菜单延迟、capture loss、Escape 和不同 Windows 双击设置；
+- 工具框默认 Follow、Pin、贴边、手动拖位、移动/Ctrl Copy+Move、Note/Segment 双边 Resize、异构选择门控、所有规模有效 delta，以及小选择矢量/大选择瓦片预览；
+- 右键单击、双击、拖动、固定 `[0, 300 ms)` / 轴向 `6 DIP` 边界、菜单延迟、capture loss、Escape，并确认不同 Windows 双击设置不改变结果；
 - 对比阶段开始前基线，确认现有已验收的渲染、选择和编辑速度没有退化。
 
 #### 阶段 3：Instrument Catalog、快捷 Parameter Mapping 与 Track Color
@@ -1103,8 +1104,10 @@ create Definition
 - shared overlay；
 - command adapters；
 - selection metrics；
-- delta-only large selection UX；
-- 采用已定案的全时间线右键双击/延迟菜单状态机。
+- 默认 Follow、Pin 与手动位置；
+- Note/Arrangement Segment 双边 Resize，能力受限的 Ctrl Copy+Move；
+- 全规模有效 delta，以及复用普通 Draw 的小选择矢量/大选择 raster tile 预览；
+- 采用固定 `[0, 300 ms)`、轴向 `6 DIP` 且不依赖系统设置的全时间线右键双击/延迟菜单状态机。
 
 ### WP-12：全量回归与发布前验收
 
@@ -1185,7 +1188,7 @@ create Definition
 | 只虚拟化 UI，不改选择/命令 | 百万选择仍爆内存 | WP-01 必须先完成 |
 | 为每个新工具复制编辑代码 | 三种钢琴卷帘行为分叉 | shared profile + shared paged transaction |
 | Generator 允许接近 `int.MaxValue` 且内存构建 | 进程 OOM/磁盘失控 | 产品硬上限、chunk、预估、取消、临时页 |
-| Right click 与 double click 同区零延迟 | 菜单抢捕获或双击失效 | 决策 UI-08 |
+| Right click 与 double click 同区零延迟或依赖系统时间 | 菜单抢捕获、跨机器行为不一致或双击失效 | 固定 300 ms / 轴向 6 DIP 自有状态机（UI-08） |
 | 洋葱皮混入正式 note snapshot | 命中/选择/cache fingerprint 污染 | 独立只读 overlay layer |
 | 跨类型 Move 先删源 | 验证失败造成数据丢失 | detached target first, atomic commit |
 | SF2 扫描绑定 Worker | 设置/播放与目录编辑互相阻塞 | explicit metadata-only scan |
@@ -1214,7 +1217,7 @@ create Definition
 | `UI-01,04..07,09..10` | 采用原推荐选项 | 已定案 |
 | `UI-02` | A：Tempo 保留 Event Lane 同款自由画线、直线与 `y=k` 线；用户可通过 Snap 控制密度 | 已定案 |
 | `UI-03` | A：完整沿用 Event Lane 修饰键与选择/拖动语义 | 已定案 |
-| `UI-08` | A：接受所有时间线右键菜单等待系统双击间隔 | 已定案 |
+| `UI-08` | A（后续细化）：所有时间线右键菜单等待固定 300 ms；双击使用 `[0, 300 ms)` 与水平、垂直位移分别不超过 `6 DIP` 的自有判定，不依赖系统设置 | 已定案 |
 | `EDIT-01` | A：Humanize 首版只做 Tick/Gate/Velocity | 已定案 |
 | `EDIT-10` | C：Note Quantize 提供 Start only / Start+End | 已定案 |
 | `EDIT-14` | 两种均提供；新增默认关闭且进入 Preset 的首对象复选框 | 已定案 |
@@ -1431,10 +1434,10 @@ create Definition
 
 #### UI-08：右键双击与单击菜单冲突（已定案 A）
 
-- A：所有时间线右键菜单延迟一个系统双击间隔，以支持任意位置双击。
+- A：所有时间线右键菜单使用同一个显式双击候选窗口，以支持任意合法内容位置双击。
 - B：右键双击只在空白可编辑区生效；对象上单击菜单不延迟。
 - C：取消右键双击快捷方式。
-- **已定案：A。** 接受右键菜单延迟一个系统双击间隔；必须用统一手势状态机实现，不能由各视图自己设不同延迟。
+- **已定案：A，并于 2026-09-01 细化。** 首个未拖动 Right Up 到第二个 Right Down 的单调时间差必须位于 `[0, 300 ms)`，两位置必须同时满足 `|dx| <= 6 DIP` 与 `|dy| <= 6 DIP`；单击菜单等待同一 300 ms。必须用统一自有手势状态机实现，禁止依赖 WPF `ClickCount`、Windows double-click time 或系统空间容差，也不能由各视图自行设定阈值。
 
 #### UI-09：Loop/Pre-Roll 标签位置
 
@@ -1762,17 +1765,18 @@ create Definition
 - C：包括面板宽度、缩放和滚动全部保存。
 - **推荐：B。** 原需求称“洋葱皮配置”需要保存，不能静默缩小成只保存来源；C 又会恢复普通 View State 持久化。
 
-#### TOOL-01：工具框 Lock 的正式语义/命名（已定案 B）
+#### TOOL-01：工具框 Pin/Follow 的正式语义/命名（已定案 B，2026-09-01 细化默认值）
 
-- A：继续称 Lock；开启（默认）时相对时间线世界/选区固定，可随视图平移出屏；关闭时自动跟随并贴 viewport 边界。
-- B：改用 Pin 图标/Tooltip，但保持 A 的行为。
-- **推荐：B。** 只改名称，不改变用户定义的开启/关闭语义。
+- 命名固定使用 Pin/Follow，不称 Lock。
+- Follow 是新 Timeline Surface 默认：工具框跟随选择包围框并贴 viewport 边界保持可达。
+- Pin 使工具框相对时间线世界/Selection 固定，可随视图平移出屏。
+- **当前定案：** 保留 Pin 图标/Tooltip 与两种行为，但默认状态由 Pin 改为 Follow；两者都允许 grip 手动移动。
 
-#### TOOL-02：Horizontal Resize 适用对象（已定案 A）
+#### TOOL-02：Horizontal Resize 适用对象（2026-09-01 改定 B）
 
 - A：只对 Note。
-- B：Note 与 Arrangement Segment；Event Point 不显示。
-- **推荐：A。** 这是原需求的明确范围；若以后扩展 Segment，再单独验收其混合选择边界。
+- B：Note 与 Arrangement Segment；两者均拆成左边界、右边界两个方向可辨按钮；Event Point 不显示。
+- **当前定案：B。** Segment 复用已经验收的混合 Logical/MIDI Selection shared-delta、最小长度、边界与 Undo 规则，不另建命令语义。
 
 #### TOOL-03：工具框位置持久化（已定案 B）
 

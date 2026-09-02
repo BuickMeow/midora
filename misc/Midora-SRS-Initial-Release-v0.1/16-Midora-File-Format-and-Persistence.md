@@ -71,7 +71,8 @@ Undo / Redo 栈
 ├─ settings/
 │  ├─ project-settings.json
 │  ├─ global-reset-defaults.json
-│  └─ global-event-scope-defaults.json
+│  ├─ global-event-scope-defaults.json
+│  └─ project-presentation.json        // Format 3+
 ├─ event-instruments/
 │  ├─ ei_<id>.pb
 │  └─ ...
@@ -97,6 +98,7 @@ conductor-track.json
 settings/project-settings.json
 settings/global-reset-defaults.json
 settings/global-event-scope-defaults.json
+settings/project-presentation.json
 ```
 固定目录名：
 ```text
@@ -470,6 +472,23 @@ Project 标记为已修改。
 
 ### 16.7.4 global-event-scope-defaults.json
 保存不可编辑的版本化空 marker，只包含严格 schema 所需版本字段。未来增加字段必须发布新 schema 并定义迁移。
+
+### 16.7.5 project-presentation.json（Format 3+）
+
+`settings/project-presentation.json` 是 Format 3 新增的唯一 Project presentation entry。它不是 Project Source Data，不进入 Domain、编译、canonical fingerprint、音频缓存或 Undo/Redo；其 revision/save baseline 独立于音乐 Project Modified。
+
+v1 schema 固定保存：
+
+```text
+schemaVersion = 1
+allTracksMode = raw | compiled
+trackOnionPresets[] = targetTrackId + enabled + opacity + ordered sourceTrackIds
+subVoiceOnionPresets[] = eventInstrumentId + targetSubVoiceId + enabled + opacity + ordered sourceSubVoiceIds
+```
+
+opacity 必须是有限 `0..1`。target 必须存在且唯一，source 必须存在、同类、唯一且不得等于 target。写出按 target stable ID 确定排序；source 顺序保留为叠加顺序。保存快照过滤已经删除的 target/source，不得为 presentation 引用复活 Project 对象。
+
+该 entry 缺失、hash 不符、strict JSON/schema/引用验证失败时，只隔离 presentation、恢复 `allTracksMode=raw` 且 preset arrays 为空，并报告 `MIDORA-PERSIST-PRESENTATION-RECOVERED` Warning。音乐 Project source 仍可打开，`IsModified` 不因此成立；presentation session 单独保持 recovery-dirty，下一次普通 Save 可重写默认有效 entry。Format 1/2 没有该 entry，detached migration 使用同一默认 presentation。
 ## 16.8 conductor-track.json
 ### 16.8.1 内容
 `conductor-track.json` 保存完整 Conductor Track 内容，包括：
@@ -1023,7 +1042,7 @@ Project 成功打开并反序列化到内存后：
 ```
 Pure MIDI page pack 必须从 Zip entry 顺序流式复制到本次 Project session 私有的只读 backing file，再关闭原 `.midora`。不得为了满足本条而把完整 `.mpk` 解压到托管 byte array。session backing file 只承载已持久化 source bytes，Project 关闭时删除；它不属于 audio cache，也不改变 `.midora` 的唯一持久源身份。
 
-session backing root 固定为 `%LOCALAPPDATA%\Midora\SessionContent`。当前版本每个 Project session 使用一个带版本 manifest 和独占活动锁的 `session-*` 直接子目录；正常关闭在释放 pack/page cache 后删除自身目录。主应用取得单实例所有权后，以及创建新 backing session 前，必须 best-effort 回收 manifest 可识别且未持有活动锁的异常退出残留。旧开发版本生成的裸 32 位 GUID 目录，仅当它是 root 的非 reparse-point 直接子项，且为空或只含名称严格匹配 `mt_<positive stable id>.mpk` 的普通文件时，允许作为兼容垃圾回收；任何其他未知目录或文件必须保留。单个目录无法读取或删除不得阻止打开/导入 Project。
+session backing root 固定为 `<ProgramRoot>\.tmp\SessionContent`。当前版本每个 Project session 使用一个带版本 manifest 和独占活动锁的 `session-*` 直接子目录；正常关闭在释放 pack/page cache 后删除自身目录。主应用取得单实例所有权后，以及创建新 backing session 前，必须 best-effort 回收 manifest 可识别且未持有活动锁的异常退出残留。裸 GUID、未知目录、manifest 缺失/不匹配、活动目录、越界路径与 reparse-point 必须保留；不得探测或迁移旧 `%LOCALAPPDATA%\Midora\SessionContent`。单个目录无法读取或删除不得阻止打开/导入 Project。
 
 打开 / 反序列化过程中可以短暂占用文件，以避免读到半修改状态。
 打开后如果外部程序修改原 `.midora` 文件：
@@ -1453,10 +1472,7 @@ manifest lastSavedWithSoftwareVersion 写为当前软件版本。
 副本使用当前格式。
 不改变原路径。
 ```
-保存副本前必须确认：
-```text
-副本会写为当前格式。
-```
+Save Copy 始终写当前 Format 3；它不建立或切换 CurrentProjectPath，不清除 migration-dirty，也不替代第 16.24.2 节要求的旧来源原字节永久副本。目标若等于受保护旧来源路径，必须拒绝并要求使用普通 Save 的专用原路径升级流程。
 ---
 ## 16.24 版本迁移
 ### 16.24.1 打开旧版本项目
@@ -1474,10 +1490,22 @@ Format 1 冻结前的开发格式曾破坏性删除 Playback、Export defaults�
 
 自第 16.31 节的 Format 1 冻结点起，上述开发期例外终止。未来任何不能由冻结 Format 1 表示的持久化变化必须提升 `fileFormatVersion`，发布独立 JSON schema / protobuf descriptor / content-pack contract，并建立显式旧格式 reader 与 detached migration；不得根据缺失字段猜测默认模型或修改 V1 codec 伪装成兼容升级。
 ### 16.24.2 保存旧版本项目
-用户点击普通保存时：
+用户点击普通保存时，必须进入专用 `Upgrade Project In Place` 确认，而不是普通首次保存路径选择器。确认框在任何文件写入前冻结并显示来源绝对路径、来源 Format、目标 Format 3 与永久原字节副本最终路径。
+
+确认后的固定事务顺序为：
+
 ```text
-需要确认将保存为当前格式。
+1. 复核打开时冻结的来源 identity（绝对路径、Format、长度、mtime、完整 SHA-256）并取得排他 source lease；
+2. 从当前内存 Project + presentation snapshot 构建 Format 3 临时 package；
+3. 使用正式 reader 严格重开、自校验并比较确定内容；
+4. 在来源同目录创建或复用来源逐字节一致的可见永久副本；
+5. 再确认预先显示的副本路径仍可用；
+6. 以同卷原子替换把已验证 Format 3 package 发布到来源原路径；
+7. 成功后才把原路径设为 CurrentProjectPath，清除迁移保护与 migration-dirty。
 ```
+
+永久副本推荐名称为 `<ProjectStem> - Original Format <old> before Format 3.midora`，遵守 Windows 255 UTF-16 code-unit 文件名预算并按 text element 截断。撞名按稳定 `(2)`、`(3)` 后缀；候选内容与来源 identity 完全一致时可复用，不一致时绝不覆盖。确认后候选被不同内容抢占必须中止并要求重新确认，不得静默换成另一路径。
+
 如果用户取消确认：
 ```text
 不保存。
@@ -1489,6 +1517,8 @@ Project 仍保持已修改 / 已迁移未保存状态。
 清除需要迁移保存状态。
 ```
 不支持保存回旧格式。
+
+失败原子性：来源缺失/改变、临时包构建或自校验失败时不创建永久副本；永久副本复制、flush 或校验失败时来源不动；永久副本已安全存在但发布失败时保留该副本和旧来源，Project 仍 migration-dirty，重试可复用一致副本。原子发布成功但临时清理失败仍算保存成功，只报告 Warning。用户此前手工 Save Copy 不改变本流程。
 ### 16.24.3 迁移失败
 如果旧版本项目在打开时迁移失败：
 ```text
@@ -1847,7 +1877,7 @@ minimumReadableVersion = fileFormatVersion = 1
 
 ### 16.32.1 提升原因与版本字段
 
-Event Instrument Definition 的 `Pre-Roll Ticks` 是 Format 1 无法表达的新持久化语义，因此当前 writer 必须写 Format 2，不得向冻结 V1 protobuf 增加字段、复用字段号、根据未知字段猜值或修改 V1 descriptor/golden：
+Event Instrument Definition 的 `Pre-Roll Ticks` 是 Format 1 无法表达的新持久化语义，因此 Format 2 writer 在该版本冻结时必须采用以下版本字段；当前 writer 已由第 16.33 节提升为 Format 3，但 Format 2 reader/schema/descriptor/golden 不得改变：
 
 ```text
 fileFormatVersion = 2
@@ -1892,7 +1922,7 @@ V2 reader 必须要求字段存在并执行严格有符号 Int64、范围和 unk
 5. 对完整候选执行当前 Domain 与 Format 2 语义验证；全部成功后才一次提交为活动 Project。
 ```
 
-迁移不得覆盖、重写或在原 Format 1 包中追加字段。迁移成功后 Project 处于“已迁移未保存”状态；普通 Save 经既有升级确认写 Format 2，Save Copy 也只写 Format 2。迁移失败必须保留当前 Project 与源文件不变，不得提交部分 Definition 或把缺失字段解释为损坏 V2。
+迁移不得覆盖、重写或在原 Format 1 包中追加字段。迁移成功后 Project 处于“已迁移未保存”状态；当前软件的普通 Save 与 Save Copy 写 Format 3，Format 2 是该迁移链中的冻结中间契约而非当前输出。迁移失败必须保留当前 Project 与源文件不变，不得提交部分 Definition 或把缺失字段解释为损坏 V2。
 
 ### 16.32.4 当前格式测试门
 
@@ -1908,3 +1938,82 @@ Format 2 Pre-Roll 非零 round-trip、Save Copy、损坏隔离与事务故障注
 ```
 
 不得通过修改 Format 1 schema、descriptor、golden 或 reader 来完成这些测试。
+
+---
+
+## 16.33 Format 3：独立 Project Presentation
+
+### 16.33.1 提升原因与版本字段
+
+跨会话 Onion/All-Tracks presentation 无法由冻结 Format 2 表达，又不得混入 Project Source Data，因此当前 writer 提升为：
+
+```text
+fileFormatVersion = 3
+minimumReadableVersion = 3
+manifestSchemaVersion = 3
+```
+
+Format 3 新增一个 `project-presentation-json` file kind，且必须在 canonical path `settings/project-presentation.json` 恰好出现一次、schemaVersion=1。除该 entry 与 manifest v3 外，Format 3 逐项复用 Format 2 的 Project source JSON schemas、Event Instrument protobuf v2、其他 protobuf v1 与 Pure MIDI content-pack wire；复用不允许修改那些既有契约。
+
+### 16.33.2 Reader、writer 与损坏边界
+
+当前 writer 只写 Format 3。Reader 按 manifest version 明确分派 Format 1、2、3，不以 entry 缺失或未知字段猜测版本。Format 3 manifest 和 presentation JSON 服从 Draft 2020-12、source-generated DTO、strict duplicate/unknown-field 拒绝、canonical UTF-8/LF、确定排序与 SHA-256 索引。
+
+音乐 source entry 的损坏规则继续按本章既有规则执行；presentation entry 单独按第 16.7.5 节隔离，禁止创建 Damaged Project Object 或让 `MidoraProjectOpenResult.IsModified` 成立。presentation recovery dirty 只表示下次普通 Save 应重写该 entry。
+
+### 16.33.3 Format 1/2 detached migration
+
+Format 1 先按第 16.32.3 节显式补 `Pre-Roll Ticks=0`；Format 2 保留其完整 source 语义。两者随后都附加默认空 presentation，验证完整当前 Domain 后一次提交。打开阶段不得写来源、创建永久副本或改变 Recent entry。
+
+迁移后的普通 Save 使用第 16.24.2 节的专用原路径升级事务并写 Format 3；Save Copy 写 Format 3 但不改变来源保护。Format 1/2 reader/schema/descriptor/golden 必须持续通过，不得被 Format 3 codec 替代。
+
+### 16.33.4 自动测试门
+
+Format 3 必须持续覆盖：
+
+```text
+manifest-v3 与 project-presentation-v1 schema set hash
+空/非空 presentation deterministic bytes 与 package golden
+strict unknown/duplicate/type/range/reference rejection
+presentation missing/hash/corruption isolation without Project Modified
+Format 1/2 detached migration + default presentation
+Format 1/2 -> confirmed in-place Format 3 upgrade + exact-byte permanent backup
+source identity mutation, backup collision/reuse, staging/self-validation/backup/publish fault injection
+Format 3 Save/Save Copy/reopen and canonical equivalence
+```
+
+不得通过改写 Format 1/2 golden 或隐藏双写完成 Format 3 测试。
+
+---
+
+## 16.34 ProgramRoot Portable Storage
+
+### 16.34.1 权威根与目录
+
+`ProgramRoot` 固定为规范化的 executable base directory，不使用 process current directory。Midora 自建路径固定为：
+
+```text
+<ProgramRoot>\Data\Preferences
+<ProgramRoot>\Data\Recent
+<ProgramRoot>\Data\Catalogs
+<ProgramRoot>\Data\Presets
+<ProgramRoot>\Data\Diagnostics
+<ProgramRoot>\.tmp\AudioCache
+<ProgramRoot>\.tmp\SessionContent
+<ProgramRoot>\.tmp\CompilerRuns
+<ProgramRoot>\.tmp\AudioWorkerExchange
+```
+
+`.tmp` 只是可见目录名，不得设置 Windows Hidden 属性。Project、MIDI、SoundFont 与用户输出继续使用用户明确选择的外部绝对路径，不复制到 ProgramRoot。
+
+### 16.34.2 启动能力门与禁止 fallback
+
+主窗口创建前必须确认 ProgramRoot 是 ready local fixed drive 上的普通非 reparse-point 目录，并验证上述树可创建，以及写入、flush-to-disk、同卷原子 replace、独占 file lock 和删除均可用。任一失败必须以明确启动错误 fail closed；不得 fallback 到 `%LOCALAPPDATA%`、`%TEMP%`、当前工作目录、用户 profile 或另一卷。
+
+当前版本不探测、不读取、不迁移、不删除旧 `%LOCALAPPDATA%\Midora`。两份 ProgramRoot 的 `Data`、`.tmp` 与单实例 scope 相互隔离；scope 至少包含当前 Windows 用户和规范化 ProgramRoot identity。
+
+### 16.34.3 `.tmp` owner/lease 与回收
+
+每个可回收工作目录必须是其固定 root 的直接子项，带当前版本 owner manifest 与由进程持续持有的独占 active lock。正常释放先关闭使用者，再释放 lock 并 best-effort 删除。启动及新 lease 前只允许删除：路径仍是直接子项、非 reparse point、manifest magic/name/purpose 全部匹配且 active lock 已可排他取得的目录。
+
+manifest 缺失/损坏、裸 GUID、未知文件、活动锁、越界或 reparse point 一律保留。逐项回收失败不得阻止其他合法 session，但 root 能力探测本身失败必须阻止启动。CompilerRuns 与 AudioWorkerExchange 使用同一通用 lease；AudioCache 与 SessionContent 可保留其专用内容协议，但必须满足同等 owner/lock/path 边界。

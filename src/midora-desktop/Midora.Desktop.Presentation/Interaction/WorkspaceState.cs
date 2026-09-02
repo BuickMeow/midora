@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Midora.Domain;
 
 namespace Midora.Desktop.Presentation.Interaction;
@@ -51,11 +50,11 @@ public enum WorkspaceSelectionRangeMode
 
 public sealed class WorkspaceSelection
 {
-    private ImmutableHashSet<MidoraId> _ids = ImmutableHashSet<MidoraId>.Empty;
+    private CompressedMidoraIdSet _ids = CompressedMidoraIdSet.Empty;
 
     public IReadOnlyCollection<MidoraId> Ids => _ids;
     public IReadOnlySet<MidoraId> IdSet => _ids;
-    internal ImmutableHashSet<MidoraId> SharedIds => _ids;
+    internal CompressedMidoraIdSet SharedIds => _ids;
     public MidoraId? Primary { get; private set; }
     public MidoraId? Anchor { get; private set; }
     public long Revision { get; private set; }
@@ -67,7 +66,7 @@ public sealed class WorkspaceSelection
         {
             return;
         }
-        _ids = ImmutableHashSet.Create(id);
+        _ids = CompressedMidoraIdSet.Create([id]);
         Primary = id;
         Anchor = id;
         Revision = checked(Revision + 1);
@@ -76,7 +75,7 @@ public sealed class WorkspaceSelection
     public void Add(MidoraId id, bool makePrimary = true)
     {
         Validate(id);
-        ImmutableHashSet<MidoraId> replacement = _ids.Add(id);
+        CompressedMidoraIdSet replacement = _ids.Add(id);
         bool changed = !ReferenceEquals(replacement, _ids);
         _ids = replacement;
         if (makePrimary || Primary is null)
@@ -103,7 +102,7 @@ public sealed class WorkspaceSelection
         _ids = _ids.Remove(id);
         if (Primary == id)
         {
-            Primary = _ids.Count == 0 ? null : _ids.Min();
+            Primary = GetMinimumOrNull();
         }
         if (Anchor == id)
         {
@@ -114,7 +113,7 @@ public sealed class WorkspaceSelection
 
     public void Remove(MidoraId id)
     {
-        ImmutableHashSet<MidoraId> replacement = _ids.Remove(id);
+        CompressedMidoraIdSet replacement = _ids.Remove(id);
         if (ReferenceEquals(replacement, _ids))
         {
             return;
@@ -122,7 +121,7 @@ public sealed class WorkspaceSelection
         _ids = replacement;
         if (Primary == id)
         {
-            Primary = _ids.Count == 0 ? null : _ids.Min();
+            Primary = GetMinimumOrNull();
         }
         if (Anchor == id)
         {
@@ -139,12 +138,12 @@ public sealed class WorkspaceSelection
     public bool RetainOnly(IReadOnlySet<MidoraId> validIds)
     {
         ArgumentNullException.ThrowIfNull(validIds);
-        ImmutableHashSet<MidoraId> replacement = _ids.Intersect(validIds);
+        CompressedMidoraIdSet replacement = _ids.Intersect(validIds);
         if (replacement.Count == _ids.Count) return false;
 
         _ids = replacement;
         if (Primary is MidoraId primary && !_ids.Contains(primary))
-            Primary = _ids.Count == 0 ? null : _ids.Min();
+            Primary = GetMinimumOrNull();
         if (Anchor is MidoraId anchor && !_ids.Contains(anchor)) Anchor = Primary;
         Revision = checked(Revision + 1);
         return true;
@@ -158,7 +157,7 @@ public sealed class WorkspaceSelection
         // older selection gesture which may still be running on another surface.
         // Without this epoch advance, a pending Replace marquee can repopulate a
         // selection after an explicit Deselect command.
-        _ids = ImmutableHashSet<MidoraId>.Empty;
+        _ids = CompressedMidoraIdSet.Empty;
         Primary = null;
         Anchor = null;
         Revision = checked(Revision + 1);
@@ -170,7 +169,7 @@ public sealed class WorkspaceSelection
     /// thread and installed without copying it again on the Dispatcher thread.
     /// </summary>
     public void AdoptMaterialized(
-        ImmutableHashSet<MidoraId> ids,
+        CompressedMidoraIdSet ids,
         MidoraId? primary = null,
         MidoraId? anchor = null)
     {
@@ -193,17 +192,23 @@ public sealed class WorkspaceSelection
         Revision = checked(Revision + 1);
     }
 
+    public void AdoptMaterialized(
+        IEnumerable<MidoraId> ids,
+        MidoraId? primary = null,
+        MidoraId? anchor = null) =>
+        AdoptMaterialized(CompressedMidoraIdSet.Create(ids), primary, anchor);
+
     public bool ReplaceAll(IEnumerable<MidoraId> ids, MidoraId? primary)
     {
         ArgumentNullException.ThrowIfNull(ids);
-        ImmutableHashSet<MidoraId>.Builder builder = ImmutableHashSet.CreateBuilder<MidoraId>();
+        CompressedMidoraIdSet.Builder builder = CompressedMidoraIdSet.CreateBuilder();
         MidoraId? first = null;
         foreach (MidoraId id in ids)
         {
             Validate(id);
             if (builder.Add(id)) first ??= id;
         }
-        ImmutableHashSet<MidoraId> replacement = builder.ToImmutable();
+        CompressedMidoraIdSet replacement = builder.Build();
         if (primary is MidoraId primaryId && !replacement.Contains(primaryId))
         {
             throw new ArgumentException(
@@ -228,14 +233,14 @@ public sealed class WorkspaceSelection
         WorkspaceSelectionRangeMode mode)
     {
         ArgumentNullException.ThrowIfNull(ids);
-        ImmutableHashSet<MidoraId>.Builder builder = ImmutableHashSet.CreateBuilder<MidoraId>();
+        CompressedMidoraIdSet.Builder builder = CompressedMidoraIdSet.CreateBuilder();
         MidoraId? first = null;
         foreach (MidoraId id in ids)
         {
             Validate(id);
             if (builder.Add(id)) first ??= id;
         }
-        ImmutableHashSet<MidoraId> materialized = builder.ToImmutable();
+        CompressedMidoraIdSet materialized = builder.Build();
         bool changed = false;
         switch (mode)
         {
@@ -254,7 +259,7 @@ public sealed class WorkspaceSelection
                 changed = true;
                 break;
             case WorkspaceSelectionRangeMode.Add:
-                ImmutableHashSet<MidoraId> added = _ids.Union(materialized);
+                CompressedMidoraIdSet added = _ids.Union(materialized);
                 changed = !ReferenceEquals(added, _ids);
                 _ids = added;
                 if (Primary is null && first is MidoraId firstAdded)
@@ -273,7 +278,7 @@ public sealed class WorkspaceSelection
                 NormalizeEndpoints();
                 break;
             case WorkspaceSelectionRangeMode.Remove:
-                ImmutableHashSet<MidoraId> removed = _ids.Except(materialized);
+                CompressedMidoraIdSet removed = _ids.Except(materialized);
                 changed = !ReferenceEquals(removed, _ids);
                 _ids = removed;
                 NormalizeEndpoints();
@@ -290,7 +295,7 @@ public sealed class WorkspaceSelection
         {
             if (Primary is MidoraId primary && !_ids.Contains(primary))
             {
-                Primary = _ids.Count == 0 ? null : _ids.Min();
+                Primary = GetMinimumOrNull();
             }
             if (Anchor is MidoraId anchor && !_ids.Contains(anchor))
             {
@@ -311,6 +316,9 @@ public sealed class WorkspaceSelection
             throw new ArgumentOutOfRangeException(nameof(id));
         }
     }
+
+    private MidoraId? GetMinimumOrNull() =>
+        _ids.TryGetMinimum(out MidoraId minimum) ? minimum : null;
 }
 
 public static class TimelineSnap

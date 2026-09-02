@@ -665,6 +665,35 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         RefreshAll();
     }
 
+    public async Task<string> UpgradeLegacyProjectInPlaceAsync(
+        MidoraLegacyProjectUpgradePlanV3 plan,
+        CancellationToken cancellationToken = default)
+    {
+        if (Persistence is null)
+        {
+            throw new InvalidOperationException("No Project is open.");
+        }
+        MidoraProjectSaveResultV1 result = await Task.Run(
+            () => Persistence.UpgradeLegacyProjectInPlaceAsync(plan, cancellationToken),
+            cancellationToken);
+        RefreshAll();
+        return result.PermanentLegacyBackupPath
+            ?? throw new InvalidOperationException(
+                "The legacy upgrade completed without reporting its permanent backup.");
+    }
+
+    public Task<MidoraLegacyProjectUpgradePlanV3> PrepareLegacyProjectUpgradeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Persistence is null)
+        {
+            throw new InvalidOperationException("No Project is open.");
+        }
+        return Task.Run(
+            () => Persistence.PrepareLegacyProjectUpgradeAsync(cancellationToken),
+            cancellationToken);
+    }
+
     public async Task SaveCopyAsync(
         string path,
         bool overwriteAuthorized,
@@ -1643,11 +1672,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             return cached.Bookmark;
         }
-        ImmutableHashSet<MidoraId> materialized =
-            selection.IdSet as ImmutableHashSet<MidoraId>
-            ?? selection.IdSet.ToImmutableHashSet();
         WorkspaceSelectionBookmark bookmark = new(
-            materialized,
+            CompressedMidoraIdSet.Create(selection.IdSet),
             selection.Primary,
             selection.Anchor);
         _workspaceSelectionBookmarkCache[workspace.Key] = new(
@@ -1778,7 +1804,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             if (workspace is null) continue;
             if (workspace.Selection.Primary == bookmark.Primary
                 && workspace.Selection.Anchor == bookmark.Anchor
-                && workspace.Selection.IdSet is ImmutableHashSet<MidoraId> current
+                && workspace.Selection.IdSet is CompressedMidoraIdSet current
                 && (ReferenceEquals(current, bookmark.Ids)
                     || current.SetEquals(bookmark.Ids)))
             {
@@ -3109,7 +3135,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     }
 
     private sealed record WorkspaceSelectionBookmark(
-        ImmutableHashSet<MidoraId> Ids,
+        CompressedMidoraIdSet Ids,
         MidoraId? Primary,
         MidoraId? Anchor);
 

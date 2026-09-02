@@ -400,6 +400,86 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void FirstPlaybackIncludesLogicalTrackCreatedAfterPlaybackControllerConstruction()
+    {
+        string soundFont = CreateTemporarySoundFont();
+        try
+        {
+            MidoraProject project = new(480);
+            using ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            MidoraId trackId = default;
+
+            session.ApplyEdit(
+                editedProject =>
+                {
+                    EventInstrument instrument = new(editedProject)
+                    {
+                        Name = "New Instrument",
+                        TemplateLengthTicks = 480,
+                        OverlapPolicy = OverlapPolicy.Warn
+                    };
+                    SubVoice voice = new(editedProject);
+                    voice.Events.Add(TemplateEvent.Note(
+                        editedProject,
+                        0,
+                        480,
+                        60,
+                        100));
+                    instrument.SubVoices.Add(voice);
+                    editedProject.EventInstruments.Add(instrument);
+                    LogicalTrack track = new(editedProject) { Name = "New Track" };
+                    ProjectGraphConstruction.AddIndependentLogicalTrack(
+                        editedProject,
+                        track,
+                        instrument.Id);
+                    Segment segment = new(editedProject) { LengthTicks = 960 };
+                    segment.Notes.Add(new LogicalNote(editedProject)
+                    {
+                        StartTick = 0,
+                        LengthTicks = 480,
+                        Note = 60,
+                        Velocity = 100
+                    });
+                    track.Segments.Add(segment);
+                    trackId = track.Id;
+                },
+                ProjectChangeSet.Everything);
+
+            controller.Start();
+
+            MidiRenderPlan plan = Assert.IsType<MidiRenderPlan>(backend.LastStartedPlan);
+            int sourceIndex = Array.IndexOf(plan.SourceIds.ToArray(), trackId.Value);
+            Assert.True(sourceIndex >= 0);
+            Assert.DoesNotContain(sourceIndex, plan.InitiallyDisabledSourceIndices.ToArray());
+            bool containsNoteOn = false;
+            foreach (MidiPortRenderPlan port in plan.Ports)
+            {
+                foreach (ScheduledMidiMessage midiEvent in port.Events)
+                {
+                    if (midiEvent.SourceIndex == sourceIndex
+                        && midiEvent.Message.MessageType == MidiMessageType.NoteOn)
+                    {
+                        containsNoteOn = true;
+                        break;
+                    }
+                }
+
+                if (containsNoteOn)
+                    break;
+            }
+
+            Assert.True(containsNoteOn);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void AudioBackendWarmUpPreparesWithoutStartingPlayback()
     {
         string soundFont = CreateTemporarySoundFont();

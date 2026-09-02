@@ -111,6 +111,75 @@ internal sealed class PersistentTimelineSequence<TValue>
         }
     }
 
+    public TValue[] CopyRange(int firstIndex, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(firstIndex);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (firstIndex > Count - count)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        if (count == 0) return [];
+        TValue[] result = new TValue[count];
+        int writeIndex = 0;
+        CopyRange(
+            _root!,
+            nodeStart: 0,
+            firstIndex,
+            checked(firstIndex + count),
+            result,
+            ref writeIndex);
+        if (writeIndex != result.Length)
+            throw new InvalidOperationException("A persistent sequence range copy was incomplete.");
+        return result;
+    }
+
+    public int FindIndex(Predicate<TValue> match)
+    {
+        ArgumentNullException.ThrowIfNull(match);
+        int index = 0;
+        foreach (TValue value in Enumerate())
+        {
+            if (match(value)) return index;
+            index++;
+        }
+        return -1;
+    }
+
+    private static void CopyRange(
+        Node node,
+        int nodeStart,
+        int firstIndex,
+        int endIndex,
+        TValue[] destination,
+        ref int writeIndex)
+    {
+        int nodeEnd = checked(nodeStart + node.Count);
+        if (nodeEnd <= firstIndex || nodeStart >= endIndex) return;
+        if (node is Leaf leaf)
+        {
+            int first = Math.Max(0, firstIndex - nodeStart);
+            int end = Math.Min(leaf.Count, endIndex - nodeStart);
+            for (int index = first; index < end; index++)
+                destination[writeIndex++] = leaf.GetValue(index);
+            return;
+        }
+
+        Branch branch = (Branch)node;
+        CopyRange(
+            branch.Left,
+            nodeStart,
+            firstIndex,
+            endIndex,
+            destination,
+            ref writeIndex);
+        CopyRange(
+            branch.Right,
+            checked(nodeStart + branch.Left.Count),
+            firstIndex,
+            endIndex,
+            destination,
+            ref writeIndex);
+    }
+
     public IEnumerable<Leaf> EnumerateLeaves()
     {
         if (_root is null) yield break;

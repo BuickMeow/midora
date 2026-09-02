@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Midora.Common;
 using Midora.Domain;
 
 namespace Midora.Application;
@@ -14,7 +15,7 @@ public sealed record ApplicationPreferencesSaveResult(
 
 public sealed class ApplicationPreferencesStore
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     private const int MaximumFileBytes = 1024 * 1024;
     private readonly string _filePath;
 
@@ -25,17 +26,8 @@ public sealed class ApplicationPreferencesStore
 
     public string FilePath => _filePath;
 
-    public static string GetDefaultFilePath()
-    {
-        string localApplicationData = Environment.GetFolderPath(
-            Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrWhiteSpace(localApplicationData))
-        {
-            throw new InvalidOperationException(
-                "The current Windows user's Local Application Data directory is unavailable.");
-        }
-        return Path.Combine(localApplicationData, "Midora", "preferences-v1.json");
-    }
+    public static string GetDefaultFilePath() =>
+        MidoraProgramData.Current.PreferencesFilePath;
 
     public ApplicationPreferencesLoadResult Load()
     {
@@ -79,7 +71,7 @@ public sealed class ApplicationPreferencesStore
                     dto.DeviceBufferRequestMilliseconds,
                     dto.RealtimeMaximumSampleVoicesPerUnitStream),
                 new AudioCachePreferences(
-                    dto.AudioCacheRootPath,
+                    MidoraProgramData.Current.AudioCacheDirectory,
                     dto.MaximumReusableAudioCacheBytes).Normalize(),
                 new ApplicationRecentDirectories(
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.OpenProject),
@@ -168,7 +160,6 @@ public sealed class ApplicationPreferencesStore
                     preferences.RealtimeAudio.DeviceBufferRequestMilliseconds,
                 RealtimeMaximumSampleVoicesPerUnitStream =
                     preferences.RealtimeAudio.MaximumSampleVoicesPerUnitStream,
-                AudioCacheRootPath = preferences.AudioCache.RootPath,
                 MaximumReusableAudioCacheBytes = preferences.AudioCache.MaximumReusableBytes,
                 MasterVolumeDecibels = preferences.Playback.MasterVolumeDecibels,
                 LimiterEnabled = preferences.Playback.LimiterEnabled,
@@ -319,30 +310,27 @@ internal sealed class ApplicationPreferencesJsonV1
     public int RealtimeMaximumSampleVoicesPerUnitStream { get; set; }
 
     [JsonPropertyOrder(5)]
-    public required string AudioCacheRootPath { get; set; }
-
-    [JsonPropertyOrder(6)]
     public required long MaximumReusableAudioCacheBytes { get; set; }
 
-    [JsonPropertyOrder(7)]
+    [JsonPropertyOrder(6)]
     public ApplicationRecentDirectoriesJsonV1? RecentDirectories { get; set; }
 
-    [JsonPropertyOrder(8)]
+    [JsonPropertyOrder(7)]
     public DesktopUiPreferencesJsonV1? DesktopUi { get; set; }
 
-    [JsonPropertyOrder(9)]
+    [JsonPropertyOrder(8)]
     public List<ApplicationSoundFontPreferenceJsonV1>? SoundFonts { get; set; }
 
-    [JsonPropertyOrder(10)]
+    [JsonPropertyOrder(9)]
     public double? MasterVolumeDecibels { get; set; }
 
-    [JsonPropertyOrder(11)]
+    [JsonPropertyOrder(10)]
     public bool? LimiterEnabled { get; set; }
 
-    [JsonPropertyOrder(12)]
+    [JsonPropertyOrder(11)]
     public string? StopCursorBehavior { get; set; }
 
-    [JsonPropertyOrder(13)]
+    [JsonPropertyOrder(12)]
     public string? Language { get; set; }
 }
 

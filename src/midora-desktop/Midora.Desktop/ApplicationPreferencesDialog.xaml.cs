@@ -10,6 +10,7 @@ using System.Windows.Media;
 using Microsoft.Win32;
 using Midora.Application;
 using Midora.Audio;
+using Midora.Common;
 using Midora.Domain;
 
 namespace Midora.Desktop;
@@ -79,7 +80,6 @@ public partial class ApplicationPreferencesDialog : Window
         RenderAheadBox.Text = realtime.RenderAheadMilliseconds.ToString(CultureInfo.InvariantCulture);
         DeviceRequestBox.Text = realtime.DeviceBufferRequestMilliseconds.ToString(CultureInfo.InvariantCulture);
         VoicesBox.Text = realtime.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture);
-        CacheRootBox.Text = preferences.AudioCache.RootPath;
         CacheQuotaBox.Text = (preferences.AudioCache.MaximumReusableBytes / BytesPerGibibyte)
             .ToString("0.###", CultureInfo.InvariantCulture);
         foreach (SoundFontDraftItem item in _soundFonts)
@@ -90,19 +90,6 @@ public partial class ApplicationPreferencesDialog : Window
         foreach (ApplicationSoundFontPreference soundFont in preferences.SoundFonts)
         {
             AddSoundFontDraftItem(new(soundFont.Path, soundFont.Enabled, soundFont.Target));
-        }
-    }
-
-    private void OnBrowseCacheClick(object sender, RoutedEventArgs e)
-    {
-        OpenFolderDialog dialog = new()
-        {
-            Title = "Select Local Audio Cache Root",
-            InitialDirectory = Directory.Exists(CacheRootBox.Text) ? CacheRootBox.Text : null
-        };
-        if (dialog.ShowDialog(this) == true)
-        {
-            CacheRootBox.Text = dialog.FolderName;
         }
     }
 
@@ -297,7 +284,9 @@ public partial class ApplicationPreferencesDialog : Window
                     renderAhead,
                     deviceRequest,
                     voices),
-                AudioCache = new AudioCachePreferences(CacheRootBox.Text, quotaBytes).Normalize(),
+                AudioCache = new AudioCachePreferences(
+                    MidoraProgramData.Current.AudioCacheDirectory,
+                    quotaBytes).Normalize(),
                 Playback = new PlaybackPreferences(
                     masterVolumeDecibels,
                     PlaybackLimiterBox.IsChecked == true,

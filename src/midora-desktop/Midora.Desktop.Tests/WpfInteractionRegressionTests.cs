@@ -1,5 +1,4 @@
 using System.Collections.Specialized;
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Windows;
@@ -954,13 +953,9 @@ public sealed class WpfInteractionRegressionTests
                 }));
                 TestSelectionWorkspaceViewModel workspace = new();
                 session.Workspaces.Add(workspace);
-                ImmutableHashSet<MidoraId>.Builder builder =
-                    ImmutableHashSet.CreateBuilder<MidoraId>();
-                for (int index = 0; index < idCount; index++)
-                {
-                    builder.Add(new MidoraId(10_000_000L + index));
-                }
-                ImmutableHashSet<MidoraId> ids = builder.ToImmutable();
+                CompressedMidoraIdSet ids = CompressedMidoraIdSet.Create(
+                    Enumerable.Range(0, idCount)
+                        .Select(static index => new MidoraId(10_000_000L + index)));
                 MidoraId primary = new(10_000_000);
                 workspace.Selection.AdoptMaterialized(ids, primary, primary);
                 session.RefreshWorkspaceSelection(workspace);

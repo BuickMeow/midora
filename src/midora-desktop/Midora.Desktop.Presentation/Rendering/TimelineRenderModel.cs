@@ -853,7 +853,7 @@ public sealed class TimelineSelectionRenderIndex
 /// </summary>
 public sealed record TimelineMaterializedSelection(
     long BaseSelectionRevision,
-    ImmutableHashSet<MidoraId> Ids,
+    CompressedMidoraIdSet Ids,
     MidoraId? Primary,
     MidoraId? Anchor,
     IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> Metrics,
@@ -978,7 +978,7 @@ public sealed class MaterializedTimelineOverviewSource : ITimelineOverviewSource
 
 public sealed class TimelineSelectionSnapshot
 {
-    private readonly ImmutableHashSet<MidoraId> _ids;
+    private readonly CompressedMidoraIdSet _ids;
     private readonly Dictionary<TimelineItemKind, TimelineSelectionMetrics> _metrics;
     private readonly TimelineSelectionRenderIndex? _renderIndex;
 
@@ -990,7 +990,7 @@ public sealed class TimelineSelectionSnapshot
         MidoraId? anchor = null)
         : this(
             revision,
-            ids as ImmutableHashSet<MidoraId> ?? ids.ToImmutableHashSet(),
+            CompressedMidoraIdSet.Create(ids),
             primary,
             anchor ?? primary,
             resolvedItems,
@@ -1003,7 +1003,7 @@ public sealed class TimelineSelectionSnapshot
 
     private TimelineSelectionSnapshot(
         long revision,
-        ImmutableHashSet<MidoraId> ids,
+        CompressedMidoraIdSet ids,
         MidoraId? primary,
         MidoraId? anchor,
         IEnumerable<TimelineRenderItem>? resolvedItems,
@@ -1054,7 +1054,7 @@ public sealed class TimelineSelectionSnapshot
         TimelineSelectionRenderIndex? renderIndex = null)
         : this(
             revision,
-            ids as ImmutableHashSet<MidoraId> ?? ids.ToImmutableHashSet(),
+            CompressedMidoraIdSet.Create(ids),
             primary,
             anchor ?? primary,
             resolvedItems: null,
@@ -1067,7 +1067,7 @@ public sealed class TimelineSelectionSnapshot
 
     internal static TimelineSelectionSnapshot FromTrustedIds(
         long revision,
-        ImmutableHashSet<MidoraId> ids,
+        CompressedMidoraIdSet ids,
         MidoraId? primary,
         IEnumerable<TimelineRenderItem>? resolvedItems = null,
         IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics = null,
@@ -1114,7 +1114,7 @@ public sealed class TimelineSelectionSnapshot
     public IReadOnlySet<MidoraId> IdSet => _ids;
     public bool Contains(MidoraId id) => _ids.Contains(id);
 
-    internal ImmutableHashSet<MidoraId> SharedIds => _ids;
+    internal CompressedMidoraIdSet SharedIds => _ids;
     internal IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> Metrics => _metrics;
     internal TimelineSelectionRenderIndex? RenderIndex => _renderIndex;
 
@@ -1314,6 +1314,7 @@ public readonly record struct TimelineViewport(
 
 public sealed class TimelineRenderSnapshot
 {
+    private const int MaximumMaterializedSelectionRenderItems = 16_384;
     private const int MaximumPianoFingerprintEntries = 16384;
     private const int MaximumConductorFingerprintEntries = 8192;
     private const int MaximumQueryScratchCapacity = 4096;
@@ -1630,9 +1631,9 @@ public sealed class TimelineRenderSnapshot
             throw new ArgumentOutOfRangeException(nameof(maximumNormalizedValue));
         }
 
-        ImmutableHashSet<MidoraId>.Builder rangeBuilder =
-            ImmutableHashSet.CreateBuilder<MidoraId>();
-        TimelineSelectionRenderIndex.Builder rangeRenderIndex =
+        CompressedMidoraIdSet.Builder rangeBuilder =
+            CompressedMidoraIdSet.CreateBuilder();
+        TimelineSelectionRenderIndex.Builder? rangeRenderIndex =
             TimelineSelectionRenderIndex.CreateBuilder();
         SelectionMetricsAccumulator rangeMetrics = new();
         SelectionMetricsAccumulator newlyAddedMetrics = new();
@@ -1651,15 +1652,21 @@ public sealed class TimelineRenderSnapshot
                 return;
             }
             first ??= item.Id;
-            rangeRenderIndex.Add(item);
+            if (rangeRenderIndex is not null)
+            {
+                if (rangeBuilder.Count <= MaximumMaterializedSelectionRenderItems)
+                    rangeRenderIndex.Add(item);
+                else
+                    rangeRenderIndex = null;
+            }
             rangeMetrics.IncludeWithAliases(item);
             if (!baseSelection.Contains(item.Id))
                 newlyAddedMetrics.IncludeWithAliases(item);
         });
         cancellationToken.ThrowIfCancellationRequested();
 
-        ImmutableHashSet<MidoraId> range = rangeBuilder.ToImmutable();
-        ImmutableHashSet<MidoraId> result = mode switch
+        CompressedMidoraIdSet range = rangeBuilder.Build();
+        CompressedMidoraIdSet result = mode switch
         {
             WorkspaceSelectionRangeMode.Replace => range,
             WorkspaceSelectionRangeMode.Add => baseSelection.SharedIds.Union(range),
@@ -1671,7 +1678,7 @@ public sealed class TimelineRenderSnapshot
             ? first
             : baseSelection.Primary is MidoraId currentPrimary && result.Contains(currentPrimary)
                 ? currentPrimary
-                : result.Count == 0 ? null : result.Min();
+                : result.TryGetMinimum(out MidoraId minimum) ? minimum : null;
         MidoraId? anchor = mode == WorkspaceSelectionRangeMode.Replace
             ? primary
             : baseSelection.Anchor is MidoraId currentAnchor && result.Contains(currentAnchor)
@@ -1718,19 +1725,20 @@ public sealed class TimelineRenderSnapshot
             && baseSelection.SharedIds.SetEquals(result)
             && baseSelection.Primary == primary
             && baseSelection.Anchor == anchor;
-        TimelineSelectionRenderIndex rangeIndex = rangeRenderIndex.Build();
+        TimelineSelectionRenderIndex? rangeIndex = rangeRenderIndex?.Build();
         TimelineSelectionRenderIndex? renderIndex = mode switch
         {
             WorkspaceSelectionRangeMode.Replace => rangeIndex,
             WorkspaceSelectionRangeMode.Add or WorkspaceSelectionRangeMode.Remove
                 or WorkspaceSelectionRangeMode.Toggle
-                when baseSelection.RenderIndex is TimelineSelectionRenderIndex baseIndex =>
+                when rangeIndex is not null
+                    && baseSelection.RenderIndex is TimelineSelectionRenderIndex baseIndex =>
                     TimelineSelectionRenderIndex.MergeForSelection(
                         result,
                         baseIndex,
                         rangeIndex),
             WorkspaceSelectionRangeMode.Add or WorkspaceSelectionRangeMode.Toggle
-                when baseSelection.Count == 0 => rangeIndex,
+                when baseSelection.Count == 0 && rangeIndex is not null => rangeIndex,
             _ => null
         };
         return new(

@@ -604,13 +604,22 @@ public sealed class TimelineRenderingTests
             Rect previewBounds = VisualTreeHelper.GetContentBounds(preview);
 
             Assert.False(previewBounds.IsEmpty);
+            List<TimelineRenderItem> current = Assert.IsType<List<TimelineRenderItem>>(
+                GetPrivateField(surface, "_dragPreviewItems"));
+            Assert.Contains(current, value => value.Id == anchor.Id);
+            Assert.DoesNotContain(current, value => value.Id == cold.Id);
+            object transform = InvokePrivate(surface, "GetDragPreviewTransform", anchor)
+                ?? throw new InvalidOperationException("Drag preview transform was not returned.");
+            object?[] boundsArguments = [anchor, transform, viewport, 52d, 24d, null];
+            Assert.True(Assert.IsType<bool>(InvokePrivate(
+                surface,
+                "TryGetDragPreviewBounds",
+                boundsArguments)));
+            Rect anchorBounds = Assert.IsType<Rect>(boundsArguments[5]);
             Assert.InRange(
-                previewBounds.Left,
+                anchorBounds.Left,
                 52 + viewport.TickToX(124) - 1,
                 52 + viewport.TickToX(124) + 1);
-            Assert.True(
-                previewBounds.Right < 52 + viewport.TickToX(300),
-                "A pending cache-only query reused stale candidates from the older viewport.");
             surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
         });
     }
@@ -814,6 +823,139 @@ public sealed class TimelineRenderingTests
         Assert.False(snapshot.TryHitTestCached(12, 0, 0, destination));
         Assert.Equal([sentinel], destination);
         Assert.Equal(1, source.QueryCalls);
+    }
+
+    [Fact]
+    public void DelayedRightClickMenuNeverRunsAColdExactHitOnTheWpfThread()
+    {
+        RunOnSta(() =>
+        {
+            using ManualResetEventSlim queryStarted = new(false);
+            using ManualResetEventSlim releaseQuery = new(false);
+            int uiThreadId = Environment.CurrentManagedThreadId;
+            BlockingHitRenderSource source = new(queryStarted, releaseQuery);
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                Snapshot = new TimelineRenderSnapshot(
+                    1,
+                    "async-right-click-hit",
+                    [],
+                    itemSource: source),
+                ContextMenu = new ContextMenu(),
+                StartTick = 0,
+                TickSpan = 1_000,
+                FirstLane = 0,
+                LaneHeight = 6,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 320));
+            surface.Arrange(new Rect(0, 0, 800, 320));
+            try
+            {
+                Stopwatch elapsed = Stopwatch.StartNew();
+                _ = InvokePrivate(
+                    surface,
+                    "BeginPendingRightGesture",
+                    new Point(120, 80),
+                    ModifierKeys.None);
+                elapsed.Stop();
+
+                Assert.True(queryStarted.Wait(TimeSpan.FromSeconds(2)));
+                Assert.NotEqual(uiThreadId, source.QueryThreadId);
+                Assert.True(
+                    elapsed.Elapsed < TimeSpan.FromMilliseconds(250),
+                    $"Right-click scheduling blocked for {elapsed.Elapsed.TotalMilliseconds:N1} ms.");
+            }
+            finally
+            {
+                releaseQuery.Set();
+                surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            }
+        });
+    }
+
+    [Fact]
+    public void RightButtonDownFreezesItsColdContextTargetUntilMouseUp()
+    {
+        RunOnSta(() =>
+        {
+            using ManualResetEventSlim queryStarted = new(false);
+            using ManualResetEventSlim releaseQuery = new(false);
+            TimelineRenderItem target = Item(
+                17,
+                120,
+                140,
+                60,
+                kind: TimelineItemKind.DirectMidiNote);
+            BlockingHitRenderSource source = new(queryStarted, releaseQuery, target);
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                Snapshot = new TimelineRenderSnapshot(
+                    1,
+                    "frozen-right-button-target",
+                    [],
+                    itemSource: source),
+                SelectionSnapshot = new TimelineSelectionSnapshot(
+                    1,
+                    [target.Id],
+                    target.Id,
+                    [target]),
+                ContextMenu = new ContextMenu(),
+                StartTick = 0,
+                TickSpan = 1_000,
+                FirstLane = 48,
+                LaneHeight = 6,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 320));
+            surface.Arrange(new Rect(0, 0, 800, 320));
+            List<TimelineItemEventArgs> invoked = [];
+            surface.ItemInvoked += (_, args) => invoked.Add(args);
+            try
+            {
+                _ = InvokePrivate(
+                    surface,
+                    "BeginPendingRightGesture",
+                    new Point(190, 140),
+                    ModifierKeys.None);
+                Assert.True(queryStarted.Wait(TimeSpan.FromSeconds(2)));
+                Assert.True((bool)GetPrivateField(
+                    surface,
+                    "_delayedContextMenuAwaitingMouseUp")!);
+                Assert.Empty(invoked);
+
+                releaseQuery.Set();
+                Stopwatch ready = Stopwatch.StartNew();
+                while (!(bool)GetPrivateField(surface, "_delayedContextMenuQueryReady")!
+                    && ready.Elapsed < TimeSpan.FromSeconds(2))
+                {
+                    Thread.Sleep(1);
+                    PumpDispatcher();
+                }
+                Assert.True((bool)GetPrivateField(
+                    surface,
+                    "_delayedContextMenuQueryReady")!);
+                Assert.Empty(invoked);
+
+                // Emulate the click half of OnMouseUp without waiting for the
+                // machine's configured double-click interval.
+                SetPrivateField(surface, "_pendingRightGestureOrigin", null);
+                SetPrivateField(surface, "_delayedContextMenuAwaitingMouseUp", false);
+                SetPrivateField(surface, "_delayedContextMenuDelayElapsed", true);
+                _ = InvokePrivate(surface, "TryOpenDelayedContextMenu");
+
+                TimelineItemEventArgs selected = Assert.Single(invoked);
+                Assert.Equal(target.Id, selected.Item.Id);
+                Assert.True(selected.PreserveExistingSelection);
+            }
+            finally
+            {
+                releaseQuery.Set();
+                surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            }
+        });
     }
 
     [Fact]
@@ -1812,6 +1954,119 @@ public sealed class TimelineRenderingTests
                 isInContent: true,
                 TimelineItemKind.ConductorEvent,
                 isNearHorizontalEdge: true));
+    }
+
+    [Theory]
+    [InlineData(TimelineToolMode.Select, TimelineToolMode.Draw)]
+    [InlineData(TimelineToolMode.Draw, TimelineToolMode.Select)]
+    [InlineData(TimelineToolMode.Erase, TimelineToolMode.Select)]
+    [InlineData(TimelineToolMode.Split, TimelineToolMode.Select)]
+    public void RightDoubleClickToggleHasOneDeterministicDrawSelectTransition(
+        TimelineToolMode current,
+        TimelineToolMode expected) =>
+        Assert.Equal(expected, TimelineToolPolicy.ResolveDrawSelectToggle(current));
+
+    [Theory]
+    [InlineData(299, true)]
+    [InlineData(300, false)]
+    [InlineData(301, false)]
+    [InlineData(-1, false)]
+    public void RightDoubleClickUsesMidoraFixedHalfOpenTimeWindow(
+        long elapsedMilliseconds,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            TimelineToolPolicy.IsRightDoubleClick(
+                elapsedMilliseconds,
+                horizontalDistance: 0,
+                verticalDistance: 0));
+
+    [Theory]
+    [InlineData(6, 0, true)]
+    [InlineData(-6, 6, true)]
+    [InlineData(6.001, 0, false)]
+    [InlineData(0, -6.001, false)]
+    [InlineData(double.NaN, 0, false)]
+    [InlineData(0, double.PositiveInfinity, false)]
+    public void RightDoubleClickUsesFixedSixDipSpatialTolerance(
+        double horizontalDistance,
+        double verticalDistance,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            TimelineToolPolicy.IsRightDoubleClick(
+                elapsedMilliseconds: 299,
+                horizontalDistance,
+                verticalDistance));
+
+    [Fact]
+    public void RightDoubleClickPolicyHasNoWpfClickCountOrSystemSettingInput()
+    {
+        System.Reflection.MethodInfo method = typeof(TimelineToolPolicy).GetMethod(
+            nameof(TimelineToolPolicy.IsRightDoubleClick))
+            ?? throw new InvalidOperationException("Right-double-click policy was not found.");
+
+        Assert.Equal(
+            [typeof(long), typeof(double), typeof(double)],
+            method.GetParameters().Select(static parameter => parameter.ParameterType));
+        Assert.Equal(300, TimelineToolPolicy.RightDoubleClickIntervalMilliseconds);
+        Assert.Equal(6, TimelineToolPolicy.RightDoubleClickToleranceDips);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.Segment, true)]
+    [InlineData(TimelineItemKind.LogicalNote, true)]
+    [InlineData(TimelineItemKind.DirectMidiNote, true)]
+    [InlineData(TimelineItemKind.TemplateNote, true)]
+    [InlineData(TimelineItemKind.LogicalParameterPoint, false)]
+    [InlineData(TimelineItemKind.DirectMidiEvent, false)]
+    [InlineData(TimelineItemKind.TemplateEvent, false)]
+    [InlineData(TimelineItemKind.OpaqueMidiEvent, false)]
+    [InlineData(TimelineItemKind.ConductorEvent, false)]
+    public void SelectionFloatingToolResizeCapabilityIsLimitedToSegmentsAndNotes(
+        TimelineItemKind kind,
+        bool expected) =>
+        Assert.Equal(expected, TimelineToolPolicy.SupportsSelectionFloatingToolResize(kind));
+
+    [Theory]
+    [InlineData(TimelineSurfaceMode.Arrangement, TimelineItemKind.Segment, TimelineItemEditKind.Move, true)]
+    [InlineData(TimelineSurfaceMode.Arrangement, TimelineItemKind.Segment, TimelineItemEditKind.ResizeStart, false)]
+    [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.DirectMidiNote, TimelineItemEditKind.Move, true)]
+    [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.DirectMidiNote, TimelineItemEditKind.ResizeEnd, false)]
+    [InlineData(TimelineSurfaceMode.EventLanes, TimelineItemKind.DirectMidiEvent, TimelineItemEditKind.Move, true)]
+    [InlineData(TimelineSurfaceMode.EventLanes, TimelineItemKind.LogicalParameterPoint, TimelineItemEditKind.Move, true)]
+    [InlineData(TimelineSurfaceMode.EventLanes, TimelineItemKind.OpaqueMidiEvent, TimelineItemEditKind.Move, true)]
+    [InlineData(TimelineSurfaceMode.EventLanes, TimelineItemKind.DirectMidiEvent, TimelineItemEditKind.ResizeEnd, false)]
+    [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.DirectMidiEvent, TimelineItemEditKind.Move, false)]
+    public void SelectionFloatingToolControlCopyIsAvailableOnlyForSupportedMoveGestures(
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind kind,
+        TimelineItemEditKind editKind,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            TimelineToolPolicy.SupportsSelectionFloatingToolCopyDrag(
+                surfaceMode,
+                kind,
+                editKind));
+
+    [Theory]
+    [InlineData(-50, 192, 0)]
+    [InlineData(0, 192, 0)]
+    [InlineData(1, 192, 192)]
+    [InlineData(192, 192, 192)]
+    [InlineData(193, 192, 384)]
+    public void NoteCreationSnapQuantizesPointerDeltaWithoutReplacingInitialLength(
+        long pointerDelta,
+        long operationStep,
+        long expectedDelta)
+    {
+        long delta = TimelineToolPolicy.ResolvePositiveFixedStepCreationDelta(
+            pointerDelta,
+            operationStep);
+
+        Assert.Equal(expectedDelta, delta);
+        Assert.Equal(49 + expectedDelta, 49 + delta);
     }
 
     [Fact]
@@ -3497,6 +3752,36 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void AggregateVelocityKeepsFixedWidthOnsetMarkerAtLowZoom()
+    {
+        TimelineRenderItem velocity = Item(1, 80, 81, 0, kind: TimelineItemKind.Velocity)
+            with
+            { Value = 0.5, ZIndex = 60 };
+        TimelineRenderSnapshot snapshot = new(1, "velocity:aggregate-marker", [velocity]);
+        int lod = TimelineRasterLod.Quantize(0.0625);
+
+        TimelineRasterBuffer raster = TimelineVelocityTileRasterizer.Rasterize(
+            snapshot,
+            selection: null,
+            lod,
+            tileX: 0,
+            Color.FromRgb(163, 178, 190),
+            Color.FromRgb(229, 61, 68),
+            Color.FromRgb(49, 58, 69));
+
+        int centerX = TimelineVelocityTileRasterizer.Gutter + 5;
+        int top = (int)Math.Round(
+            0.5 * (TimelineVelocityTileRasterizer.RasterHeight - 1),
+            MidpointRounding.AwayFromZero);
+        int markerWidth = Enumerable.Range(
+                centerX - TimelineVelocityTileRasterizer.MarkerSize,
+                TimelineVelocityTileRasterizer.MarkerSize * 2 + 1)
+            .Count(x => Alpha(raster, x, top + 2) > 0);
+
+        Assert.Equal(TimelineVelocityTileRasterizer.MarkerSize, markerWidth);
+    }
+
+    [Fact]
     public void VelocityTileDrawsHigherPitchOnTopAtTheSameTick()
     {
         TimelineRenderItem low = Item(1, 10, 11, 0, kind: TimelineItemKind.Velocity)
@@ -4557,6 +4842,7 @@ public sealed class TimelineRenderingTests
                 TimelineSurface surface = new()
                 {
                     SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                    IsSelectionFloatingToolEnabled = false,
                     Snapshot = snapshot,
                     SelectionSnapshot = selection,
                     RangeStartTick = 0,
@@ -4570,6 +4856,316 @@ public sealed class TimelineRenderingTests
                 surface.Measure(new Size(800, 320));
                 surface.Arrange(new Rect(0, 0, 800, 320));
                 return surface;
+            }
+        });
+    }
+
+    [Fact]
+    public void SelectionFloatingToolIsOneOptionalVectorOverlayAboveTheTimeline()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRenderItem note = Item(
+                1,
+                20,
+                40,
+                60,
+                kind: TimelineItemKind.DirectMidiNote);
+            TimelineSelectionSnapshot selection = new(
+                1,
+                [note.Id],
+                primary: note.Id,
+                [note]);
+            TimelineRenderSnapshot snapshot = new(1, "floating-selection-tool", []);
+            TimelineSurface enabled = CreateSurface(isEnabled: true);
+            TimelineSurface disabled = CreateSurface(isEnabled: false);
+            try
+            {
+                byte[] enabledPixels = RenderVisual(enabled);
+                byte[] disabledPixels = RenderVisual(disabled);
+
+                Assert.False(enabledPixels.SequenceEqual(disabledPixels));
+                Assert.False(((Rect)GetPrivateField(enabled, "_selectionToolBounds")!).IsEmpty);
+                Assert.True(((Rect)GetPrivateField(disabled, "_selectionToolBounds")!).IsEmpty);
+            }
+            finally
+            {
+                enabled.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, enabled));
+                disabled.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, disabled));
+            }
+
+            TimelineSurface CreateSurface(bool isEnabled)
+            {
+                TimelineSurface surface = new()
+                {
+                    SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                    ToolMode = TimelineToolMode.Select,
+                    IsSelectionFloatingToolEnabled = isEnabled,
+                    Snapshot = snapshot,
+                    SelectionSnapshot = selection,
+                    RangeStartTick = 0,
+                    RangeEndTick = 200,
+                    StartTick = 0,
+                    TickSpan = 200,
+                    FirstLane = 48,
+                    LaneHeight = 8,
+                    GridVisible = false
+                };
+                surface.Measure(new Size(800, 320));
+                surface.Arrange(new Rect(0, 0, 800, 320));
+                return surface;
+            }
+        });
+    }
+
+    [Fact]
+    public void SelectionFloatingToolDefaultsToFollowingTheViewport()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRenderItem note = Item(
+                1,
+                20,
+                40,
+                60,
+                kind: TimelineItemKind.DirectMidiNote);
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                ToolMode = TimelineToolMode.Select,
+                IsSelectionFloatingToolEnabled = true,
+                Snapshot = new TimelineRenderSnapshot(1, "floating-tool-default-follow", []),
+                SelectionSnapshot = new TimelineSelectionSnapshot(
+                    1,
+                    [note.Id],
+                    primary: note.Id,
+                    [note]),
+                RangeStartTick = 0,
+                RangeEndTick = 200,
+                StartTick = 0,
+                TickSpan = 200,
+                FirstLane = 48,
+                LaneHeight = 8,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 320));
+            surface.Arrange(new Rect(0, 0, 800, 320));
+            try
+            {
+                _ = RenderVisual(surface);
+
+                Assert.False(Assert.IsType<bool>(
+                    GetPrivateField(surface, "_selectionToolPinned")));
+                Assert.False(((Rect)GetPrivateField(
+                    surface,
+                    "_selectionToolBounds")!).IsEmpty);
+            }
+            finally
+            {
+                surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(TimelineSurfaceMode.Arrangement, TimelineItemKind.Segment, true)]
+    [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.DirectMidiNote, true)]
+    [InlineData(TimelineSurfaceMode.EventLanes, TimelineItemKind.DirectMidiEvent, false)]
+    public void SelectionFloatingToolOffersBothResizeEdgesOnlyForResizableKinds(
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind kind,
+        bool expectsResize)
+    {
+        RunOnSta(() =>
+        {
+            TimelineRenderItem item = Item(
+                1,
+                20,
+                40,
+                0,
+                kind: kind) with
+            {
+                Value = 0.5
+            };
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = surfaceMode,
+                ToolMode = TimelineToolMode.Select,
+                IsSelectionFloatingToolEnabled = true,
+                Snapshot = new TimelineRenderSnapshot(1, $"floating-capability:{kind}", []),
+                SelectionSnapshot = new TimelineSelectionSnapshot(
+                    1,
+                    [item.Id],
+                    item.Id,
+                    [item]),
+                RangeStartTick = 0,
+                RangeEndTick = 200,
+                StartTick = 0,
+                TickSpan = 200,
+                FirstLane = 0,
+                LaneHeight = 28,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 320));
+            surface.Arrange(new Rect(0, 0, 800, 320));
+            try
+            {
+                _ = RenderVisual(surface);
+
+                Rect start = Assert.IsType<Rect>(GetPrivateField(
+                    surface,
+                    "_selectionToolResizeStartBounds"));
+                Rect end = Assert.IsType<Rect>(GetPrivateField(
+                    surface,
+                    "_selectionToolResizeEndBounds"));
+                Rect move = Assert.IsType<Rect>(GetPrivateField(
+                    surface,
+                    "_selectionToolMoveBounds"));
+                Assert.False(move.IsEmpty);
+                Assert.Equal(expectsResize, !start.IsEmpty);
+                Assert.Equal(expectsResize, !end.IsEmpty);
+                if (expectsResize)
+                {
+                    Assert.True(start.Right <= end.Left);
+                    Assert.True(start.Right <= move.Left);
+                    Assert.True(end.Right <= move.Left);
+                }
+            }
+            finally
+            {
+                surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(511)]
+    [InlineData(512)]
+    [InlineData(513)]
+    public void SelectionFloatingToolResizeUsesTheNormalBoundedPreviewPolicy(int noteCount)
+    {
+        RunOnSta(() =>
+        {
+            TimelineRenderItem[] notes = Enumerable.Range(0, noteCount)
+                .Select(index => Item(
+                    index + 1,
+                    index * 4L,
+                    index * 4L + 48,
+                    index % 128,
+                    kind: TimelineItemKind.DirectMidiNote))
+                .ToArray();
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                ToolMode = TimelineToolMode.Select,
+                IsSelectionFloatingToolEnabled = true,
+                Snapshot = new TimelineRenderSnapshot(
+                    1,
+                    $"floating-tool-preview-threshold:{noteCount}",
+                    notes),
+                SelectionSnapshot = new TimelineSelectionSnapshot(
+                    1,
+                    notes.Select(static note => note.Id),
+                    notes[0].Id,
+                    notes),
+                StartTick = 0,
+                TickSpan = 2_500,
+                LaneHeight = 6,
+                OperationStepTicks = 1,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 800));
+            surface.Arrange(new Rect(0, 0, 800, 800));
+            ConfigureDragPreview(
+                surface,
+                notes[0],
+                TimelineItemEditKind.ResizeEnd,
+                originTick: 48,
+                currentTick: 72,
+                originLane: 0,
+                currentLane: 0);
+            SetPrivateField(surface, "_hoverPoint", new Point(700, 50));
+            TimelineViewport viewport = new(0, 2_500, 0, 128, 748, 768, 6);
+            try
+            {
+                Assert.Null(typeof(TimelineSurface).GetField(
+                    "_dragStartedBySelectionTool",
+                    System.Reflection.BindingFlags.Instance
+                        | System.Reflection.BindingFlags.NonPublic));
+                DrawingVisual preview = DrawDragPreview(surface, viewport, 52, 24);
+                Rect previewBounds = VisualTreeHelper.GetContentBounds(preview);
+
+                Assert.False(previewBounds.IsEmpty);
+                Assert.True(
+                    previewBounds.Right > 700,
+                    "Every floating-tool drag must retain its delta label, including small selections.");
+                if (noteCount <= 512)
+                {
+                    Assert.Null(GetPrivateField(surface, "_resizePreviewSignature"));
+                }
+                else
+                {
+                    Assert.NotNull(GetPrivateField(surface, "_resizePreviewSignature"));
+                }
+            }
+            finally
+            {
+                surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            }
+        });
+    }
+
+    [Fact]
+    public void SelectionFloatingToolRejectsMixedSemanticObjectKinds()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRenderItem note = Item(
+                1,
+                20,
+                40,
+                60,
+                kind: TimelineItemKind.DirectMidiNote);
+            TimelineRenderItem point = Item(
+                2,
+                24,
+                25,
+                0,
+                kind: TimelineItemKind.DirectMidiEvent) with
+            {
+                Value = 0.5
+            };
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                ToolMode = TimelineToolMode.Select,
+                IsSelectionFloatingToolEnabled = true,
+                Snapshot = new TimelineRenderSnapshot(1, "mixed-floating-tool", []),
+                SelectionSnapshot = new TimelineSelectionSnapshot(
+                    1,
+                    [note.Id, point.Id],
+                    note.Id,
+                    [note, point]),
+                RangeStartTick = 0,
+                RangeEndTick = 200,
+                StartTick = 0,
+                TickSpan = 200,
+                FirstLane = 48,
+                LaneHeight = 8,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 320));
+            surface.Arrange(new Rect(0, 0, 800, 320));
+            try
+            {
+                _ = RenderVisual(surface);
+                Assert.True(((Rect)GetPrivateField(
+                    surface,
+                    "_selectionToolBounds")!).IsEmpty);
+            }
+            finally
+            {
+                surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
             }
         });
     }
@@ -4772,6 +5368,7 @@ public sealed class TimelineRenderingTests
                 TimelineSurface surface = new()
                 {
                     SurfaceMode = mode,
+                    IsSelectionFloatingToolEnabled = false,
                     Snapshot = snapshot,
                     SelectionSnapshot = selection,
                     RangeStartTick = 0,
@@ -5604,6 +6201,48 @@ public sealed class TimelineRenderingTests
         {
             yield return item;
         }
+    }
+
+    private sealed class BlockingHitRenderSource(
+        ManualResetEventSlim started,
+        ManualResetEventSlim release,
+        TimelineRenderItem? result = null) : ITimelineRenderItemSource
+    {
+        private int _queryThreadId;
+
+        public int QueryThreadId => Volatile.Read(ref _queryThreadId);
+        public long Count => 1;
+        public long MaximumEndTick => 100;
+        public ulong ContentFingerprint => 0x71a2_5b09UL;
+
+        public ulong GetRangeFingerprint(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive) => 0x55UL;
+
+        public void QueryInto(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive,
+            List<TimelineRenderItem> destination)
+        {
+            Volatile.Write(ref _queryThreadId, Environment.CurrentManagedThreadId);
+            started.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("The right-click hit-test gate was not released.");
+            if (result is TimelineRenderItem item) destination.Add(item);
+        }
+
+        public bool TryGetById(MidoraId id, out TimelineRenderItem item)
+        {
+            item = result ?? default;
+            return result is TimelineRenderItem value && value.Id == id;
+        }
+
+        public IEnumerable<TimelineRenderItem> EnumerateAll() =>
+            result is TimelineRenderItem item ? [item] : [];
     }
 
     private sealed class CountingOverviewSource : ITimelineOverviewSource

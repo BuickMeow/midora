@@ -53,6 +53,8 @@ Arrangement、所有 Segment/SubVoice piano roll，以及所有 MIDI Event / Log
 
 有效操作步长用于 Marquee 与 Time Range 的开始和长度、Edit Cursor 与 Playback Cursor 定位、Segment / Note 放置位置、Segment / Note Resize 的 delta（而不是最终总长度），以及 Segment / Note Move 的共享 delta（而不是最终绝对位置）。
 
+创建 Note 时必须在 Pointer Down 冻结本次初始长度；Snap 只量化随后 Pointer Move 相对按下点产生的 delta，再把该 delta 加到冻结初始长度。未越过创建拖动阈值时保持原初始长度；向左缩短不得把结果突然压成 `1 tick`，而是在本次允许的最小长度处保持。例：初始长度 49 ticks、有效步长 192 ticks 时，未形成有效 delta 的结果仍为 49，第一格向右结果为 241。
+
 Arrangement Segment、Logical Note、Direct MIDI Note 与 Template Note 的左/右边界 Resize 还必须使用本次手势开始时的有效操作步长作为最小结果长度；Snap Disabled 时该最小值为 `1 tick`。批量 Resize 继续对每个对象独立饱和，不得让最短对象限制其他对象的缩短量。若某个既有对象在手势开始前已经短于当前有效操作步长，则该对象本次最小长度保持其原长度，不得为了满足新吸附设置而反向扩长。拖动预览与正式命令提交必须使用相同最小值。
 
 Segment、Logical Note、Direct MIDI Note 与 Template Note 的 `Alt + Left Drag` 是强制 Move 手势，仍使用当前有效操作步长。需要逐 tick 编辑时关闭 Snap；Alt 不再临时绕过 Snap。
@@ -103,6 +105,8 @@ Important semantic impact
 Pointer Up 一次提交；Escape 取消且不产生 Undo。
 拖到视图边缘时自动滚动。
 Draw 模式在可创建 Segment 或 Note 的空白位置悬停时，也必须显示包含位置和默认长度的虚线创建预览；非法 Segment overlap 预览使用错误色。
+
+所有普通直接操作及 Selection 浮动工具发起的 Move/Resize，在手势激活后的每一帧都必须显示当前正式规则计算出的有效 delta：先应用 time lock、Snap、最小长度、Tick 0、Key/Value/Lane 边界及共同 delta 饱和，再格式化显示；不得显示尚未 Clamp 的原始 pointer delta。Note Move 显示 `Keys + Ticks`，Event/Parameter Point Move 显示 `Value + Ticks`，Arrangement Move 显示 `Lanes + Ticks`，左右边界 Resize 显示该边界的 `Ticks`；Copy+Move 也必须显示同一有效 delta。
 ### 20.1.8 边界
 ```text
 Tick 0            -> hard left boundary
@@ -181,6 +185,8 @@ Workspace 记住当前 Project 会话中的最近焦点位置。目标失效时�
 2. 原 Active Workspace；
 3. 主窗口安全默认区域。
 不得恢复到已删除或失效对象。
+
+由 Timeline Surface 发起的模态编辑在关闭后，若原 Surface、Workspace 与 Project revision 仍有效，必须优先把键盘焦点恢复到该 Surface，使 `D`、`S`、`E`、`A`、`Ctrl+E` 等焦点敏感命令可继续使用；不得把焦点遗留在已经关闭的 Dialog、Lane ComboBox 或无关 Toolbar 控件。
 ---
 ## 20.3 Selection Model
 ### 20.3.1 Workspace Selection
@@ -254,6 +260,10 @@ Timeline Delete 后默认清空当前 Object Selection。
 ### 20.3.14 播放期间
 允许完整选择、框选和查看，但不允许修改 Project。
 所有 Selection 状态均属于 Project Session UI State。
+### 20.3.15 大规模 Selection 的地址与解析
+稳定 ID 始终是对象业务身份。对于百万级 Timeline source，Selection 可以使用绑定到 `owner + source revision` 的 ordinal page interval/bitmap 与 sparse include/exclude 表达，不要求为每个对象建立 boxed ID、独立 WPF item 或完整 HashSet；少量选择可以继续使用 compact inline stable-ID path。
+
+ordinal 只在被冻结的 owner revision 内有效，不得持久化、跨 revision 复用或代替 stable ID。命令、Properties、渲染和 Selection 恢复按需分页、流式解析 stable ID；revision 已变化时必须拒绝旧 descriptor 或重新建立选择，不得把旧 ordinal 静默解释为新对象。范围解析必须有界并周期检查取消，不能因框选、Shift 范围或 `Ctrl+A` 同步物化整个 source。
 ---
 ## 20.4 Multi-selection 与 Batch Editing
 ### 20.4.1 原子原则
@@ -274,6 +284,8 @@ Snap Primary Selection
 ### 20.4.3 时间移动
 同一时间坐标系对象可统一移动。
 异类选择通常需要显式 `Move in Time`。唯一直接拖动例外是 Arrangement 中混合选择的 Logical Segment 与 Midi Segment：二者共用 absolute Project tick，因此允许从任一已选 Segment 主体作统一水平移动，也允许从左右边缘作统一长度调整；该手势必须强制 Track delta 为 0，不得造成跨 Track、跨类型或垂直移动。
+
+Arrangement 多 Segment 边界 Resize 的 transient preview 必须对全部选择应用与正式提交完全相同的 shared edge delta、逐对象最小长度、边界与 overlap 规则；不得只预览指针命中的一个 Segment，也不得以逐帧修改 Project 模型代替矢量预览。
 ### 20.4.4 Piano Roll Notes
 多选移动保持：
 ```text
@@ -328,6 +340,20 @@ Arrangement 同时选择 Logical Segment 与 Midi Segment 时，`Properties...` 
 批量 Delete 只弹一次汇总确认。任何不可删除对象都使整体命令 Disabled。
 ### 20.4.10 Undo
 一次批量手势只形成一个 Undo。Undo 恢复每个对象各自原状态；Redo 不根据当前 Grid 或 Snap 重新计算。
+### 20.4.11 分页 detached edit transaction
+百万对象编辑必须从 revision-bound source 按 page/chunk 流式读取，在与正式 Project 集合分离的 staging 中计算、验证、碰撞归并并建立结果 root。只有全部步骤成功且 owner revision 仍等于事务基线时，才允许用一次原子 root swap 发布；取消、表达式错误、资源上限、I/O 错误、revision race 或结果验证失败都只丢弃 staging，不得发布部分结果。
+
+正式发布必须同时产生精确 owner/range/page change set 与 source trace，供 UI、selection projection、Full/Incremental Compiler 和缓存失效共同观察；各消费者不得通过重新扫描整个 owner 猜测修改范围。Undo/Redo 优先保存 immutable old/new root/page reference 与必要的小型映射，不保存两份完整逐对象图，也不重新执行随机数或表达式。
+
+大型编辑默认执行预算为：page 4,096 records；每 256 records 检查取消；单页 decoded/encoded working buffers 合计 64 MiB；resident staging 64 MiB；owned spill 16 GiB；candidate/result 100,000,000 records。预算属于运行时 profile，不持久化；spill 只能写入 `<ProgramRoot>\.tmp\CompilerRuns` 的 owned run，失败、取消和 Dispose 必须回收本次 run。实现可采用更低的具体工具上限，但不得静默突破这些全局上限或退化为无界内存。
+### 20.4.12 Selection 浮动工具
+Select 模式下，同质且共同支持直接操作的非空 Selection 可以显示一个矢量浮动工具框。工具框提供 Pin/Follow、手动拖位与 Move；Note 和 Arrangement Segment 还分别显示左边界 Resize 与右边界 Resize 两个方向可区分的按钮，Event/Parameter Point 不显示 Resize。两种 Resize 必须调用既有 `ResizeStart` / `ResizeEnd` command adapter，并与普通直接拖动共用 Snap、最小长度、Tick 0、隐藏内容保留、碰撞和一次 Undo 语义，不建立第二套编辑规则。
+
+Follow 是每个新建 Timeline Surface 的默认状态：工具框跟随 Selection 包围框并贴边保持在 viewport 内可达；切换为 Pin 后，工具框锚定 Selection 的世界坐标，Selection 离开 viewport 时允许随之离开。顶部明确的 grip 在两种状态下都允许手动移动工具框。该状态在当前 Surface 生命周期内保持，但只属于 Session UI State，不进入 Project、Undo、canonical 或 `.midora`。
+
+从浮动工具 Move 按钮开始拖动时，若 `Ctrl` 已按下且当前 Surface / 对象类型已有明确 Copy Drag 能力，则执行与普通直接操作相同的 Copy+Move，并按该类型既有规则选择幸存副本；Resize 不响应 Copy。没有既有 Copy Drag 能力的类型在 `Ctrl` 下为 Invalid，不得静默退化成 Move，也不得顺手新增 Conductor 等对象的复制语义。
+
+异类或语义不兼容 Selection 不显示工具框。所有选择规模都必须显示第 20.1.7 节规定的有效 delta 与完整 Selection 变换预览：小选择复用普通 Draw 直接操作的即时矢量路径，大选择复用同一平移或 Resize raster tile 路径。不得因超过即时矢量阈值而只显示 delta、隐藏预览，也不得为每个对象创建 WPF 控件或重新物化完整 Selection。
 ---
 ## 20.5 Drag and Drop Conventions
 ### 20.5.1 分类
@@ -578,6 +604,16 @@ Reset Property to Inherited
 Clear Runtime History
 ```
 不得用模糊 `Remove / Clear / Reset` 混淆不同语义。
+### 20.7.9.1 Timeline 右键 Click / Drag / Double-click
+所有三种 Piano Roll、所有 Event/Parameter Lane，以及 Arrangement 可编辑 Timeline 内容区使用同一个冻结状态机：
+
+1. Right Down 冻结 hit target、原 Selection、container、tick 与修饰键；此时不改变正式 Selection，不打开菜单，也不启动 trace；冷页 exact hit 必须异步完成，不能阻塞 WPF UI thread。
+2. 移动越过系统 drag threshold 时，立即取消菜单/双击候选并进入该视图既有的右键 drag 语义。Event/Parameter Draw 模式继续执行自由线、直线或水平线 trace，不等待冷页查询结束。
+3. Right Up 前未越过阈值时，按第 20.7.3 节对冻结 target 应用 Selection 规则；若点击对象在 Right Down 时已属于冻结多选，则保持该多选。该 `Right Up` 的单调时间戳与位置成为唯一双击候选起点；Context Menu 在 300 ms 窗口到期且没有合法第二次右键后打开，冷页命中未完成时还必须等待相应异步查询。
+4. 同一 Timeline Surface 可编辑内容区内，第二个 `Right Down` 相对首个未拖动 `Right Up` 的单调时间差位于 `[0, 300 ms)`，且两位置的水平、垂直位移分别不超过 `6 DIP` 时，构成合法右键双击并取消候选菜单：当前为 Draw 时切换到 Select，当前为 Select 时切换到 Draw，其他工具直接切换到 Select。时间差达到或超过 300 ms、任一轴位移超过 6 DIP、Surface/Workspace 不同或任一点击不在合法内容区时，不构成该双击。实现必须自行维护该状态，禁止使用 WPF `ClickCount`、Windows double-click time 或系统 double-click spatial tolerance 决定结果。双击不得再打开单击菜单。
+5. Escape、Pointer Capture 丢失、Workspace/Project 失效或 source revision 改变必须取消全部 pending gesture，不改变 Project。
+
+Piano Pitch Ruler 不响应右键菜单或该双击工具切换。Arrangement 固定 Conductor/非内容区仍服从自身命中边界，不得因此变成 Segment 创建或编辑目标。
 ### 20.7.10 主要菜单边界
 #### 20.7.10.1 Event Instrument
 ```text
@@ -1339,6 +1375,9 @@ Infinity
 ```
 Integer 和 Double 是明确字段类型；Integer 不接受 `1.0` 并静默转整数。
 非法输入不提交、不 Clamp、不创建 Undo；失焦恢复最后合法值。
+
+唯一已批准例外是 Event Instrument 与 SubVoice 的 Initial State MIDI 数值：输入必须先满足整数语法；语法正确但超出该正式 MIDI target 值域时，在提交前自动 Clamp 到目标下/上界。格式错误、目标类型不支持或引用失效仍拒绝；Clamp 后与原值相同时不创建 Undo，发生实际变化时整个 Dialog 仍只提交一个原子命令。
+
 Double 显示去除无意义尾随零并避免浮点噪声，但显示格式不得修改内部值。
 单位显示在字段外。
 ### 20.13.3 时间格式
@@ -1380,7 +1419,7 @@ UI 格式与 `.midora` 序列化格式严格分离。
 ---
 ## 20.14 UI Preference Persistence
 ### 20.14.1 保存位置
-Application Preferences 自动保存于当前 Windows 用户本机。
+Application Preferences 自动保存于 `<ProgramRoot>\Data\Preferences`；Recent、Catalogs、Presets 与 Diagnostics 分别保存于 `<ProgramRoot>\Data\Recent|Catalogs|Presets|Diagnostics`。Midora 不探测、不读取、不迁移旧 `%LOCALAPPDATA%\Midora`，也不在写失败时 fallback 到用户目录或系统临时目录。
 Preference 自动保存不等于 Project Autosave。
 ### 20.14.2 持久化内容
 ```text
@@ -1396,12 +1435,13 @@ Stop Cursor Behavior
 Render-Ahead Buffer
 Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
-Audio Cache Root
 Maximum Reusable Audio Cache Bytes
 Ordered SoundFont list and target mappings
 Appearance Language
 ```
 ### 20.14.3 不持久化内容
+
+以下内容不进入 Application Preferences；除第 3.11、16.33 节显式允许的 Project presentation 外，也不进入 `.midora`：
 ```text
 Current Tool
 Zoom
@@ -1453,9 +1493,9 @@ Cancel rendering confirmation
 ```
 ### 20.14.6 Preference 失败
 Preference 读写失败：
-- 不影响 Project；
-- 使用安全默认值；
-- 显示非模态 Notice；
+- 已经成功启动后的单项 JSON 损坏不影响 Project，使用安全默认值并显示非模态 Notice；
+- ProgramRoot 或 `Data/.tmp` 启动能力探测失败时必须在主窗口创建前明确阻止启动；
+- 不得 fallback 到 `%LOCALAPPDATA%`、`%TEMP%`、当前工作目录或其他目录；
 - 不标记 Project Modified。
 Preference 版本与 `.midora` File Format 版本独立。
 ### 20.14.7 Reset 命令
@@ -1531,6 +1571,8 @@ Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例�
 主菜单置于标题栏时，固定 29-pixel 高的一级菜单容器必须作为整体在 36-pixel 标题栏内纵向居中；标题栏不显示额外 `MIDORA` 文本或 Main Menu 两侧竖向分割线，Application mark、Main Menu 与 Project display name 通过留白分组。Project display name 与 Main Menu 保持 8-pixel 外间距并使用 12-pixel 字号；外框不固定高度且不设置 Padding，按水平居中的文本 `8,2` Margin 与 1-pixel 边框自动测量，整体垂直居中，文本和圆角外框分别使用 `Brush.Text.Tertiary` 与 `Brush.Border`。Hover、键盘高亮和子菜单打开状态使用完整四角圆角背景。菜单和窗口控制按钮必须标记为 WindowChrome 交互区域，点击不得触发窗口 DragMove；标题栏其余空白仍可拖动。
 
 Arrangement Segment 使用较深的低饱和蓝灰色；选中 Segment 使用同色系强调边框和更深背景，Note Preview 使用高亮但低饱和的蓝灰色。Segment Piano Roll 的 active range 保留基础键位底色，界外范围进一步压暗；未选中 Note 使用高亮蓝灰色，选中 Note 的红色填充与红色边框保持不变。Velocity 未选中柱使用相同蓝灰色，选中 Note 对应柱使用红色；每个 Note 只在 start tick 显示固定窄柱，柱顶显示明显更宽的方形 onset marker，柱宽不得随 Note 长度变化。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色；Segment 与 SubVoice Pitch Ruler 使用完整白键和较短黑键的钢琴外观，并且只在每个八度 C 键显示符合 MIDI 60 = C4 的音名。空 Timeline 不显示覆盖画布的 `No timeline content` 卡片。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
+
+Velocity 低水平缩放时，onset marker 仍保持固定 device-size、不得因 Note 长度压缩或相邻柱合并而选择性消失。Event Instrument 底部 Preview Keyboard 的 velocity 必须按实际命中的键自身可见长度归一化；黑键不能复用白键全高计算，否则黑键底端无法达到最大 velocity。
 
 ComboBox 的可编辑文本和下拉指示必须分别在内容区与按钮区垂直居中；下拉指示使用同一 Fluent 图标体系，不得使用字体符号代替。显式垂直 ScrollBar 的 Track 必须完整铺满可用高度；Thumb 长度必须按当前可见范围相对完整有界范围的比例计算，不得使用与视口无关的固定值。Diagnostics Workspace 的筛选 ComboBox 和 Segment Piano Roll 顶部左侧文本不得裁切或偏离垂直中心。Timeline 和 piano roll 的显式垂直 ScrollBar 必须始终占据其布局位置；无可滚动范围时只 Disabled，不得 Collapsed 或以透明 Disabled 样式消失。
 
@@ -1709,7 +1751,7 @@ Compile 和 MIDI Export 不依赖 SoundFont 加载。
 10. 无 SF2、空 Definition Index、空 Arrangement Track order、合法无 Usage 空壳 Track、空 Track 和空 Segment 均显示为合法空状态；
 11. 状态和错误不只依赖颜色；
 12. 后台更新不抢焦点或改变 Selection；
-13. `.midora` 不保存 UI View State；
+13. `.midora` 只保存第 3.11、16.33 节显式版本化的 Project presentation 白名单，不保存其他 UI View State；
 14. 初版所有正式 UI 文案使用 English；
 15. 初版正式尺寸与布局验收以 Windows 100% DPI 为准；
 16. Segment Editor 左侧 Pitch Ruler 按下即开始、松开即结束单键 held Preview，且不创建 Project Note；

@@ -125,7 +125,7 @@ Reset Defaults
 ```
 `Global Event Scope Defaults` 在初版只是持久化兼容所需的不可编辑空 marker，不属于用户可修改 Project 内容，也不提供独立设置入口。
 ### 17.2.2 Application Preferences
-保存于当前 Windows 用户本机，跨 Project 共享：
+保存于当前 portable ProgramRoot 的 `Data/Preferences`，由该程序副本下的 Project 共享：
 ```text
 Normal window bounds and maximized state
 Major splitters
@@ -140,24 +140,26 @@ Stop Cursor Behavior
 Render-Ahead Buffer
 Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
-Audio Cache Root
 Maximum Reusable Audio Cache Bytes
 Ordered application SoundFont list: absolute local SF2/SFZ path + Enabled + optional target mapping
 Appearance Language (initial release only offers English)
 ```
-这些状态：
+Audio Cache Root 不是可编辑 Preference，固定为 `<ProgramRoot>/.tmp/AudioCache`。这些状态：
 - 不进入 Project Undo / Redo；
 - 不标记 Project Modified；
 - 不进入 `.midora`；
 - 不做账号、云端或设备同步。
 
-设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。音频缓存的 reusable 当前占用、transient 当前/峰值、session 目录、retention 状态与 Warning 同样是运行时派生状态；只保存配置 root 和 reusable byte quota。
+设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。音频缓存的 reusable 当前占用、transient 当前/峰值、session 目录、retention 状态与 Warning 同样是运行时派生状态；只保存 reusable byte quota，root 由 ProgramRoot 确定。
 
 SoundFont 列表对所有 Project 和从 MIDI 导入的新 Project 共用，不属于 Project 创建参数。列表支持新增 SF2/SFZ、删除、启用/禁用和排序；Enabled 只显示复选框，不重复显示 `Enabled` 文字。每项还提供完整 Target Bank MSB/LSB/Program 三元组：SF2 可关闭映射，SFZ 强制启用映射。顺序是正式 BASSMIDI 优先顺序。列表工具栏位于列表顶部；列表自身单个滚轮刻度使用小幅像素滚动，不得沿用下拉框或外层页面的大步进。Apply 的 Draft/持久化部分只保存路径与映射结构，不读取、复制或完整 hash 文件，不检查 SFZ 依赖；若 SoundFont、target、实时音频或音频缓存配置变化，持久化后必须显示 `Saving Settings` 模态任务并立即重建、加载和保留 Worker。加载失败必须明确报告且不得伪装成保存失败或静默恢复旧设置。列表不得进入 `.midora`、Project Modified 或 Undo/Redo。
 
 Application Preferences 必须分为 `Audio | SoundFonts | Appearance` 三个 Tab。Audio 包含 Playback、Realtime Audio 与 Audio Cache；SoundFonts 包含上述有序列表；Appearance 初版显示 Language 下拉框且唯一可选项为 `English`，为未来本地化预留稳定入口，但本轮不引入语言包或热切换。
-### 17.2.3 Project Session UI State
-只存在于当前 Project 会话：
+### 17.2.3 Project Presentation 与 Project Session UI State
+
+Format 3 的 Project presentation 只保存第 3.11 与第 16.33 节明确列出的 Onion/All-Tracks 容器。它使用独立 revision/save baseline，不标记 Project Modified、不进入 Undo/Redo、编译或 canonical；损坏时恢复默认 presentation 并独立警告。
+
+以下普通状态仍只存在于当前 Project 会话：
 ```text
 Workspace Tabs and order
 Active Workspace
@@ -191,6 +193,8 @@ Modal Mapping Function edit buffer
 ```
 Mapping Function 编辑缓冲只持续到当前模态对话框关闭；OK 成功前不属于 Project Content，Cancel、关闭、Project 切换或进程退出时直接丢弃，不设置跨对话框 Draft。
 ### 17.2.5 `.midora` 明确不保存
+
+除版本化 Project presentation 白名单外，以下内容明确不保存：
 ```text
 Window and panel layout
 Workspace Tabs

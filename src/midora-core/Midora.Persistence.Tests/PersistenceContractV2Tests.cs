@@ -21,6 +21,9 @@ public sealed class PersistenceContractV2Tests
         Assert.Equal(2, PersistenceContractV2.ManifestSchemaVersion);
         Assert.Equal(2, PersistenceContractV2.EventInstrumentSchemaVersion);
         Assert.Equal(1, PersistenceContractV2.ReusedComponentSchemaVersion);
+        Assert.Equal(3, PersistenceContractV3.FileFormatVersion);
+        Assert.Equal(3, PersistenceContractV3.ManifestSchemaVersion);
+        Assert.Equal(1, PersistenceContractV3.ProjectPresentationSchemaVersion);
     }
 
     [Fact]
@@ -120,7 +123,7 @@ public sealed class PersistenceContractV2Tests
     }
 
     [Fact]
-    public async Task CurrentSaveWritesV2AndRoundTripsPreRoll()
+    public async Task CurrentSaveWritesV3AndRoundTripsPreRoll()
     {
         using TemporaryDirectory temporary = new();
         string path = temporary.PathFor("current.midora");
@@ -135,17 +138,21 @@ public sealed class PersistenceContractV2Tests
         Assert.Equal(packageBytes, await File.ReadAllBytesAsync(equivalentPath));
         string packageHash = Convert.ToHexStringLower(SHA256.HashData(packageBytes));
         Assert.Equal(
-            "50528e726b526e691e6eb494d12ff91d65aab1ef4d3b74e0e14201cc7893082b",
+            "01f4fd0a7a1f973bb0921095165d8a3967176f3956ae28dc0429e5a6f1f6d361",
             packageHash);
 
         using (ZipArchive archive = ZipFile.OpenRead(path))
         {
             byte[] manifestBytes = ReadEntry(archive, "manifest.json");
             Assert.Throws<InvalidDataException>(() => ManifestCodecV1.Parse(manifestBytes));
-            ManifestJsonV2 manifest = ManifestCodecV2.Parse(manifestBytes);
-            Assert.Equal(2, manifest.FileFormatVersion);
-            Assert.Equal(2, manifest.MinimumReadableVersion);
-            Assert.Equal(2, manifest.ManifestSchemaVersion);
+            ManifestJsonV3 manifest = ManifestCodecV3.Parse(manifestBytes);
+            Assert.Equal(3, manifest.FileFormatVersion);
+            Assert.Equal(3, manifest.MinimumReadableVersion);
+            Assert.Equal(3, manifest.ManifestSchemaVersion);
+            ManifestFileEntryJsonV1 presentationEntry = Assert.Single(
+                manifest.Files,
+                item => item.Kind == "project-presentation-json");
+            Assert.Equal(MidoraPackagePathsV1.ProjectPresentation, presentationEntry.Path);
             ManifestFileEntryJsonV1 instrumentEntry = Assert.Single(
                 manifest.Files,
                 item => item.Kind == "event-instrument-pb");
@@ -164,11 +171,135 @@ public sealed class PersistenceContractV2Tests
     }
 
     [Fact]
+    public async Task FormatThreePresentationRoundTripsDeterministicallyWithoutEnteringProjectSourceData()
+    {
+        using TemporaryDirectory temporary = new();
+        string firstPath = temporary.PathFor("presentation-a.midora");
+        string secondPath = temporary.PathFor("presentation-b.midora");
+        using MidoraProject project = CreateProject(preRollTicks: 0);
+        EventInstrument instrument = Assert.Single(project.EventInstruments);
+        SubVoice secondVoice = new(project) { Name = "Layer" };
+        instrument.SubVoices.Add(secondVoice);
+        EventInstrumentUsage usage = new(project) { EventInstrumentId = instrument.Id };
+        project.EventInstrumentUsages.Add(usage);
+        LogicalTrack firstTrack = new(project)
+        {
+            Name = "One",
+            EventInstrumentUsageId = usage.Id
+        };
+        LogicalTrack secondTrack = new(project)
+        {
+            Name = "Two",
+            EventInstrumentUsageId = usage.Id
+        };
+        project.Tracks.Add(firstTrack);
+        project.Tracks.Add(secondTrack);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, firstTrack.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, secondTrack.Id));
+        ProjectPresentationStateV3 presentation = new(
+            ProjectPresentationAllTracksModeV3.Compiled,
+            [new(firstTrack.Id, Enabled: true, Opacity: 0.35, [secondTrack.Id])],
+            [new(
+                instrument.Id,
+                instrument.SubVoices[0].Id,
+                Enabled: false,
+                Opacity: 0.75,
+                [secondVoice.Id])]);
+        MidoraProjectPackageV1 packages = CreateService();
+
+        await packages.SaveCopyAsync(project, presentation, firstPath);
+        await packages.SaveCopyAsync(project, presentation, secondPath);
+
+        Assert.Equal(
+            await File.ReadAllBytesAsync(firstPath),
+            await File.ReadAllBytesAsync(secondPath));
+        await using MidoraProjectOpenResultV1 opened = await packages.OpenAsync(firstPath);
+        Assert.Equal(ProjectPresentationAllTracksModeV3.Compiled, opened.Presentation.AllTracksMode);
+        TrackOnionPresetV3 openedTrackPreset = Assert.Single(opened.Presentation.TrackOnionPresets);
+        Assert.Equal(firstTrack.Id, openedTrackPreset.TargetTrackId);
+        Assert.True(openedTrackPreset.Enabled);
+        Assert.Equal(0.35, openedTrackPreset.Opacity);
+        Assert.Equal([secondTrack.Id], openedTrackPreset.SourceTrackIds);
+        SubVoiceOnionPresetV3 openedVoicePreset = Assert.Single(
+            opened.Presentation.SubVoiceOnionPresets);
+        Assert.Equal(instrument.Id, openedVoicePreset.EventInstrumentId);
+        Assert.Equal(instrument.SubVoices[0].Id, openedVoicePreset.TargetSubVoiceId);
+        Assert.False(openedVoicePreset.Enabled);
+        Assert.Equal(0.75, openedVoicePreset.Opacity);
+        Assert.Equal([secondVoice.Id], openedVoicePreset.SourceSubVoiceIds);
+        Assert.False(opened.IsPresentationModified);
+        Assert.False(opened.IsModified);
+        Assert.Empty(opened.Diagnostics);
+    }
+
+    [Fact]
+    public async Task DamagedFormatThreePresentationIsIsolatedAndMusicStillOpens()
+    {
+        using TemporaryDirectory temporary = new();
+        string path = temporary.PathFor("damaged-presentation.midora");
+        using MidoraProject source = CreateProject(preRollTicks: 7);
+        source.Metadata.ProjectName = "Music survives";
+        MidoraProjectPackageV1 packages = CreateService();
+        await packages.SaveCopyAsync(source, path);
+        using (ZipArchive archive = ZipFile.Open(path, ZipArchiveMode.Update))
+        {
+            archive.GetEntry(MidoraPackagePathsV1.ProjectPresentation)!.Delete();
+            using Stream output = archive.CreateEntry(MidoraPackagePathsV1.ProjectPresentation).Open();
+            output.Write("{not-json"u8);
+        }
+
+        await using MidoraProjectOpenResultV1 opened = await packages.OpenAsync(path);
+
+        Assert.Equal("Music survives", opened.Project.Metadata.ProjectName);
+        Assert.Equal(7, Assert.Single(opened.Project.EventInstruments).PreRollTicks);
+        Assert.Equal(ProjectPresentationStateV3.Empty, opened.Presentation);
+        Assert.True(opened.IsPresentationModified);
+        Assert.False(opened.IsModified);
+        MidoraPackageDiagnosticV1 warning = Assert.Single(
+            opened.Diagnostics,
+            value => value.Code == "MIDORA-PERSIST-PRESENTATION-RECOVERED");
+        Assert.Equal(MidoraPackageDiagnosticSeverityV1.Warning, warning.Severity);
+        Assert.Equal(MidoraPackagePathsV1.ProjectPresentation, warning.PackagePath);
+    }
+
+    [Fact]
+    public void PresentationRejectsDanglingDuplicateAndSelfReferencesBeforeSave()
+    {
+        using MidoraProject project = CreateProject(preRollTicks: 0);
+        LogicalTrack track = new(project) { Name = "Only" };
+        project.Tracks.Add(track);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, track.Id));
+        MidoraId missing = new(long.MaxValue);
+
+        Assert.Throws<InvalidDataException>(() => ProjectPresentationCodecV3.Serialize(
+            new(
+                ProjectPresentationAllTracksModeV3.Raw,
+                [new(track.Id, true, 1, [track.Id])],
+                []),
+            project));
+        Assert.Throws<InvalidDataException>(() => ProjectPresentationCodecV3.Serialize(
+            new(
+                ProjectPresentationAllTracksModeV3.Raw,
+                [new(track.Id, true, 1, [missing])],
+                []),
+            project));
+        Assert.Throws<InvalidDataException>(() => ProjectPresentationCodecV3.Serialize(
+            new(
+                ProjectPresentationAllTracksModeV3.Raw,
+                [
+                    new(track.Id, true, 1, []),
+                    new(track.Id, false, 0.5, [])
+                ],
+                []),
+            project));
+    }
+
+    [Fact]
     public async Task FrozenV1OpensAsDetachedMigrationWithoutChangingSource()
     {
         using TemporaryDirectory temporary = new();
         string v1Path = temporary.PathFor("legacy-v1.midora");
-        string v2Path = temporary.PathFor("migrated-v2.midora");
+        string v3Path = temporary.PathFor("migrated-v3.midora");
         MidoraProject source = CreateProject(preRollTicks: 0);
         MidoraProjectPackageV1 packages = CreateService();
         await packages.SaveCopyAsync(source, v1Path);
@@ -186,8 +317,10 @@ public sealed class PersistenceContractV2Tests
         Assert.Equal(MidoraPackageDiagnosticCategoryV1.VersionCompatibility, migration.Category);
         Assert.Equal(sourceBytes, await File.ReadAllBytesAsync(v1Path));
 
-        await packages.SaveCopyAsync(opened.Project, v2Path, opened.FileInformation);
-        MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(v2Path);
+        Assert.Equal(1, opened.SourceFileFormatVersion);
+        Assert.NotNull(opened.LegacySourceIdentity);
+        await packages.SaveCopyAsync(opened.Project, v3Path, opened.FileInformation);
+        MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(v3Path);
         Assert.False(reopened.IsModified);
         Assert.False(reopened.RequiresFormatUpgrade);
         Assert.Empty(reopened.Diagnostics);
@@ -223,6 +356,36 @@ public sealed class PersistenceContractV2Tests
         }
     }
 
+    [Fact]
+    public void V3JsonSchemaSetIsStrictAndHasFrozenHashes()
+    {
+        string directory = Path.Combine(AppContext.BaseDirectory, "Schemas", "Json");
+        string[] names =
+        [
+            "common-v1.schema.json",
+            "conductor-track-v1.schema.json",
+            "global-event-scope-defaults-v1.schema.json",
+            "global-reset-defaults-v1.schema.json",
+            "manifest-v3.schema.json",
+            "metadata-v1.schema.json",
+            "project-presentation-v1.schema.json",
+            "project-settings-v1.schema.json",
+            "project-v1.schema.json"
+        ];
+        Dictionary<string, string> expected = File.ReadAllLines(
+                Path.Combine(directory, "midora-json-v3.schema-set.sha256"))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => line.Split("  ", 2, StringSplitOptions.None))
+            .ToDictionary(parts => parts[1], parts => parts[0], StringComparer.Ordinal);
+        Assert.Equal(names.Order(), expected.Keys.Order());
+        foreach (string name in names)
+        {
+            string actual = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(
+                Path.Combine(directory, name))));
+            Assert.Equal(expected[name], actual);
+        }
+    }
+
     private static MidoraProject CreateProject(long preRollTicks)
     {
         MidoraProject project = new(480, FixedTime);
@@ -238,7 +401,7 @@ public sealed class PersistenceContractV2Tests
     private static void DowngradeFixtureToFrozenV1(string path, EventInstrument instrument)
     {
         using ZipArchive archive = ZipFile.Open(path, ZipArchiveMode.Update);
-        ManifestJsonV2 current = ManifestCodecV2.Parse(ReadEntry(archive, "manifest.json"));
+        ManifestJsonV3 current = ManifestCodecV3.Parse(ReadEntry(archive, "manifest.json"));
         ManifestFileEntryJsonV1 currentInstrument = Assert.Single(
             current.Files,
             item => item.Kind == "event-instrument-pb");
@@ -258,7 +421,9 @@ public sealed class PersistenceContractV2Tests
             ManifestSchemaVersion = 1,
             CreatedWithSoftwareVersion = current.CreatedWithSoftwareVersion,
             LastSavedWithSoftwareVersion = current.LastSavedWithSoftwareVersion,
-            Files = current.Files.Select(item => new ManifestFileEntryJsonV1
+            Files = current.Files
+                .Where(item => item.Kind != "project-presentation-json")
+                .Select(item => new ManifestFileEntryJsonV1
             {
                 Path = item.Path,
                 Kind = item.Kind,
@@ -268,6 +433,7 @@ public sealed class PersistenceContractV2Tests
                     : item.Sha256
             }).ToArray()
         };
+        archive.GetEntry(MidoraPackagePathsV1.ProjectPresentation)!.Delete();
         archive.GetEntry("manifest.json")!.Delete();
         using Stream manifestOutput = archive.CreateEntry("manifest.json").Open();
         manifestOutput.Write(ManifestCodecV1.Serialize(v1));

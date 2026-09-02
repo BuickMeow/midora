@@ -18,6 +18,9 @@
       "midora.audiodevice": {
         "type": "Project"
       },
+      "midora.common": {
+        "type": "Project"
+      },
       "midora.midi": {
         "type": "Project"
       },

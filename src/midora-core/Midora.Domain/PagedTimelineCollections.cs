@@ -186,7 +186,7 @@ public readonly record struct TimelineRasterColumnProjection
         : -(double)unchecked((ulong)right - (ulong)left);
 }
 
-public sealed class LogicalNoteQuerySnapshot
+public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNoteSnapshotValue>
 {
     private readonly PagedTimelineValueSnapshot<LogicalNoteSnapshotValue> _values;
 
@@ -197,6 +197,8 @@ public sealed class LogicalNoteQuerySnapshot
     public long Generation => _values.Generation;
     public long MaximumEndTick => _values.MaximumEndTick;
     public ulong ContentFingerprint => _values.ContentFingerprint;
+    public long SourceRevision => Generation;
+    public int PageCapacity => PagedTimelineObjectList<LogicalNote, LogicalNoteSnapshotValue>.DefaultPageCapacity;
 
     public IEnumerable<LogicalNoteSnapshotValue> QueryValues(
         long startTick,
@@ -206,6 +208,35 @@ public sealed class LogicalNoteQuerySnapshot
         _values.Query(startTick, endTick, minimumNote, maximumNote);
 
     public IEnumerable<LogicalNoteSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+
+    public bool TryGetPageByOrdinal(
+        int firstOrdinal,
+        int count,
+        out TimelineObjectPage<LogicalNoteSnapshotValue> page) =>
+        _values.TryGetPageByOrdinal(firstOrdinal, count, out page);
+
+    public int FindOrdinalAtOrAfterTick(long tick) =>
+        _values.FindOrdinalAtOrAfterTick(tick);
+
+    public bool TryFindOrdinalById(MidoraId id, out int ordinal) =>
+        _values.TryFindOrdinalById(id, out ordinal);
+
+    public IEnumerable<LogicalNoteSnapshotValue> QueryTickRange(
+        TimelineObjectRangeQuery query) =>
+        _values.Query(
+            query.StartTick,
+            query.EndTick,
+            query.MinimumLane,
+            query.MaximumLane,
+            query.CategoryMask);
+
+    public void Prefetch(
+        TimelineObjectRangeQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = query;
+    }
 
     public IReadOnlyList<LogicalNoteSnapshotValue> ResolveByIds(
         IReadOnlyCollection<MidoraId> ids) => _values.ResolveByIds(ids);
@@ -242,7 +273,7 @@ public sealed class LogicalNoteQuerySnapshot
         _values.CountCandidateSpatialBlocks(startTick, endTick, minimumNote, maximumNote);
 }
 
-public sealed class TemplateEventQuerySnapshot
+public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateEventSnapshotValue>
 {
     private const ulong NoteCategory = 1UL;
     private const ulong EventCategory = 2UL;
@@ -255,6 +286,8 @@ public sealed class TemplateEventQuerySnapshot
     public long Generation => _values.Generation;
     public long MaximumEndTick => _values.MaximumEndTick;
     public ulong ContentFingerprint => _values.ContentFingerprint;
+    public long SourceRevision => Generation;
+    public int PageCapacity => PagedTimelineObjectList<TemplateEvent, TemplateEventSnapshotValue>.DefaultPageCapacity;
 
     public IEnumerable<TemplateEventSnapshotValue> QueryNotes(
         long startTick,
@@ -271,6 +304,35 @@ public sealed class TemplateEventQuerySnapshot
             .Where(static value => value.Kind != TemplateEventKind.Note);
 
     public IEnumerable<TemplateEventSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+
+    public bool TryGetPageByOrdinal(
+        int firstOrdinal,
+        int count,
+        out TimelineObjectPage<TemplateEventSnapshotValue> page) =>
+        _values.TryGetPageByOrdinal(firstOrdinal, count, out page);
+
+    public int FindOrdinalAtOrAfterTick(long tick) =>
+        _values.FindOrdinalAtOrAfterTick(tick);
+
+    public bool TryFindOrdinalById(MidoraId id, out int ordinal) =>
+        _values.TryFindOrdinalById(id, out ordinal);
+
+    public IEnumerable<TemplateEventSnapshotValue> QueryTickRange(
+        TimelineObjectRangeQuery query) =>
+        _values.Query(
+            query.StartTick,
+            query.EndTick,
+            query.MinimumLane,
+            query.MaximumLane,
+            query.CategoryMask);
+
+    public void Prefetch(
+        TimelineObjectRangeQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = query;
+    }
 
     public IReadOnlyList<TemplateEventSnapshotValue> ResolveByIds(
         IReadOnlyCollection<MidoraId> ids) => _values.ResolveByIds(ids);
@@ -349,7 +411,7 @@ public sealed class TemplateEventQuerySnapshot
 
 }
 
-public sealed class CurvePointQuerySnapshot
+public sealed class CurvePointQuerySnapshot : ITimelineObjectSource<CurvePointSnapshotValue>
 {
     private readonly PagedTimelineValueSnapshot<CurvePointSnapshotValue> _values;
 
@@ -360,11 +422,42 @@ public sealed class CurvePointQuerySnapshot
     public long Generation => _values.Generation;
     public long MaximumTick => Math.Max(0, _values.MaximumEndTick - 1);
     public ulong ContentFingerprint => _values.ContentFingerprint;
+    public long SourceRevision => Generation;
+    public int PageCapacity => PagedTimelineObjectList<CurvePoint, CurvePointSnapshotValue>.DefaultPageCapacity;
 
     public IEnumerable<CurvePointSnapshotValue> QueryValues(long startTick, long endTick) =>
         _values.Query(startTick, endTick, 0, 0);
 
     public IEnumerable<CurvePointSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+
+    public bool TryGetPageByOrdinal(
+        int firstOrdinal,
+        int count,
+        out TimelineObjectPage<CurvePointSnapshotValue> page) =>
+        _values.TryGetPageByOrdinal(firstOrdinal, count, out page);
+
+    public int FindOrdinalAtOrAfterTick(long tick) =>
+        _values.FindOrdinalAtOrAfterTick(tick);
+
+    public bool TryFindOrdinalById(MidoraId id, out int ordinal) =>
+        _values.TryFindOrdinalById(id, out ordinal);
+
+    public IEnumerable<CurvePointSnapshotValue> QueryTickRange(
+        TimelineObjectRangeQuery query) =>
+        _values.Query(
+            query.StartTick,
+            query.EndTick,
+            query.MinimumLane,
+            query.MaximumLane,
+            query.CategoryMask);
+
+    public void Prefetch(
+        TimelineObjectRangeQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = query;
+    }
 
     public IReadOnlyList<CurvePointSnapshotValue> ResolveByIds(
         IReadOnlyCollection<MidoraId> ids) => _values.ResolveByIds(ids);
@@ -2983,6 +3076,43 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
 
     public IEnumerable<TValue> EnumerateAll()
         => _sequence.Enumerate();
+
+    public bool TryGetPageByOrdinal(
+        int firstOrdinal,
+        int count,
+        out TimelineObjectPage<TValue> page)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(firstOrdinal);
+        if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (firstOrdinal >= Count)
+        {
+            page = default;
+            return false;
+        }
+        int actualCount = Math.Min(count, Count - firstOrdinal);
+        page = new(
+            Generation,
+            firstOrdinal,
+            _sequence.CopyRange(firstOrdinal, actualCount));
+        return true;
+    }
+
+    public int FindOrdinalAtOrAfterTick(long tick)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(tick);
+        return _sequence.FindIndex(value => _getStart(value) >= tick);
+    }
+
+    public bool TryFindOrdinalById(MidoraId id, out int ordinal)
+    {
+        if (id == default)
+        {
+            ordinal = -1;
+            return false;
+        }
+        ordinal = _sequence.FindIndex(value => _getId(value) == id);
+        return ordinal >= 0;
+    }
 
     public IReadOnlyList<TValue> ResolveByIds(IReadOnlyCollection<MidoraId> ids)
     {

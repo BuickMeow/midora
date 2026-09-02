@@ -52,7 +52,7 @@
 | INV-041 | 开发期 v1 中每个 Time Signature 必须满足 `4 × TPQ % denominator == 0`。变化 tick 立即开启新 Bar；若截断旧小节则产生 Warning。Domain、编译、持久化、`Bar:Beat:Tick` 与自然拍网格必须共用该整数、可逆语义。 |
 | INV-042 | 音频缓存分为 canonical range、Logical Segment/Unit fragment、Pure MidiSegment normalized fragment、Root merged checkpoint、Unit/Root raw PCM、playback span 与短 Render-Ahead ring；exact replay 的完整命中不得重复语义编译或 BASSMIDI 合成。Pure MIDI 可听内容 identity 必须覆盖实际 Direct Note/Channel Event、分页源 fingerprint 与 COW delta，不得以集合 Generation、编辑次数或仅 stable ID 代替。 |
 | INV-043 | underrun 在失败位置锁存，完整准备“当前自然小节剩余 + 下一完整小节”（若位于小节起点则当前完整小节），并以播放终点与 16 个四分音符裁剪后才恢复；不得短块断续推进。 |
-| INV-044 | session 音频缓存不进入 `.midora`，默认 root `%LOCALAPPDATA%\Midora\AudioCache`、reusable quota 16 GiB 且允许 0；quota 满只停止新 reusable retention，既有命中继续可读且 miss 必须现场合成，不得静音或阻止播放；初始/运行期 Monitoring bypass 产生的不完整 entry 不得发布或禁用 retention，既有 failure state 不得被后续队列伪装成 quota-full；transient recovery spool 独立，无法取得 spool/RAM 时受控 Stop。 |
+| INV-044 | session 音频缓存不进入 `.midora`，root 固定为 `<ProgramRoot>\.tmp\AudioCache`、reusable quota 16 GiB 且允许 0；root 不再是可编辑 Preference，也不得 fallback 到用户目录或系统 temp。quota 满只停止新 reusable retention，既有命中继续可读且 miss 必须现场合成，不得静音或阻止播放；初始/运行期 Monitoring bypass 产生的不完整 entry 不得发布或禁用 retention，既有 failure state 不得被后续队列伪装成 quota-full；transient recovery spool 独立，无法取得 spool/RAM 时受控 Stop。 |
 | INV-045 | MIDI 导出中，Logical/Event Instrument 的每个实际有事件 Unit 在同一文件内严格对应一个单 Channel MTrk；Pure MIDI 的每个被选择 Track 对应一个独立单 Channel MTrk，同一 Root 的多个 MTrk 可以共享 Port.Channel，名称、global Arrangement Track 顺序和自身 EOT 必须保留。 |
 | INV-046 | 状态型非 Note Event Mapping 的原始值按最近原始事件或有效 Initial State/default 持有；Envelope/连续源在实例与 Release 的整数 tick 上从该值求值，非零 Release 的最后有效 tick 达到 End Value。普通 Gate/Release/Tail 结束不发送 CC120；CC120 只用于 Segment/消费者范围硬边界。 |
 | INV-047 | Note Number/Velocity Mapping 是强制共享目标；非 Note Event Mapping 与 Logical Parameter Mapping 是可删除 owner。缺少可选 Mapping 表示原始值直通，普通事件编辑和打开修复不得静默重建已删除 owner。 |
@@ -94,17 +94,28 @@
 | INV-083 | Arrangement Segment 与 Logical/Direct/Template Note 的边界 Resize 在 Snap 开启时以当前有效 Operation Subdivision、Snap 关闭时以 `1 tick` 作为最小长度；批量对象逐项独立饱和。手势前已短于有效步长的对象以原长度为本次最小值，不能被约束反向扩长。交互预览与原子编辑命令必须采用同一最小长度。 |
 | INV-084 | MIDI 导出 `README.md` 不记录程序级 SoundFont；其 `Notes` 单行字段必须直接使用本次冻结 Canonical Compiled Result 的准确 MIDI Note On 事件总数，并以 invariant 十进制输出，不得重新统计源对象、估算或使用 Markdown 引用块。 |
 | INV-085 | MIDI 导出的每个实际单 Channel 事件 MTrk 都必须在相对 tick 0、结构 Meta 和可选 Channel 10 GS/XG 初始化之后、canonical/opaque 事件之前，依次写入 CC91=0、CC93=0；Conductor 不写。该初始化只属于 SMF 编码结果，不进入 Project/canonical，且不得删除或覆盖随后按冻结顺序写出的 Pure MIDI 用户 CC91/CC93。 |
-| INV-086 | 主应用取得单实例所有权后自动回收上次异常退出遗留的 audio-cache session 与 Pure MIDI session backing directory；当前目录必须同时满足直接子项、版本 manifest 和活动锁已释放才可删除。`SessionContent` 旧裸 GUID 目录只在名称及 `mt_<positive id>.mpk` 内容结构均严格可识别时兼容回收。活动、未知、清单不匹配、越界或 reparse-point 路径必须保留；逐项删除失败不得阻止启动、新 Project 或新 session。 |
+| INV-086 | 主应用取得 ProgramRoot-scoped 单实例所有权后自动回收 `<ProgramRoot>\.tmp` 下异常退出遗留的 AudioCache、SessionContent、CompilerRuns 与 AudioWorkerExchange owned directory；候选必须同时满足固定 root 的直接子项、当前版本 owner manifest、非 reparse point 和活动独占锁已释放才可删除。裸 GUID、活动、未知、清单不匹配或越界路径必须保留；不得扫描旧 `%LOCALAPPDATA%\Midora`。逐项回收失败不得阻止新 Project/session，但 ProgramRoot 启动能力探测失败必须阻止启动。 |
 | INV-087 | Pure MIDI opaque SysEx 的唯一音频特权是可识别且校验有效的 Roland GS DT1 Part Mode 与 Yamaha XG Part Mode。导入必须按 payload target Channel 归属派生 Track；Compiler 保留原 opaque/SMF 数据并额外产生有类型、带来源和正式顺序的 canonical audio event，范围中途起播恢复 Root 当前活动连通区间内最近状态；音频投影重定向到 1-channel Unit channel 0 并以完整规范化 SysEx 发送，随后在同一顺序点显式建立 BASSMIDI Unit 的等价 Melodic/Percussion mode。任意其他 SysEx/Meta、Reset、无效校验和及 continuation 仍不进入音频后端。 |
 | INV-088 | Midora 产品 SemVer、Project file format、component schema、Mapping ABI、IPC/cache generation 与用户 Project Version 是独立版本轴。产品版本只有一个构建源。自 `1.0.0-dev` 冻结点起，后续新 1.x 软件必须持续读取有效 Format 1；Format 1 的 JSON/protobuf/content-pack wire 与字段语义不得原地改变，不能表示的新持久化语义必须进入新格式、独立 reader 和 detached migration。 |
 | INV-089 | Event Instrument Definition 的 `Pre-Roll Ticks` 固定为 `0..Template Length`、默认 0。仅 Logical Segment Instance 使用：对 Logical Note anchor `A`、偏移 `O`，Instance/template origin=`A-O`，Logical Gate Start/End 仍为 `A`/`A+effective Gate Length`，Mapping `gateLength` 不含 `O`。Initial State、实际 tick 参数、Overlap、Usage 连通区间和 Unit 占用从 origin 起算；origin 早于所属 Segment 有效起点或发生 tick 溢出必须 Error，不得 Clamp、丢弃前缀、自动扩展或跨 Segment。standalone Instrument/SubVoice Preview 与 Pitch Ruler audition 按 `O=0`；中途冷启动不补发范围前 NoteOn，也不做音频预滚。全部正式消费者只消费已应用该语义的 canonical。 |
-| INV-090 | Event Instrument Pre-Roll 是 Format 1 无法表达的新语义，当前 writer 使用 Project Format 2、manifest schema v2 与 Event Instrument protobuf v2 wrapper，其中 `pre_roll_ticks` 为必填 field 4。冻结 V1 reader/descriptor/golden 不变；V1 打开必须 detached 迁移到候选 Domain，并为每个 Definition 显式设置 0，完整验证后一次提交。保存只写 Format 2，不覆盖来源 V1，不支持保存回 V1。 |
+| INV-090 | Event Instrument Pre-Roll 是 Format 1 无法表达的新语义，冻结 Project Format 2 使用 manifest schema v2 与 Event Instrument protobuf v2 wrapper，其中 `pre_roll_ticks` 为必填 field 4。冻结 V1 reader/descriptor/golden 不变；V1 打开必须 detached 迁移并为每个 Definition 显式设置 0。当前 Format 3 writer 复用该 protobuf v2 语义，不得修改 Format 1/2 wire。 |
+| INV-091 | 当前 `.midora` writer 固定为 Project Format 3、manifest schema v3，并要求唯一 `settings/project-presentation.json` / `project-presentation-json` schema v1。该文件只承载版本化 Onion/All-Tracks presentation，不属于 Project Source Data，不参与编译、canonical fingerprint、音频缓存、Project Modified 或 Undo/Redo；损坏只恢复默认 presentation 并独立 Warning。Format 1/2 reader/schema/descriptor/golden 必须持续保留。 |
+| INV-092 | Format 1/2 打开使用 detached migration，打开阶段绝不写来源。迁移会话普通 Save 必须先向用户显示并冻结来源/目标 Format、来源 identity 与可见永久原字节副本路径；只有严格重开验证的 Format 3 临时包及逐字节一致副本均安全后才可原子替换原路径。取消、identity 改变、确认路径被不同内容抢占或任意前置失败均不得改变来源；Save Copy 写 Format 3 但不清除 migration-dirty。 |
+| INV-093 | Midora 自建正式数据只写 `<ProgramRoot>\Data\{Preferences,Recent,Catalogs,Presets,Diagnostics}`，可重建工作数据只写 `<ProgramRoot>\.tmp\{AudioCache,SessionContent,CompilerRuns,AudioWorkerExchange}`。ProgramRoot 是 executable base directory，必须是本机 ready fixed drive 上的普通非 reparse-point 可写目录，并在主窗口创建前通过 create/write/flush/atomic-replace/exclusive-lock/delete 能力探测；失败时 fail closed，不得 fallback 或探测/迁移旧 `%LOCALAPPDATA%\Midora`。 |
+| INV-094 | ProgramRoot portable 副本以 `current user + normalized ProgramRoot` 形成独立单实例 scope。`.tmp` 不设置 Hidden；只删除具有当前版本 owner manifest、root 直接子项、非 reparse point 且活动 lock 已释放的目录。未知或无法证明所有权的内容必须保留。Project/MIDI/SoundFont/导出文件仍是用户显式选择的外部路径，不复制进 portable data tree。 |
+| INV-095 | 所有百万级 Timeline source 必须提供 revision-bound ordinal/page/range query 与 stable-ID 流式解析；stable ID 仍是唯一业务身份，ordinal 不得持久化或跨 revision 使用。大 Selection 可以使用 page interval/bitmap + sparse include/exclude，不得要求全量 boxed ID、全量 HashSet、逐对象 WPF item 或同步全 source 物化。 |
+| INV-096 | 大型编辑必须 detached、分页、资源有界并原子发布：默认 page 4,096 records、每 256 records 检查取消、working 64 MiB、resident staging 64 MiB、owned spill 16 GiB、candidate/result 100,000,000 records。只有全部验证成功且 owner revision 未变化时才能一次 root swap，并发布精确 source trace/change set；Undo/Redo 保存 immutable old/new root/page reference 与小型映射，不保存两份完整对象图。spill 只能位于 `<ProgramRoot>\.tmp\CompilerRuns` owned run。 |
+| INV-097 | Timeline Right Down 只冻结 target/selection/container/tick，不同步解码冷页或立即改选择；超过 drag threshold 立即进入既有右键 drag 并取消菜单。首个未拖动 Right Up 到第二个 Right Down 的单调时间差必须位于 `[0, 300 ms)`，两位置的水平、垂直位移必须分别不超过 `6 DIP`，且两者属于同一 Surface 合法内容区，才构成右键双击；实现不得依赖 WPF `ClickCount`、Windows double-click time 或系统空间范围。未形成双击时，菜单在同一 300 ms 窗口后按冻结 target 打开；合法双击切换 Draw/Select，其他工具转 Select；Escape、capture loss、revision/Workspace 失效必须取消候选。 |
+| INV-098 | Select 模式的浮动工具只投影同质且共同兼容的正式 Selection，并复用既有 move/resize/copy command adapter。Follow 是新 Surface 默认，Pin 改为锚定世界坐标；grip 在两种状态下均可手动移动。Move 仅对既有支持 Copy Drag 的对象允许 `Ctrl` Copy+Move，不支持时 Invalid；Note 与 Arrangement Segment 均提供独立的 ResizeStart/ResizeEnd，Point 不提供 Resize。普通/浮动 Move/Resize 在所有选择规模下都显示 Snap/Clamp 后的有效 delta，并共用小选择矢量、大选择 raster tile 预览；不得降级为仅 delta、逐对象 WPF 控件或全选择物化。工具状态不进入 Project、Undo、canonical 或 `.midora`。 |
+| INV-099 | Note 创建 Snap 量化 Pointer Down 后的长度 delta，不重写冻结初始长度；Arrangement 多 Segment Resize 的矢量预览与提交使用同一 shared delta/最小长度/边界；Velocity onset marker 在低缩放保持固定 device-size；Preview Keyboard velocity 按命中白键/黑键自身可见长度归一化。 |
+| INV-100 | Timeline 发起的模态窗口关闭后，在来源仍有效时恢复到原 Timeline Surface。Event Instrument/SubVoice Initial State 的合法整数越界值按正式 MIDI target 值域 Clamp，格式或目标无效仍拒绝。每次 Playback Start 必须针对当前已提交 Project revision 建立计划，新建 Instrument/Usage/Track/Segment/Note 不得依赖 Save/Reopen 才进入首次播放。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
 | 软件定位、技术边界 | 第 1 章 |
 | 术语、编号、身份、确定性 | 第 2 章 |
 | Project、保存入口、修改状态 | 第 3 章 |
+| Project Format 1/2/3、presentation、旧格式原路径升级、ProgramRoot portable storage | 第 3、16、17、19～21 章 |
 | tick、TPQ、Tempo、拍号、Marker | 第 4 章 |
 | Port、Channel Unit、资源不足 | 第 5 章 |
 | 程序级多 SF2/SFZ 列表、目标 Bank/Program 映射、无 Enabled SoundFont、BASS 直接读取与缓存身份 | 第 6、13、15、17 章 |
@@ -122,7 +133,7 @@
 | 主窗口、导航、对象所属属性编辑器和全局面板 | 第 17、24 章 |
 | 各编辑器工作区、Timeline 精确属性与事务式 Properties | 第 17、18、20、24 章 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
-| 选择、拖放、验证、快捷键和 UI 验收 | 第 20 章 |
+| 选择、分页 ordinal/range query、detached edit、浮动工具、拖放、验证、快捷键和 UI 验收 | 第 18、20、23、24 章；INV-095～100 |
 | 初版排除项、实现自由度和变更控制 | 第 21 章 |
 | MIDI Channel Root、Pure MIDI Track、Midi Segment、SMF 导入、Running Status、Pure MIDI 导出拓扑 | 第 23 章 |
 | Arrangement 平铺 Track order、Event Instrument Usage、隐式 Root、独立/共享 Duplicate、共享块、跨类型 Note 剪贴板、Pure MIDI/Conductor 概览缓存 | 第 24 章 |

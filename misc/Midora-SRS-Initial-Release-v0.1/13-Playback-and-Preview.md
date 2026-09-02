@@ -715,10 +715,9 @@ Stop Cursor Behavior
 Render-Ahead Buffer
 Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
-Audio Cache Root
 Maximum Reusable Audio Cache Bytes
 ```
-以上均为当前 Windows 用户本机偏好，不进入 Project、`.midora`、Project Undo / Redo 或 canonical 编译结果。初版不提供 Project 级 Playback override。
+以上均为当前 ProgramRoot portable 偏好，不进入 Project、`.midora`、Project Undo / Redo 或 canonical 编译结果。Audio Cache Root 固定为 `<ProgramRoot>\.tmp\AudioCache`，不作为偏好保存。初版不提供 Project 级 Playback override。
 初版不提供 WASAPI Shared / Exclusive 模式选择；正式 BASSWASAPI 后端固定使用第 13.14.7 节策略。
 
 ### 13.14.3 设备枚举与选择
@@ -1154,11 +1153,10 @@ Master/Limiter：保留 Unit PCM，失效相关 playback span。
 
 Application Preferences 包含：
 ```text
-Audio Cache Root：默认 %LOCALAPPDATA%\Midora\AudioCache
 Maximum Reusable Audio Cache Bytes：默认 16 GiB，范围 0..Int64.MaxValue
 ```
 
-Cache Root 只接受可写的本机 fully-qualified 路径，拒绝相对路径、UNC 和网络位置。程序只能管理 root 下由当前版本 manifest 标识的 `session-*` 子目录；不得递归删除 root 或未知文件。
+Audio Cache Root 不再是可编辑 Preference，固定为 `<ProgramRoot>\.tmp\AudioCache`。ProgramRoot 启动能力探测统一拒绝相对路径、UNC、网络/可移动卷、reparse-point root 与缺少必要事务能力的目录。程序只能管理 root 下由当前版本 manifest 标识的 `session-*` 子目录；不得递归删除 root 或未知文件。
 
 主应用成功取得单实例所有权后，以及新 audio-cache session 激活前，必须自动扫描并 best-effort 删除上次异常退出遗留的、当前版本 manifest 可识别且未持有活动独占锁的 `session-*` 直接子目录。删除失败不得阻止应用启动或建立新 session，后续 session 激活必须重试；仍活动、manifest 缺失/不匹配、路径不是 root 直接子项或属于 reparse point 的目录一律保留。自动清理不得扫描、删除或重建 root 本身，也不得把未知内容当作 Midora 缓存。
 

@@ -1,4 +1,5 @@
 using Midora.Audio;
+using Midora.Common;
 using Midora.Domain;
 using Midora.Playback;
 
@@ -71,17 +72,8 @@ public sealed record AudioCachePreferences(
         GetDefaultRootPath(),
         DefaultMaximumReusableBytes);
 
-    public static string GetDefaultRootPath()
-    {
-        string localApplicationData = Environment.GetFolderPath(
-            Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrWhiteSpace(localApplicationData))
-        {
-            throw new InvalidOperationException(
-                "The current Windows user's Local Application Data directory is unavailable.");
-        }
-        return Path.Combine(localApplicationData, "Midora", "AudioCache");
-    }
+    public static string GetDefaultRootPath() =>
+        MidoraProgramData.Current.AudioCacheDirectory;
 
     public void Validate()
     {

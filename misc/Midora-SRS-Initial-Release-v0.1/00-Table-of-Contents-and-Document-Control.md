@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-30**
+> 最近修订日期：**2026-09-01**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,22 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-09-01 修订摘要
+
+- Timeline 右键双击改用 Midora 自有固定判定：首个未拖动 `Right Up` 到第二个 `Right Down` 的时间差必须位于 `[0, 300 ms)`，两次位置的水平、垂直位移分别不得超过 `6 DIP`；不得依赖 WPF `ClickCount`、Windows 双击时间或系统双击空间范围。单击菜单使用同一 300 ms 窗口，冷页异步命中、冻结 target、右键 trace、取消与 revision gate 规则不变。
+- Select 模式浮动工具默认处于 Follow；Note 与 Arrangement Segment 均提供左边界、右边界两个可区分的 Resize，Move 在既有 Copy Drag 能力明确支持时允许 `Ctrl` 触发 Copy+Move，否则手势 Invalid。普通直接操作与浮动工具的 Move/Resize 在所有选择规模下都显示最终 Snap/Clamp 后的 delta，并共用小选择矢量、大选择瓦片预览管线；不得因选择超过阈值而只留 delta、隐藏对象预览或建立逐对象 WPF 控件。
+
+## 2026-08-31 修订摘要
+
+- 大规模 Timeline Selection 新增 revision-bound ordinal/page/range query 契约：stable ID 仍是唯一业务身份；百万对象范围可使用 page interval/bitmap 与 sparse exceptions 表达并流式解析，禁止把全量 boxed ID、HashSet、WPF item 或全 source `ToArray()` 作为正常入口。
+- 大型编辑新增 detached paged transaction 与 compact Undo 基线：默认 page 4,096 records、每 256 records 检查取消、单页 decoded/encoded working buffers 与 resident staging 各 64 MiB、owned spill 16 GiB、candidate/result 100,000,000 records；只有全部验证成功且 revision 未变化时一次 root swap，并向 UI、Compiler 与缓存发布同一个精确 source trace/change set。详见 `Midora-Paged-Selection-and-Edit-Transaction-Architecture-Decisions.md` 与 `Midora-Stage-2-Paged-Selection-and-Direct-Manipulation-Requirement-Trace.md`。
+- Note 创建 Snap 改为量化 Pointer Down 后的长度 delta，不重写初始长度；Arrangement 多 Segment Resize 预览与提交使用同一向量规则；低缩放 Velocity onset marker 保持固定设备尺寸；Preview Keyboard 黑/白键 velocity 各按自身可见长度归一化。
+- Timeline 发起的模态窗口关闭后恢复原 Surface 焦点；Event Instrument/SubVoice Initial State 的合法整数越界值按 target 值域 Clamp。每次 Playback Start 读取当前已提交 Project revision，新建 Instrument/Usage/Track/Segment/Note 不得依赖 Save/Reopen 才进入首次播放。
+- 当前 `.midora` writer 提升为 Project Format 3，新增且只新增严格索引的 `settings/project-presentation.json`。该文件承载显式允许跨会话恢复的 Project presentation 数据；首个 schema 仅冻结 Track/SubVoice Onion 配置与 All-Tracks 显示模式的容器，不提前引入 Onion UI。presentation 不属于 Project Source Data，不参与编译、canonical fingerprint、音频缓存或 Undo/Redo；损坏时隔离为默认 presentation 并报告 Warning，不得损坏音乐内容或标记音乐 Project Modified。
+- Format 1/2 打开继续 detached migration，打开阶段不写来源。迁移会话执行普通 Save 时，先显示并冻结原路径、来源/目标 Format 与永久旧版副本路径；确认后严格构建并重开 Format 3 临时包，创建或复用来源逐字节一致的可见副本，再原子替换原路径。取消、来源 identity 改变、备份或发布失败均不得改变来源；Save Copy 只写 Format 3 且不清除 migration-dirty。
+- Midora 自建数据改为 Program-root portable storage：正式配置/预设只进入 `<ProgramRoot>\Data\...`，可重建 session/cache/交换数据只进入 `<ProgramRoot>\.tmp\...`。启动前验证本机固定卷、普通目录、写入、flush、原子替换、独占锁和删除能力；失败时阻止启动且不 fallback。当前版本不探测、不读取、不迁移旧 `%LOCALAPPDATA%\Midora`。
+- `.tmp` 的 CompilerRuns 与 AudioWorkerExchange 同 AudioCache/SessionContent 一样使用有版本 owner manifest、直接子目录、独占活动锁与 reparse-point 防护；只 best-effort 回收可证明由 Midora 创建且已不活跃的残留。单实例身份由当前用户与规范化 ProgramRoot 共同决定，使不同 portable 副本互相隔离。
 
 ## 2026-08-30 修订摘要
 

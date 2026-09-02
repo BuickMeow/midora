@@ -224,7 +224,7 @@ public sealed class SelectionPresentationLifecycleTests
                 session.RefreshWorkspaceSelection(workspace);
                 TimelineMaterializedSelection staleMarquee = new(
                     workspace.Selection.Revision,
-                    selected,
+                    CompressedMidoraIdSet.Create(selected),
                     notes[0].Id,
                     notes[0].Id,
                     new Dictionary<TimelineItemKind, TimelineSelectionMetrics>(),
@@ -246,7 +246,7 @@ public sealed class SelectionPresentationLifecycleTests
                 Assert.True(workspace.Selection.Revision > previousRevision);
                 TimelineMaterializedSelection lateMarqueeFromClearedState = new(
                     workspace.Selection.Revision,
-                    selected,
+                    CompressedMidoraIdSet.Create(selected),
                     notes[0].Id,
                     notes[0].Id,
                     new Dictionary<TimelineItemKind, TimelineSelectionMetrics>(),

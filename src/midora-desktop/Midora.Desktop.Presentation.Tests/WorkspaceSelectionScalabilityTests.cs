@@ -242,11 +242,11 @@ public sealed class WorkspaceSelectionScalabilityTests
     }
 
     [Fact]
-    public void TimelineSnapshotSharesImmutableMillionItemSelection()
+    public void TimelineSnapshotSharesCompressedMillionItemSelection()
     {
-        ImmutableHashSet<MidoraId> ids = Enumerable.Range(1, 1_000_000)
-            .Select(static value => new MidoraId(value))
-            .ToImmutableHashSet();
+        CompressedMidoraIdSet ids = CompressedMidoraIdSet.Create(
+            Enumerable.Range(1, 1_000_000)
+                .Select(static value => new MidoraId(value)));
 
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
         long before = GC.GetAllocatedBytesForCurrentThread();

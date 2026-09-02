@@ -1,5 +1,6 @@
 using System.IO.Compression;
-using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Midora.Application;
 using Midora.Domain;
 using Midora.Persistence;
@@ -11,7 +12,7 @@ namespace Midora.Desktop.Tests;
 public sealed class FormatMigrationDesktopTests
 {
     [Fact]
-    public async Task DesktopOpenKeepsTheMigratedFormatOneSourceProtected()
+    public async Task DesktopCanExplicitlyUpgradeFormatOneInPlaceWithExactBackup()
     {
         using TemporaryDirectory temporary = new();
         string legacyPath = Path.Combine(temporary.Path, "legacy.midora");
@@ -29,6 +30,17 @@ public sealed class FormatMigrationDesktopTests
         Assert.Equal(Path.GetFullPath(legacyPath), persistence.ProtectedSourceProjectPath);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             persistence.SaveProjectAsync(legacyPath, overwriteAuthorized: true));
+
+        byte[] original = await File.ReadAllBytesAsync(legacyPath);
+        MidoraLegacyProjectUpgradePlanV3 plan =
+            await session.PrepareLegacyProjectUpgradeAsync();
+        string backupPath = await session.UpgradeLegacyProjectInPlaceAsync(plan);
+
+        Assert.Equal(original, await File.ReadAllBytesAsync(backupPath));
+        Assert.Equal(Path.GetFullPath(legacyPath), persistence.CurrentProjectPath);
+        Assert.False(persistence.RequiresFormatUpgrade);
+        await using MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(legacyPath);
+        Assert.Equal(3, reopened.SourceFileFormatVersion);
     }
 
     private static void DowngradeStructureOnlyPackageToFormatOne(string path)
@@ -36,18 +48,24 @@ public sealed class FormatMigrationDesktopTests
         using ZipArchive archive = ZipFile.Open(path, ZipArchiveMode.Update);
         ZipArchiveEntry manifest = archive.GetEntry("manifest.json")
             ?? throw new InvalidDataException("The test package has no manifest.");
-        string json;
-        using (StreamReader reader = new(manifest.Open(), Encoding.UTF8, leaveOpen: false))
+        JsonObject json;
+        using (Stream input = manifest.Open())
         {
-            json = reader.ReadToEnd();
+            json = JsonNode.Parse(input)?.AsObject()
+                ?? throw new InvalidDataException("The test manifest is not an object.");
         }
-        json = json
-            .Replace("\"fileFormatVersion\": 2", "\"fileFormatVersion\": 1", StringComparison.Ordinal)
-            .Replace("\"minimumReadableVersion\": 2", "\"minimumReadableVersion\": 1", StringComparison.Ordinal)
-            .Replace("\"manifestSchemaVersion\": 2", "\"manifestSchemaVersion\": 1", StringComparison.Ordinal);
+        json["fileFormatVersion"] = 1;
+        json["minimumReadableVersion"] = 1;
+        json["manifestSchemaVersion"] = 1;
+        JsonArray files = json["files"]?.AsArray()
+            ?? throw new InvalidDataException("The test manifest has no files array.");
+        JsonNode? presentation = files.FirstOrDefault(value =>
+            string.Equals(value?["path"]?.GetValue<string>(), "settings/project-presentation.json", StringComparison.Ordinal));
+        presentation?.Parent?.AsArray().Remove(presentation);
+        archive.GetEntry("settings/project-presentation.json")?.Delete();
         manifest.Delete();
         using Stream output = archive.CreateEntry("manifest.json").Open();
-        output.Write(Encoding.UTF8.GetBytes(json));
+        JsonSerializer.Serialize(output, json, new JsonSerializerOptions { WriteIndented = false });
     }
 
     private sealed class TemporaryDirectory : IDisposable

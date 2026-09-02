@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using Midora.Domain;
 
 namespace Midora.Persistence;
@@ -48,13 +50,32 @@ public sealed record MidoraProjectFileInformationV1(
     string CreatedWithSoftwareVersion,
     string LastSavedWithSoftwareVersion);
 
+public sealed record MidoraLegacyProjectSourceIdentityV3(
+    string SourcePath,
+    int SourceFileFormatVersion,
+    long Length,
+    DateTime LastWriteTimeUtc,
+    string Sha256);
+
+public sealed record MidoraLegacyProjectUpgradePlanV3(
+    MidoraLegacyProjectSourceIdentityV3 SourceIdentity,
+    int TargetFileFormatVersion,
+    string PermanentBackupPath);
+
 public sealed record MidoraProjectOpenResultV1(
     MidoraProject Project,
     MidoraProjectFileInformationV1 FileInformation,
     bool IsModified,
     IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics,
-    bool RequiresFormatUpgrade = false) : IDisposable, IAsyncDisposable
+    bool RequiresFormatUpgrade = false,
+    int SourceFileFormatVersion = PersistenceContractV3.FileFormatVersion,
+    ProjectPresentationStateV3? PresentationState = null,
+    bool IsPresentationModified = false,
+    MidoraLegacyProjectSourceIdentityV3? LegacySourceIdentity = null) : IDisposable, IAsyncDisposable
 {
+    public ProjectPresentationStateV3 Presentation =>
+        PresentationState ?? ProjectPresentationStateV3.Empty;
+
     public void Dispose() => Project.Dispose();
 
     public ValueTask DisposeAsync()
@@ -67,7 +88,8 @@ public sealed record MidoraProjectOpenResultV1(
 public sealed record MidoraProjectSaveResultV1(
     string TargetPath,
     MidoraProjectFileInformationV1 FileInformation,
-    IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics);
+    IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics,
+    string? PermanentLegacyBackupPath = null);
 
 public class MidoraPackageExceptionV1 : IOException
 {
@@ -114,8 +136,8 @@ public sealed class MidoraPackageVersionCompatibilityExceptionV1 : MidoraPackage
     public int FileFormatVersion { get; }
     public int MinimumReadableVersion { get; }
     public int ManifestSchemaVersion { get; }
-    public int SupportedFileFormatVersion => PersistenceContractV2.FileFormatVersion;
-    public int SupportedManifestSchemaVersion => PersistenceContractV2.ManifestSchemaVersion;
+    public int SupportedFileFormatVersion => PersistenceContractV3.FileFormatVersion;
+    public int SupportedManifestSchemaVersion => PersistenceContractV3.ManifestSchemaVersion;
 }
 
 public sealed class MidoraProjectPackageV1
@@ -160,7 +182,30 @@ public sealed class MidoraProjectPackageV1
         try
         {
             _faultInjector.ThrowIfRequested(MidoraPackageFaultPointV1.BeforeContainerOpen, path);
-            return await OpenCoreAsync(path, cancellationToken).ConfigureAwait(false);
+            await using FileStream sourceLease = new(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            MidoraProjectOpenResultV1 opened = await OpenCoreAsync(path, cancellationToken)
+                .ConfigureAwait(false);
+            if (!opened.RequiresFormatUpgrade)
+            {
+                return opened;
+            }
+
+            sourceLease.Position = 0;
+            byte[] digest = await SHA256.HashDataAsync(sourceLease, cancellationToken)
+                .ConfigureAwait(false);
+            MidoraLegacyProjectSourceIdentityV3 identity = new(
+                path,
+                opened.SourceFileFormatVersion,
+                sourceLease.Length,
+                File.GetLastWriteTimeUtc(path),
+                Convert.ToHexStringLower(digest));
+            return opened with { LegacySourceIdentity = identity };
         }
         catch (MidoraPackageExceptionV1)
         {
@@ -195,11 +240,32 @@ public sealed class MidoraProjectPackageV1
         CancellationToken cancellationToken = default) =>
         SaveCoreAsync(
             project,
+            ProjectPresentationStateV3.Empty,
             targetPath,
             fileInformation,
             editingTimeSession,
             overwriteAuthorized,
             updateCurrentProject: true,
+            legacyUpgrade: null,
+            cancellationToken);
+
+    public Task<MidoraProjectSaveResultV1> SaveProjectAsync(
+        MidoraProject project,
+        ProjectPresentationStateV3 presentation,
+        string targetPath,
+        MidoraProjectFileInformationV1? fileInformation = null,
+        ProjectEditingTimeSession? editingTimeSession = null,
+        bool overwriteAuthorized = false,
+        CancellationToken cancellationToken = default) =>
+        SaveCoreAsync(
+            project,
+            presentation,
+            targetPath,
+            fileInformation,
+            editingTimeSession,
+            overwriteAuthorized,
+            updateCurrentProject: true,
+            legacyUpgrade: null,
             cancellationToken);
 
     public Task<MidoraProjectSaveResultV1> SaveCopyAsync(
@@ -211,23 +277,104 @@ public sealed class MidoraProjectPackageV1
         CancellationToken cancellationToken = default) =>
         SaveCoreAsync(
             project,
+            ProjectPresentationStateV3.Empty,
             targetPath,
             fileInformation,
             editingTimeSession,
             overwriteAuthorized,
             updateCurrentProject: false,
+            legacyUpgrade: null,
             cancellationToken);
+
+    public Task<MidoraProjectSaveResultV1> SaveCopyAsync(
+        MidoraProject project,
+        ProjectPresentationStateV3 presentation,
+        string targetPath,
+        MidoraProjectFileInformationV1? fileInformation = null,
+        ProjectEditingTimeSession? editingTimeSession = null,
+        bool overwriteAuthorized = false,
+        CancellationToken cancellationToken = default) =>
+        SaveCoreAsync(
+            project,
+            presentation,
+            targetPath,
+            fileInformation,
+            editingTimeSession,
+            overwriteAuthorized,
+            updateCurrentProject: false,
+            legacyUpgrade: null,
+            cancellationToken);
+
+    public async Task<MidoraLegacyProjectUpgradePlanV3> PrepareLegacyProjectUpgradeAsync(
+        MidoraLegacyProjectSourceIdentityV3 sourceIdentity,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sourceIdentity);
+        ValidateLegacySourceIdentity(sourceIdentity);
+        string backupPath = await PlanPermanentLegacyBackupPathAsync(
+            sourceIdentity,
+            cancellationToken).ConfigureAwait(false);
+        return new(
+            sourceIdentity,
+            PersistenceContractV3.FileFormatVersion,
+            backupPath);
+    }
+
+    public async Task<MidoraProjectSaveResultV1> UpgradeLegacyProjectInPlaceAsync(
+        MidoraProject project,
+        ProjectPresentationStateV3 presentation,
+        MidoraLegacyProjectSourceIdentityV3 sourceIdentity,
+        MidoraProjectFileInformationV1 fileInformation,
+        ProjectEditingTimeSession? editingTimeSession = null,
+        CancellationToken cancellationToken = default)
+    {
+        MidoraLegacyProjectUpgradePlanV3 plan = await PrepareLegacyProjectUpgradeAsync(
+            sourceIdentity,
+            cancellationToken).ConfigureAwait(false);
+        return await UpgradeLegacyProjectInPlaceAsync(
+            project,
+            presentation,
+            plan,
+            fileInformation,
+            editingTimeSession,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<MidoraProjectSaveResultV1> UpgradeLegacyProjectInPlaceAsync(
+        MidoraProject project,
+        ProjectPresentationStateV3 presentation,
+        MidoraLegacyProjectUpgradePlanV3 plan,
+        MidoraProjectFileInformationV1 fileInformation,
+        ProjectEditingTimeSession? editingTimeSession = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ValidateLegacyUpgradePlan(plan);
+        return SaveCoreAsync(
+            project,
+            presentation,
+            plan.SourceIdentity.SourcePath,
+            fileInformation,
+            editingTimeSession,
+            overwriteAuthorized: true,
+            updateCurrentProject: true,
+            legacyUpgrade: plan,
+            cancellationToken);
+    }
 
     private async Task<MidoraProjectSaveResultV1> SaveCoreAsync(
         MidoraProject project,
+        ProjectPresentationStateV3 presentation,
         string targetPath,
         MidoraProjectFileInformationV1? fileInformation,
         ProjectEditingTimeSession? editingTimeSession,
         bool overwriteAuthorized,
         bool updateCurrentProject,
+        MidoraLegacyProjectUpgradePlanV3? legacyUpgrade,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(presentation);
         string target = NormalizeFilePath(targetPath, nameof(targetPath));
         string? directory = Path.GetDirectoryName(target);
         if (directory is null || !Directory.Exists(directory))
@@ -238,6 +385,16 @@ public sealed class MidoraProjectPackageV1
                 targetPath: target);
         }
         bool targetExisted = File.Exists(target);
+        MidoraLegacyProjectSourceIdentityV3? legacySourceIdentity = legacyUpgrade?.SourceIdentity;
+        if (legacyUpgrade is not null
+            && (!PathsEqual(target, legacySourceIdentity!.SourcePath)
+                || !targetExisted))
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Preflight,
+                "The legacy in-place upgrade source identity is invalid.",
+                targetPath: target);
+        }
         if (targetExisted && !overwriteAuthorized)
         {
             throw new MidoraPackageExceptionV1(
@@ -255,6 +412,7 @@ public sealed class MidoraProjectPackageV1
         try
         {
             ValidateSupportedProject(project);
+            _ = ProjectPresentationCodecV3.ValidateAndCanonicalize(presentation, project);
         }
         catch (Exception exception) when (exception is InvalidDataException
             or ArgumentException
@@ -270,15 +428,23 @@ public sealed class MidoraProjectPackageV1
         string transactionId = Guid.NewGuid().ToString("N");
         string temporaryDirectory = Path.Combine(directory, $".midora-save-{transactionId}");
         string temporaryPackage = Path.Combine(directory, $".{Path.GetFileName(target)}.midora-temp-{transactionId}");
-        string? backupPath = targetExisted
+        string? backupPath = targetExisted && legacyUpgrade is null
             ? Path.Combine(directory, $".{Path.GetFileName(target)}.midora-backup-{transactionId}.bak")
             : null;
+        string? permanentLegacyBackupPath = null;
+        FileStream? legacySourceLease = null;
         bool publishAttempted = false;
         List<MidoraPackageDiagnosticV1> cleanupDiagnostics = [];
         PackageContentV1? content = null;
 
         try
         {
+            if (legacyUpgrade is not null)
+            {
+                legacySourceLease = await OpenAndVerifyLegacySourceAsync(
+                    legacySourceIdentity!,
+                    cancellationToken).ConfigureAwait(false);
+            }
             if (backupPath is not null)
             {
                 try
@@ -311,6 +477,7 @@ public sealed class MidoraProjectPackageV1
                 {
                     content = BuildContent(
                         project,
+                        presentation,
                         metadata,
                         outputFileInformation,
                         temporaryDirectory,
@@ -372,6 +539,7 @@ public sealed class MidoraProjectPackageV1
                     }
                     PackageContentV1 reopenedContent = BuildContent(
                         reopened.Project,
+                        reopened.Presentation,
                         reopened.Project.Metadata.Snapshot(),
                         reopened.FileInformation,
                         contentRoot: null,
@@ -392,6 +560,20 @@ public sealed class MidoraProjectPackageV1
                     backupPath: backupPath,
                     temporaryPath: temporaryPackage,
                     innerException: exception);
+            }
+
+            if (legacyUpgrade is not null)
+            {
+                FileStream sourceLease = legacySourceLease
+                    ?? throw new InvalidOperationException(
+                        "The verified legacy source lease is unavailable.");
+                permanentLegacyBackupPath = await CreateOrReusePermanentLegacyBackupAsync(
+                    sourceLease,
+                    legacySourceIdentity!,
+                    legacyUpgrade.PermanentBackupPath,
+                    cancellationToken).ConfigureAwait(false);
+                sourceLease.Dispose();
+                legacySourceLease = null;
             }
 
             publishAttempted = true;
@@ -420,7 +602,7 @@ public sealed class MidoraProjectPackageV1
                     MidoraPackageStageV1.Publish,
                     "The validated temporary package could not atomically replace or create the target.",
                     target,
-                    backupPath: backupPath,
+                    backupPath: permanentLegacyBackupPath ?? backupPath,
                     temporaryPath: temporaryPackage,
                     innerException: exception);
             }
@@ -437,10 +619,15 @@ public sealed class MidoraProjectPackageV1
             {
                 project.Metadata.CommitSuccessfulSave(savedAtUtc);
             }
-            return new MidoraProjectSaveResultV1(target, outputFileInformation, cleanupDiagnostics);
+            return new MidoraProjectSaveResultV1(
+                target,
+                outputFileInformation,
+                cleanupDiagnostics,
+                permanentLegacyBackupPath);
         }
         catch
         {
+            legacySourceLease?.Dispose();
             if (publishAttempted)
             {
                 TryDeleteDirectory(temporaryDirectory, cleanupDiagnostics);
@@ -512,9 +699,9 @@ public sealed class MidoraProjectPackageV1
                 MidoraPackagePathsV1.Manifest,
                 innerException: exception);
         }
-        if (versionHeader.FileFormatVersion > PersistenceContractV2.FileFormatVersion
-            || versionHeader.MinimumReadableVersion > PersistenceContractV2.FileFormatVersion
-            || versionHeader.ManifestSchemaVersion > PersistenceContractV2.ManifestSchemaVersion)
+        if (versionHeader.FileFormatVersion > PersistenceContractV3.FileFormatVersion
+            || versionHeader.MinimumReadableVersion > PersistenceContractV3.FileFormatVersion
+            || versionHeader.ManifestSchemaVersion > PersistenceContractV3.ManifestSchemaVersion)
         {
             throw new MidoraPackageVersionCompatibilityExceptionV1(path, versionHeader);
         }
@@ -528,6 +715,8 @@ public sealed class MidoraProjectPackageV1
                     ManifestCodecV1.Parse(manifestBytes)),
                 PersistenceContractV2.FileFormatVersion => PackageManifestView.FromV2(
                     ManifestCodecV2.Parse(manifestBytes)),
+                PersistenceContractV3.FileFormatVersion => PackageManifestView.FromV3(
+                    ManifestCodecV3.Parse(manifestBytes)),
                 _ => throw new InvalidDataException(
                     $"Unsupported Midora file-format version {versionHeader.FileFormatVersion}.")
             };
@@ -543,7 +732,7 @@ public sealed class MidoraProjectPackageV1
                 innerException: exception);
         }
 
-        bool requiresFormatUpgrade = manifest.FileFormatVersion == PersistenceContractV1.FileFormatVersion;
+        bool requiresFormatUpgrade = manifest.FileFormatVersion < PersistenceContractV3.FileFormatVersion;
         Dictionary<string, ManifestFileEntryJsonV1> index = ValidateManifestIndex(manifest.Files, path);
         List<MidoraPackageDiagnosticV1> diagnostics = CollectExtraEntryDiagnostics(entries, index);
         if (requiresFormatUpgrade)
@@ -552,7 +741,7 @@ public sealed class MidoraProjectPackageV1
                 MidoraPackageDiagnosticSeverityV1.Information,
                 MidoraPackageDiagnosticCategoryV1.VersionCompatibility,
                 "MIDORA-PERSIST-FORMAT-MIGRATED",
-                "The Format 1 Project was migrated in memory. Saving will write Format 2.",
+                $"The Format {manifest.FileFormatVersion} Project was migrated in memory. Saving will write Format 3.",
                 MidoraPackagePathsV1.Manifest));
         }
 
@@ -701,6 +890,42 @@ public sealed class MidoraProjectPackageV1
                 entries, index, path, diagnostics, cancellationToken,
                 () => isModified = true).ConfigureAwait(false);
 
+            ProjectPresentationStateV3 presentation = ProjectPresentationStateV3.Empty;
+            bool presentationModified = requiresFormatUpgrade;
+            if (manifest.FileFormatVersion == PersistenceContractV3.FileFormatVersion)
+            {
+                try
+                {
+                    byte[]? presentationBytes = await TryReadValidatedAsync(
+                        MidoraPackagePathsV1.ProjectPresentation,
+                        "project-presentation-json",
+                        entries,
+                        index,
+                        path,
+                        cancellationToken).ConfigureAwait(false);
+                    if (presentationBytes is null)
+                    {
+                        throw new InvalidDataException("project-presentation.json is missing.");
+                    }
+                    presentation = ProjectPresentationCodecV3.Parse(presentationBytes, project);
+                }
+                catch (Exception exception) when (exception is InvalidDataException
+                    or System.Text.Json.JsonException
+                    or MidoraPackageExceptionV1
+                    {
+                        Stage: MidoraPackageStageV1.HashValidation or MidoraPackageStageV1.Structure
+                    })
+                {
+                    diagnostics.Add(new(
+                        MidoraPackageDiagnosticSeverityV1.Warning,
+                        MidoraPackageDiagnosticCategoryV1.FileDamage,
+                        "MIDORA-PERSIST-PRESENTATION-RECOVERED",
+                        $"Project presentation data was ignored and reset to defaults. {exception.Message}",
+                        MidoraPackagePathsV1.ProjectPresentation));
+                    presentationModified = true;
+                }
+            }
+
             return new MidoraProjectOpenResultV1(
                 project,
                 new MidoraProjectFileInformationV1(
@@ -708,7 +933,10 @@ public sealed class MidoraProjectPackageV1
                     manifest.LastSavedWithSoftwareVersion),
                 isModified,
                 diagnostics,
-                requiresFormatUpgrade);
+                requiresFormatUpgrade,
+                manifest.FileFormatVersion,
+                presentation,
+                presentationModified);
         }
         catch
         {
@@ -719,6 +947,7 @@ public sealed class MidoraProjectPackageV1
 
     private static PackageContentV1 BuildContent(
         MidoraProject project,
+        ProjectPresentationStateV3 presentation,
         ProjectMetadataSnapshot metadata,
         MidoraProjectFileInformationV1 fileInformation,
         string? contentRoot,
@@ -735,6 +964,9 @@ public sealed class MidoraProjectPackageV1
                 project.GlobalResetDefaults),
             [MidoraPackagePathsV1.GlobalEventScopeDefaults] = GlobalEventScopeDefaultsCodecV1.Serialize()
         };
+        content.Add(
+            MidoraPackagePathsV1.ProjectPresentation,
+            ProjectPresentationCodecV3.Serialize(presentation, project));
         foreach (EventInstrument instrument in project.EventInstruments)
         {
             content.Add(
@@ -799,17 +1031,17 @@ public sealed class MidoraProjectPackageV1
         })
             .Concat(pureMidiPackEntries)
             .ToArray();
-        ManifestJsonV2 manifest = new()
+        ManifestJsonV3 manifest = new()
         {
             Magic = "midora-project",
-            FileFormatVersion = PersistenceContractV2.FileFormatVersion,
-            MinimumReadableVersion = PersistenceContractV2.FileFormatVersion,
-            ManifestSchemaVersion = PersistenceContractV2.ManifestSchemaVersion,
+            FileFormatVersion = PersistenceContractV3.FileFormatVersion,
+            MinimumReadableVersion = PersistenceContractV3.FileFormatVersion,
+            ManifestSchemaVersion = PersistenceContractV3.ManifestSchemaVersion,
             CreatedWithSoftwareVersion = fileInformation.CreatedWithSoftwareVersion,
             LastSavedWithSoftwareVersion = fileInformation.LastSavedWithSoftwareVersion,
             Files = manifestFiles
         };
-        content.Add(MidoraPackagePathsV1.Manifest, ManifestCodecV2.Serialize(manifest));
+        content.Add(MidoraPackagePathsV1.Manifest, ManifestCodecV3.Serialize(manifest));
         return new(content, pureMidiPackEntries);
     }
 
@@ -1314,6 +1546,8 @@ public sealed class MidoraProjectPackageV1
                         RestoreFormat1EventInstrument(project, payload.Bytes),
                     PersistenceContractV2.FileFormatVersion =>
                         EventInstrumentProtobufCodecV2.Restore(project, payload.Bytes),
+                    PersistenceContractV3.FileFormatVersion =>
+                        EventInstrumentProtobufCodecV2.Restore(project, payload.Bytes),
                     _ => throw new InvalidDataException(
                         $"Unsupported Event Instrument file-format version {fileFormatVersion}.")
                 };
@@ -1758,6 +1992,292 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
+    private static async Task<FileStream> OpenAndVerifyLegacySourceAsync(
+        MidoraLegacyProjectSourceIdentityV3 identity,
+        CancellationToken cancellationToken)
+    {
+        FileStream? stream = null;
+        try
+        {
+            stream = new FileStream(
+                identity.SourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            if (stream.Length != identity.Length
+                || File.GetLastWriteTimeUtc(identity.SourcePath) != identity.LastWriteTimeUtc)
+            {
+                throw new InvalidDataException(
+                    "The legacy source changed after it was opened.");
+            }
+            byte[] digest = await SHA256.HashDataAsync(stream, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.Equals(
+                Convert.ToHexStringLower(digest),
+                identity.Sha256,
+                StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "The legacy source bytes changed after it was opened.");
+            }
+            stream.Position = 0;
+            FileStream result = stream;
+            stream = null;
+            return result;
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or InvalidDataException
+            or NotSupportedException)
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Preflight,
+                "The legacy source could not be locked and verified for an in-place upgrade.",
+                targetPath: identity.SourcePath,
+                innerException: exception);
+        }
+        finally
+        {
+            stream?.Dispose();
+        }
+    }
+
+    private static async Task<string> CreateOrReusePermanentLegacyBackupAsync(
+        FileStream source,
+        MidoraLegacyProjectSourceIdentityV3 identity,
+        string plannedBackupPath,
+        CancellationToken cancellationToken)
+    {
+        string candidate = NormalizeFilePath(plannedBackupPath, nameof(plannedBackupPath));
+        string directory = Path.GetDirectoryName(identity.SourcePath)!;
+        if (!string.Equals(
+            Path.GetDirectoryName(candidate),
+            directory,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Backup,
+                "The confirmed permanent legacy backup path is not beside the source Project.",
+                targetPath: identity.SourcePath,
+                backupPath: candidate);
+        }
+
+        string currentlyAvailable = await PlanPermanentLegacyBackupPathAsync(
+            identity,
+            cancellationToken).ConfigureAwait(false);
+        if (!PathsEqual(currentlyAvailable, candidate))
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Backup,
+                "The confirmed permanent legacy backup path is no longer available. Confirm the upgrade again.",
+                targetPath: identity.SourcePath,
+                backupPath: candidate);
+        }
+
+        if (File.Exists(candidate))
+        {
+            FileInfo existing = new(candidate);
+            if (existing.Length == identity.Length
+                && await FileHasSha256Async(candidate, identity.Sha256, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return candidate;
+            }
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Backup,
+                "The confirmed permanent legacy backup path was occupied by different bytes.",
+                targetPath: identity.SourcePath,
+                backupPath: candidate);
+        }
+
+        string temporary = Path.Combine(
+            directory,
+            $".{Path.GetFileName(candidate)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            source.Position = 0;
+            await using (FileStream output = new(
+                temporary,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await source.CopyToAsync(output, 128 * 1024, cancellationToken)
+                    .ConfigureAwait(false);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                output.Flush(flushToDisk: true);
+            }
+            if (new FileInfo(temporary).Length != identity.Length
+                || !await FileHasSha256Async(temporary, identity.Sha256, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                throw new InvalidDataException(
+                    "The permanent legacy backup failed exact-byte verification.");
+            }
+            File.Move(temporary, candidate, overwrite: false);
+            return candidate;
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or InvalidDataException
+            or NotSupportedException)
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Backup,
+                "The permanent exact-byte legacy backup could not be created at the confirmed path.",
+                targetPath: identity.SourcePath,
+                backupPath: candidate,
+                temporaryPath: temporary,
+                innerException: exception);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporary);
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException)
+            {
+                // Best effort: the permanent backup or primary failure remains authoritative.
+            }
+        }
+    }
+
+    private static async Task<string> PlanPermanentLegacyBackupPathAsync(
+        MidoraLegacyProjectSourceIdentityV3 identity,
+        CancellationToken cancellationToken)
+    {
+        ValidateLegacySourceIdentity(identity);
+        string directory = Path.GetDirectoryName(identity.SourcePath)!;
+        string sourceStem = Path.GetFileNameWithoutExtension(identity.SourcePath)
+            .Normalize(NormalizationForm.FormC);
+        for (int suffix = 1; suffix < int.MaxValue; suffix++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string candidate = Path.Combine(
+                directory,
+                BuildLegacyBackupFileName(
+                    sourceStem,
+                    identity.SourceFileFormatVersion,
+                    suffix));
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+            FileInfo existing = new(candidate);
+            if (existing.Length == identity.Length
+                && await FileHasSha256Async(candidate, identity.Sha256, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return candidate;
+            }
+        }
+        throw new MidoraPackageExceptionV1(
+            MidoraPackageStageV1.Backup,
+            "No collision-free permanent legacy backup name is available.",
+            targetPath: identity.SourcePath);
+    }
+
+    private static string BuildLegacyBackupFileName(
+        string sourceStem,
+        int sourceFormat,
+        int suffix)
+    {
+        string collisionSuffix = suffix == 1
+            ? string.Empty
+            : string.Create(CultureInfo.InvariantCulture, $" ({suffix})");
+        string fixedTail = string.Create(
+            CultureInfo.InvariantCulture,
+            $" - Original Format {sourceFormat} before Format {PersistenceContractV3.FileFormatVersion}{collisionSuffix}.midora");
+        int prefixBudget = 255 - fixedTail.Length;
+        if (prefixBudget <= 0)
+        {
+            throw new InvalidDataException(
+                "The permanent legacy backup suffix exceeds the Windows filename budget.");
+        }
+        string prefix = TruncateByTextElement(sourceStem, prefixBudget).TrimEnd(' ', '.');
+        if (prefix.Length == 0)
+        {
+            prefix = "Project";
+        }
+        return prefix + fixedTail;
+    }
+
+    private static string TruncateByTextElement(string value, int maximumCodeUnits)
+    {
+        if (value.Length <= maximumCodeUnits)
+        {
+            return value;
+        }
+        TextElementEnumerator elements = StringInfo.GetTextElementEnumerator(value);
+        int length = 0;
+        while (elements.MoveNext())
+        {
+            string element = elements.GetTextElement();
+            if (length + element.Length > maximumCodeUnits)
+            {
+                break;
+            }
+            length += element.Length;
+        }
+        return value[..length];
+    }
+
+    private static void ValidateLegacySourceIdentity(
+        MidoraLegacyProjectSourceIdentityV3 identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        if (!Path.IsPathFullyQualified(identity.SourcePath)
+            || identity.SourceFileFormatVersion is < PersistenceContractV1.FileFormatVersion
+                or >= PersistenceContractV3.FileFormatVersion
+            || identity.Length < 0
+            || identity.Sha256.Length != 64
+            || identity.Sha256.Any(value => value is not (>= '0' and <= '9')
+                and not (>= 'a' and <= 'f')))
+        {
+            throw new ArgumentException(
+                "The legacy source identity is invalid.",
+                nameof(identity));
+        }
+    }
+
+    private static void ValidateLegacyUpgradePlan(MidoraLegacyProjectUpgradePlanV3 plan)
+    {
+        ValidateLegacySourceIdentity(plan.SourceIdentity);
+        if (plan.TargetFileFormatVersion != PersistenceContractV3.FileFormatVersion
+            || !Path.IsPathFullyQualified(plan.PermanentBackupPath))
+        {
+            throw new ArgumentException(
+                "The legacy Project upgrade plan is invalid.",
+                nameof(plan));
+        }
+    }
+
+    private static async Task<bool> FileHasSha256Async(
+        string path,
+        string expected,
+        CancellationToken cancellationToken)
+    {
+        await using FileStream stream = new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 128 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        byte[] digest = await SHA256.HashDataAsync(stream, cancellationToken)
+            .ConfigureAwait(false);
+        return string.Equals(
+            Convert.ToHexStringLower(digest),
+            expected,
+            StringComparison.Ordinal);
+    }
+
     private static IEnumerable<string> GetStableEntryOrder(IEnumerable<string> paths)
     {
         HashSet<string> available = paths.ToHashSet(StringComparer.Ordinal);
@@ -1769,7 +2289,8 @@ public sealed class MidoraProjectPackageV1
             MidoraPackagePathsV1.ConductorTrack,
             MidoraPackagePathsV1.ProjectSettings,
             MidoraPackagePathsV1.GlobalResetDefaults,
-            MidoraPackagePathsV1.GlobalEventScopeDefaults
+            MidoraPackagePathsV1.GlobalEventScopeDefaults,
+            MidoraPackagePathsV1.ProjectPresentation
         ];
         foreach (string path in fixedOrder)
         {
@@ -1780,6 +2301,7 @@ public sealed class MidoraProjectPackageV1
 
     private static string GetExpectedKind(string path) => path switch
     {
+        MidoraPackagePathsV1.ProjectPresentation => "project-presentation-json",
         MidoraPackagePathsV1.Project or MidoraPackagePathsV1.Metadata => "core-json",
         MidoraPackagePathsV1.ConductorTrack => "conductor-json",
         _ when path.StartsWith("settings/", StringComparison.Ordinal) => "settings-json",
@@ -1793,10 +2315,14 @@ public sealed class MidoraProjectPackageV1
         _ => throw new InvalidDataException($"No manifest kind is defined for '{path}'.")
     };
 
-    private static int GetCurrentSchemaVersion(string path) =>
-        path.StartsWith("event-instruments/", StringComparison.Ordinal)
-            ? PersistenceContractV2.EventInstrumentSchemaVersion
-            : PersistenceContractV2.ReusedComponentSchemaVersion;
+    private static int GetCurrentSchemaVersion(string path) => path switch
+    {
+        MidoraPackagePathsV1.ProjectPresentation =>
+            PersistenceContractV3.ProjectPresentationSchemaVersion,
+        _ when path.StartsWith("event-instruments/", StringComparison.Ordinal) =>
+            PersistenceContractV3.EventInstrumentSchemaVersion,
+        _ => PersistenceContractV3.ReusedComponentSchemaVersion
+    };
 
     private static EventInstrument RestoreFormat1EventInstrument(
         MidoraProject project,
@@ -1809,6 +2335,7 @@ public sealed class MidoraProjectPackageV1
 
     private static bool IsKnownKind(string kind) => kind is
         "core-json" or "settings-json" or "conductor-json" or
+        "project-presentation-json" or
         "event-instrument-pb" or "event-instrument-usage-pb" or "logical-track-pb" or
         "midi-channel-root-pb" or "pure-midi-track-pb" or "pure-midi-content-pack";
 
@@ -2160,5 +2687,17 @@ public sealed class MidoraProjectPackageV1
             value.CreatedWithSoftwareVersion,
             value.LastSavedWithSoftwareVersion,
             value.Files);
+
+        public static PackageManifestView FromV3(ManifestJsonV3 value) => new(
+            value.FileFormatVersion,
+            value.CreatedWithSoftwareVersion,
+            value.LastSavedWithSoftwareVersion,
+            value.Files);
     }
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            StringComparison.OrdinalIgnoreCase);
 }

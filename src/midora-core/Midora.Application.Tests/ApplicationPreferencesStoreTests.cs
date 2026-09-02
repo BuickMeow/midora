@@ -93,6 +93,9 @@ public sealed class ApplicationPreferencesStoreTests
 
         Assert.True(store.Save(preferences).Succeeded);
         byte[] first = File.ReadAllBytes(path);
+        string persistedJson = Encoding.UTF8.GetString(first);
+        Assert.DoesNotContain("audioCacheRootPath", persistedJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(preferences.AudioCache.RootPath, persistedJson, StringComparison.Ordinal);
         Assert.True(store.Save(preferences).Succeeded);
         byte[] second = File.ReadAllBytes(path);
         ApplicationPreferencesLoadResult loaded = store.Load();
@@ -100,7 +103,11 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Equal(first, second);
         Assert.Null(loaded.Notice);
         Assert.Equal(preferences.RealtimeAudio, loaded.Preferences.RealtimeAudio);
-        Assert.Equal(preferences.AudioCache, loaded.Preferences.AudioCache);
+        Assert.Equal(
+            new AudioCachePreferences(
+                Midora.Common.MidoraProgramData.Current.AudioCacheDirectory,
+                preferences.AudioCache.MaximumReusableBytes),
+            loaded.Preferences.AudioCache);
         Assert.Equal(preferences.Playback, loaded.Preferences.Playback);
         Assert.Equal(preferences.Appearance, loaded.Preferences.Appearance);
         Assert.Equal(preferences.RecentDirectories, loaded.Preferences.RecentDirectories);
@@ -244,7 +251,15 @@ public sealed class ApplicationPreferencesStoreTests
 
         Assert.False(failed.Succeeded);
         Assert.Equal("PreferenceWriteFailed", failed.Notice?.Code);
-        Assert.Equal(original, store.Load().Preferences);
+        Assert.Equal(
+            original with
+            {
+                AudioCache = original.AudioCache with
+                {
+                    RootPath = Midora.Common.MidoraProgramData.Current.AudioCacheDirectory
+                }
+            },
+            store.Load().Preferences);
         Assert.Empty(Directory.GetFiles(directory.Path, "*.tmp"));
     }
 

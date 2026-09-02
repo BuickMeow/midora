@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using Midora.Desktop.Presentation.Typography;
@@ -463,13 +464,23 @@ public sealed class TimelineSurface : Control
         typeof(TimelineSurface),
         new FrameworkPropertyMetadata(true));
 
+    public static readonly DependencyProperty IsSelectionFloatingToolEnabledProperty =
+        DependencyProperty.Register(
+            nameof(IsSelectionFloatingToolEnabled),
+            typeof(bool),
+            typeof(TimelineSurface),
+            new FrameworkPropertyMetadata(
+                true,
+                FrameworkPropertyMetadataOptions.AffectsRender));
+
     public static readonly DependencyProperty ToolModeProperty = DependencyProperty.Register(
         nameof(ToolMode),
         typeof(TimelineToolMode),
         typeof(TimelineSurface),
         new FrameworkPropertyMetadata(
             TimelineToolMode.Select,
-            FrameworkPropertyMetadataOptions.AffectsRender,
+            FrameworkPropertyMetadataOptions.AffectsRender
+                | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
             OnToolModeChanged));
 
     public static readonly DependencyProperty GridVisibleProperty = DependencyProperty.Register(
@@ -646,6 +657,8 @@ public sealed class TimelineSurface : Control
     private TimelineLanePreviewEventArgs? _activeLanePreview;
     private long? _notePlacementStartTick;
     private long _notePlacementCurrentTick;
+    private long _notePlacementInitialLengthTicks;
+    private long _notePlacementPointerAnchorTick;
     private Point _notePlacementOrigin;
     private bool _notePlacementActivated;
     private bool _notePlacementTimeLocked;
@@ -673,6 +686,42 @@ public sealed class TimelineSurface : Control
     private MidoraId? _eventPointDirectItemId;
     private readonly Dictionary<long, double> _eventPointEdits = [];
     private readonly List<Point> _eventPointTracePoints = new(capacity: 128);
+    private Point? _pendingRightGestureOrigin;
+    private ModifierKeys _pendingRightGestureModifiers;
+    private bool _pendingRightGestureCanTrace;
+    private bool _pendingRightGestureDragThresholdReached;
+    private long? _rightDoubleClickCandidateTimestampMilliseconds;
+    private Point _rightDoubleClickCandidatePoint;
+    private bool _suppressRightButtonUpAfterDoubleClick;
+    private bool _suppressAutomaticContextMenuOpening;
+    private DispatcherTimer? _delayedContextMenuTimer;
+    private CancellationTokenSource? _delayedContextMenuQueryCancellation;
+    private long _delayedContextMenuGeneration;
+    private bool _delayedContextMenuDelayElapsed;
+    private bool _delayedContextMenuQueryReady;
+    private bool _delayedContextMenuAwaitingMouseUp;
+    private bool _delayedContextMenuTargetApplied;
+    private ModifierKeys _delayedContextMenuModifiers;
+    private TimelineRenderItem? _delayedContextMenuHit;
+    private TimelineSelectionSnapshot? _delayedContextMenuSelectionSnapshot;
+    private long _delayedContextMenuTick;
+    private int _delayedContextMenuLane;
+    private long _selectionToolRevision = -1;
+    private TimelineItemKind _selectionToolKind;
+    private bool _selectionToolPinned;
+    private long _selectionToolPinnedTick;
+    private double _selectionToolPinnedVertical;
+    private Vector _selectionToolFollowOffset;
+    private Rect _selectionToolBounds = Rect.Empty;
+    private Rect _selectionToolGripBounds = Rect.Empty;
+    private Rect _selectionToolPinBounds = Rect.Empty;
+    private Rect _selectionToolResizeStartBounds = Rect.Empty;
+    private Rect _selectionToolResizeEndBounds = Rect.Empty;
+    private Rect _selectionToolMoveBounds = Rect.Empty;
+    private Point? _selectionToolGripOrigin;
+    private long _selectionToolGripStartTick;
+    private double _selectionToolGripStartVertical;
+    private Vector _selectionToolGripStartFollowOffset;
     private int? _hoverLaneHeader;
     private MidoraId? _hoverSharedGroupId;
     private MidoraId? _contextSharedGroupId;
@@ -784,6 +833,7 @@ public sealed class TimelineSurface : Control
         _ = args;
         if (_backgroundWorkSuspended) return;
         _backgroundWorkSuspended = true;
+        CancelPendingRightGesture(cancelDelayedMenu: true);
 
         _rasterRequestCancellation.Cancel();
         _exactPrefetchCancellation.Cancel();
@@ -1062,6 +1112,13 @@ public sealed class TimelineSurface : Control
         get => (bool)GetValue(CanEditProperty);
         set => SetValue(CanEditProperty, value);
     }
+
+    public bool IsSelectionFloatingToolEnabled
+    {
+        get => (bool)GetValue(IsSelectionFloatingToolEnabledProperty);
+        set => SetValue(IsSelectionFloatingToolEnabledProperty, value);
+    }
+
     public TimelineToolMode ToolMode
     {
         get => (TimelineToolMode)GetValue(ToolModeProperty);
@@ -1300,6 +1357,10 @@ public sealed class TimelineSurface : Control
     {
         if (dependencyObject is TimelineSurface surface)
         {
+            if (args.Property == SnapshotProperty)
+            {
+                surface.CancelDelayedContextMenu();
+            }
             if (args.Property == SurfaceModeProperty)
             {
                 surface.CoerceValue(LaneHeightProperty);
@@ -2033,6 +2094,11 @@ public sealed class TimelineSurface : Control
         }
         DrawRulerOverview(drawingContext, viewport, text, warning, laneHeaderWidth, rulerHeight);
         DrawMarquee(drawingContext, viewport, info);
+        DrawSelectionFloatingTool(
+            drawingContext,
+            viewport,
+            laneHeaderWidth,
+            rulerHeight);
         if (captureTimings)
         {
             LastRenderPhaseTiming = TimelineSurfaceRenderPhaseTiming.FromTimestamps(
@@ -2081,6 +2147,33 @@ public sealed class TimelineSurface : Control
             return;
         }
         UpdatePointerPositionText(point, viewport);
+
+        if (e.ChangedButton == MouseButton.Left
+            && TryBeginSelectionFloatingToolGesture(point, viewport))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (e.ChangedButton == MouseButton.Right
+            && IsEditableTimelineContent(point, viewport))
+        {
+            if (TryConsumeRightDoubleClickCandidate(
+                    point,
+                    Environment.TickCount64))
+            {
+                CancelPendingRightGesture(cancelDelayedMenu: true);
+                _suppressRightButtonUpAfterDoubleClick = true;
+                ToggleDrawSelectToolMode();
+                e.Handled = true;
+                return;
+            }
+
+            BeginPendingRightGesture(point, Keyboard.Modifiers);
+            CaptureMouse();
+            e.Handled = true;
+            return;
+        }
 
         if (SurfaceMode == TimelineSurfaceMode.Velocity
             && CanEdit
@@ -2535,7 +2628,10 @@ public sealed class TimelineSurface : Control
             {
                 long snappedStart = SnapAbsolute(tick);
                 _notePlacementStartTick = snappedStart;
-                _notePlacementCurrentTick = checked(snappedStart + Math.Max(1, DefaultCreationLengthTicks));
+                _notePlacementInitialLengthTicks = Math.Max(1, DefaultCreationLengthTicks);
+                _notePlacementCurrentTick = checked(
+                    snappedStart + _notePlacementInitialLengthTicks);
+                _notePlacementPointerAnchorTick = tick;
                 _notePlacementPitch = Math.Clamp(127 - lane, 0, 127);
                 _notePlacementVelocity = Math.Clamp(DefaultVelocity, 1, 127);
                 _notePlacementOrigin = point;
@@ -2591,8 +2687,339 @@ public sealed class TimelineSurface : Control
         e.Handled = true;
     }
 
+    private bool IsEditableTimelineContent(Point point, TimelineViewport viewport)
+    {
+        if (SurfaceMode is not (TimelineSurfaceMode.Arrangement
+            or TimelineSurfaceMode.PianoRoll
+            or TimelineSurfaceMode.EventLanes
+            or TimelineSurfaceMode.Conductor))
+        {
+            return false;
+        }
+        double laneHeaderWidth = GetLaneHeaderWidth();
+        double rulerHeight = GetRulerHeight();
+        return point.X >= laneHeaderWidth
+            && point.X <= ActualWidth
+            && point.Y >= rulerHeight
+            && point.Y <= ActualHeight
+            && IsInsideLaneContent(viewport, point.Y, rulerHeight);
+    }
+
+    private void BeginPendingRightGesture(Point point, ModifierKeys modifiers)
+    {
+        CancelPendingRightGesture(cancelDelayedMenu: true);
+        _pendingRightGestureOrigin = point;
+        _pendingRightGestureDragThresholdReached = false;
+        _pendingRightGestureModifiers = modifiers;
+        _pendingRightGestureCanTrace = CanEdit
+            && SurfaceMode == TimelineSurfaceMode.EventLanes
+            && ToolMode == TimelineToolMode.Draw
+            && EventPointEditCompleted is not null;
+        _suppressAutomaticContextMenuOpening = true;
+        PrepareDelayedContextMenuQuery(
+            point,
+            modifiers,
+            startTimer: false,
+            awaitingMouseUp: true);
+    }
+
+    private bool TryConsumeRightDoubleClickCandidate(
+        Point point,
+        long timestampMilliseconds)
+    {
+        if (_rightDoubleClickCandidateTimestampMilliseconds is not long firstTimestamp)
+        {
+            return false;
+        }
+
+        Point firstPoint = _rightDoubleClickCandidatePoint;
+        ClearRightDoubleClickCandidate();
+        return TimelineToolPolicy.IsRightDoubleClick(
+            timestampMilliseconds - firstTimestamp,
+            point.X - firstPoint.X,
+            point.Y - firstPoint.Y);
+    }
+
+    private void RegisterRightDoubleClickCandidate(
+        Point point,
+        long timestampMilliseconds)
+    {
+        _rightDoubleClickCandidatePoint = point;
+        _rightDoubleClickCandidateTimestampMilliseconds = timestampMilliseconds;
+    }
+
+    private void ClearRightDoubleClickCandidate()
+    {
+        _rightDoubleClickCandidateTimestampMilliseconds = null;
+        _rightDoubleClickCandidatePoint = default;
+    }
+
+    private void BeginRightButtonEventTrace(Point origin, Point current)
+    {
+        ModifierKeys modifiers = _pendingRightGestureModifiers;
+        _pendingRightGestureOrigin = null;
+        _pendingRightGestureCanTrace = false;
+        _eventPointOrigin = origin;
+        _eventPointButton = MouseButton.Right;
+        _eventPointHorizontalTrace = TimelineToolPolicy.RequestsHorizontalValueTrace(
+            ToolMode,
+            SurfaceMode,
+            MouseButton.Right,
+            modifiers);
+        _eventPointTimeLocked = TimelineToolPolicy.RequestsTimeLockedPointCreation(
+            ToolMode,
+            SurfaceMode,
+            MouseButton.Right,
+            modifiers);
+        _eventPointEdits.Clear();
+        _eventPointDirectItemId = null;
+        _eventPointTracePoints.Clear();
+        _eventPointTracePoints.Add(ClampEventPointTracePoint(origin));
+        UpdateEventPointTrace(origin, current);
+    }
+
+    private void PrepareDelayedContextMenuQuery(
+        Point point,
+        ModifierKeys modifiers,
+        bool startTimer,
+        bool awaitingMouseUp)
+    {
+        CancelDelayedContextMenu();
+        if (ContextMenu is null)
+        {
+            _delayedContextMenuQueryReady = true;
+            _delayedContextMenuAwaitingMouseUp = awaitingMouseUp;
+            _suppressAutomaticContextMenuOpening = false;
+            return;
+        }
+
+        if (!TryCreateViewport(out TimelineViewport viewport)
+            || !IsEditableTimelineContent(point, viewport))
+        {
+            _suppressAutomaticContextMenuOpening = false;
+            return;
+        }
+
+        TimelineRenderSnapshot? snapshot = Snapshot;
+        double laneHeaderWidth = GetLaneHeaderWidth();
+        double rulerHeight = GetRulerHeight();
+        long tick = viewport.XToContainingTick(point.X - laneHeaderWidth);
+        int lane = YToLane(viewport, point.Y - rulerHeight);
+        long generation = checked(++_delayedContextMenuGeneration);
+        CancellationTokenSource cancellation = new();
+        _delayedContextMenuQueryCancellation = cancellation;
+        _delayedContextMenuDelayElapsed = false;
+        _delayedContextMenuQueryReady = snapshot is null;
+        _delayedContextMenuAwaitingMouseUp = awaitingMouseUp;
+        _delayedContextMenuTargetApplied = false;
+        _delayedContextMenuHit = null;
+        _delayedContextMenuSelectionSnapshot = SelectionSnapshot;
+        _delayedContextMenuTick = tick;
+        _delayedContextMenuLane = lane;
+        _delayedContextMenuModifiers = modifiers;
+        _suppressAutomaticContextMenuOpening = true;
+        if (startTimer) StartDelayedContextMenuTimer();
+
+        if (snapshot is null)
+        {
+            TryOpenDelayedContextMenu();
+            return;
+        }
+
+        _ = Task.Run(
+                () => QueryRightClickContextTarget(
+                    snapshot,
+                    tick,
+                    lane,
+                    cancellation.Token),
+                cancellation.Token)
+            .ContinueWith(
+                task =>
+                {
+                    if (task.IsCanceled) return;
+                    if (task.IsFaulted)
+                    {
+                        _ = task.Exception;
+                        _ = Dispatcher.BeginInvoke(
+                            DispatcherPriority.Input,
+                            new Action(() =>
+                            {
+                                if (generation == _delayedContextMenuGeneration)
+                                {
+                                    CancelDelayedContextMenu();
+                                }
+                            }));
+                        return;
+                    }
+                    _ = Dispatcher.BeginInvoke(
+                        DispatcherPriority.Input,
+                        new Action(() => CompleteDelayedContextMenuQuery(
+                            generation,
+                            snapshot,
+                            tick,
+                            lane,
+                            task.Result)));
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+    }
+
+    private void StartDelayedContextMenuTimer()
+    {
+        if (_delayedContextMenuTimer is not null) return;
+        _delayedContextMenuTimer = new(
+            TimeSpan.FromMilliseconds(
+                TimelineToolPolicy.RightDoubleClickIntervalMilliseconds),
+            DispatcherPriority.Input,
+            OnDelayedContextMenuTick,
+            Dispatcher);
+        _delayedContextMenuTimer.Start();
+    }
+
+    private static TimelineRenderItem? QueryRightClickContextTarget(
+        TimelineRenderSnapshot snapshot,
+        long tick,
+        int lane,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        List<TimelineRenderItem> items = [];
+        snapshot.HitTestInto(tick, 0, lane, items);
+        cancellationToken.ThrowIfCancellationRequested();
+        return items.Count == 0 ? null : items[0];
+    }
+
+    private void CompleteDelayedContextMenuQuery(
+        long generation,
+        TimelineRenderSnapshot snapshot,
+        long tick,
+        int lane,
+        TimelineRenderItem? hit)
+    {
+        if (generation != _delayedContextMenuGeneration
+            || _delayedContextMenuQueryCancellation?.IsCancellationRequested != false)
+        {
+            return;
+        }
+        if (!ReferenceEquals(Snapshot, snapshot))
+        {
+            CancelDelayedContextMenu();
+            return;
+        }
+
+        _delayedContextMenuHit = hit;
+        _delayedContextMenuQueryReady = true;
+        if (_delayedContextMenuAwaitingMouseUp) return;
+        TryOpenDelayedContextMenu();
+    }
+
+    private void ApplyDelayedContextMenuTarget()
+    {
+        if (_delayedContextMenuTargetApplied) return;
+        _delayedContextMenuTargetApplied = true;
+        if (_delayedContextMenuHit is not TimelineRenderItem item) return;
+        bool wasSelectedAtRightDown =
+            _delayedContextMenuSelectionSnapshot?.Contains(item.Id) == true;
+        ItemInvoked?.Invoke(
+            this,
+            new TimelineItemEventArgs(
+                item,
+                _delayedContextMenuTick,
+                _delayedContextMenuLane,
+                _delayedContextMenuModifiers,
+                isDoubleClick: false,
+                preserveExistingSelection: wasSelectedAtRightDown));
+    }
+
+    private void OnDelayedContextMenuTick(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (_delayedContextMenuTimer is DispatcherTimer timer)
+        {
+            timer.Stop();
+            timer.Tick -= OnDelayedContextMenuTick;
+            _delayedContextMenuTimer = null;
+        }
+        _delayedContextMenuDelayElapsed = true;
+        TryOpenDelayedContextMenu();
+    }
+
+    private void TryOpenDelayedContextMenu()
+    {
+        if (!_delayedContextMenuDelayElapsed || !_delayedContextMenuQueryReady) return;
+        ContextMenu? menu = ContextMenu;
+        bool canOpen = IsLoaded && menu is not null;
+        ApplyDelayedContextMenuTarget();
+        CompleteDelayedContextMenuRequest(cancelQuery: false);
+        _suppressAutomaticContextMenuOpening = false;
+        if (!canOpen || menu is null) return;
+        menu.PlacementTarget = this;
+        menu.Placement = PlacementMode.MousePoint;
+        menu.IsOpen = true;
+    }
+
+    private void CancelPendingRightGesture(bool cancelDelayedMenu)
+    {
+        _pendingRightGestureOrigin = null;
+        _pendingRightGestureCanTrace = false;
+        _pendingRightGestureDragThresholdReached = false;
+        _suppressRightButtonUpAfterDoubleClick = false;
+        if (cancelDelayedMenu)
+        {
+            CancelDelayedContextMenu();
+        }
+        else if (_delayedContextMenuQueryCancellation is null)
+        {
+            _suppressAutomaticContextMenuOpening = false;
+        }
+    }
+
+    private void CancelDelayedContextMenu()
+    {
+        CompleteDelayedContextMenuRequest(cancelQuery: true);
+        _suppressAutomaticContextMenuOpening = false;
+    }
+
+    private void CompleteDelayedContextMenuRequest(bool cancelQuery)
+    {
+        ClearRightDoubleClickCandidate();
+        checked { _delayedContextMenuGeneration++; }
+        if (_delayedContextMenuTimer is DispatcherTimer timer)
+        {
+            timer.Stop();
+            timer.Tick -= OnDelayedContextMenuTick;
+            _delayedContextMenuTimer = null;
+        }
+        if (_delayedContextMenuQueryCancellation is CancellationTokenSource cancellation)
+        {
+            if (cancelQuery) cancellation.Cancel();
+            cancellation.Dispose();
+            _delayedContextMenuQueryCancellation = null;
+        }
+        _delayedContextMenuDelayElapsed = false;
+        _delayedContextMenuQueryReady = false;
+        _delayedContextMenuAwaitingMouseUp = false;
+        _delayedContextMenuTargetApplied = false;
+        _delayedContextMenuHit = null;
+        _delayedContextMenuSelectionSnapshot = null;
+    }
+
+    internal void ToggleDrawSelectToolMode()
+    {
+        TimelineToolMode next = TimelineToolPolicy.ResolveDrawSelectToggle(ToolMode);
+        SetCurrentValue(ToolModeProperty, next);
+    }
+
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
     {
+        if (_pendingRightGestureOrigin is not null
+            || _suppressRightButtonUpAfterDoubleClick)
+        {
+            e.Handled = true;
+            return;
+        }
         Point point = e.GetPosition(this);
         if (SurfaceMode == TimelineSurfaceMode.PianoRoll
             && point.X < GetLaneHeaderWidth())
@@ -2604,9 +3031,6 @@ public sealed class TimelineSurface : Control
         }
         base.OnMouseRightButtonDown(e);
         if (SurfaceMode == TimelineSurfaceMode.Velocity || _eventPointOrigin is not null) return;
-        if (!TryCreateViewport(out TimelineViewport viewport)) return;
-        double laneHeaderWidth = GetLaneHeaderWidth();
-        double rulerHeight = GetRulerHeight();
         if (SurfaceMode == TimelineSurfaceMode.Arrangement
             && TryGetArrangementLaneHeader(point, out int headerLane))
         {
@@ -2617,31 +3041,19 @@ public sealed class TimelineSurface : Control
                     TryGetArrangementSharedGroupBraceTarget(point, out _)));
             return;
         }
-        if (point.X < laneHeaderWidth
-            || point.Y < rulerHeight
-            || (SurfaceMode == TimelineSurfaceMode.PianoRoll
-                && !IsInsideLaneContent(viewport, point.Y, rulerHeight)))
-        {
-            return;
-        }
-        long tick = viewport.XToContainingTick(point.X - laneHeaderWidth);
-        int lane = YToLane(viewport, point.Y - rulerHeight);
-        Snapshot?.HitTestInto(tick, 0, lane, _hitItems);
-        if (_hitItems.Count == 0) return;
-        TimelineRenderItem hit = _hitItems[0];
-        ItemInvoked?.Invoke(
-            this,
-            new TimelineItemEventArgs(
-                hit,
-                tick,
-                lane,
-                Keyboard.Modifiers,
-                isDoubleClick: false,
-                preserveExistingSelection: true));
+        // Content-target selection is deliberately deferred to the frozen
+        // right-button gesture created by OnMouseDown. Running an exact hit
+        // query here would put a cold page decode back on the WPF thread and
+        // could also select a different object from the one whose menu opens.
     }
 
     protected override void OnContextMenuOpening(ContextMenuEventArgs e)
     {
+        if (_suppressAutomaticContextMenuOpening)
+        {
+            e.Handled = true;
+            return;
+        }
         if (SurfaceMode == TimelineSurfaceMode.PianoRoll
             && Mouse.GetPosition(this).X < GetLaneHeaderWidth())
         {
@@ -2664,6 +3076,17 @@ public sealed class TimelineSurface : Control
         }
         int? previousHoverLaneHeader = _hoverLaneHeader;
         MidoraId? previousHoverSharedGroupId = _hoverSharedGroupId;
+        if (_selectionToolGripOrigin is Point selectionToolGripOrigin
+            && e.LeftButton == MouseButtonState.Pressed
+            && TryCreateViewport(out TimelineViewport selectionToolViewport))
+        {
+            UpdateSelectionFloatingToolGrip(
+                point,
+                selectionToolGripOrigin,
+                selectionToolViewport);
+            InvalidateVisual();
+            return;
+        }
         bool hoversSharedGroupBrace = TryGetArrangementSharedGroupBraceTarget(
             point,
             out MidoraId hoverSharedGroupId);
@@ -2787,6 +3210,32 @@ public sealed class TimelineSurface : Control
                 or TimelineSurfaceMode.EventLanes;
         hoverChangesVisual |= SurfaceMode == TimelineSurfaceMode.Arrangement
             && point.X < GetLaneHeaderWidth();
+        if (_pendingRightGestureOrigin is Point rightOrigin
+            && e.RightButton == MouseButtonState.Pressed)
+        {
+            double deltaX = Math.Abs(point.X - rightOrigin.X);
+            double deltaY = Math.Abs(point.Y - rightOrigin.Y);
+            if (deltaX >= SystemParameters.MinimumHorizontalDragDistance
+                || deltaY >= SystemParameters.MinimumVerticalDragDistance)
+            {
+                _pendingRightGestureDragThresholdReached = true;
+                if (_pendingRightGestureCanTrace)
+                {
+                    // Crossing the drag threshold resolves the gesture as a
+                    // trace. The exact point query frozen at Right Down is no
+                    // longer relevant and must never delay drawing.
+                    CancelDelayedContextMenu();
+                    BeginRightButtonEventTrace(rightOrigin, point);
+                }
+                else
+                {
+                    CancelPendingRightGesture(cancelDelayedMenu: true);
+                    ReleaseMouseCapture();
+                }
+                InvalidateVisual();
+                return;
+            }
+        }
         if (_velocityOrigin is Point velocityOrigin
             && (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed))
         {
@@ -2850,15 +3299,12 @@ public sealed class TimelineSurface : Control
             {
                 long rawEnd = placementViewport.XToTick(point.X - GetLaneHeaderWidth());
                 long startTick = _notePlacementStartTick.Value;
-                long rawDelta = checked(rawEnd - startTick);
-                long snappedDelta = rawDelta <= 0
-                    ? GetMinimumPositiveOperationDelta(startTick)
-                    : SnapOperationDelta(rawDelta, rawEnd);
-                if (snappedDelta <= 0)
-                {
-                    snappedDelta = GetMinimumPositiveOperationDelta(startTick);
-                }
-                _notePlacementCurrentTick = checked(startTick + snappedDelta);
+                long pointerDelta = checked(rawEnd - _notePlacementPointerAnchorTick);
+                long operationDelta = pointerDelta <= 0
+                    ? 0
+                    : GetPositiveCreationOperationDelta(pointerDelta, rawEnd);
+                _notePlacementCurrentTick = checked(
+                    startTick + _notePlacementInitialLengthTicks + operationDelta);
             }
             int placementLane = YToLane(placementViewport, point.Y - GetRulerHeight());
             int placementPitch = Math.Clamp(127 - placementLane, 0, 127);
@@ -3002,6 +3448,50 @@ public sealed class TimelineSurface : Control
     protected override void OnMouseUp(MouseButtonEventArgs e)
     {
         base.OnMouseUp(e);
+        if (e.ChangedButton == MouseButton.Left
+            && _selectionToolGripOrigin is not null)
+        {
+            _selectionToolGripOrigin = null;
+            ReleaseMouseCapture();
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+        if (e.ChangedButton == MouseButton.Right
+            && _suppressRightButtonUpAfterDoubleClick)
+        {
+            _suppressRightButtonUpAfterDoubleClick = false;
+            _suppressAutomaticContextMenuOpening = false;
+            ReleaseMouseCapture();
+            e.Handled = true;
+            return;
+        }
+        if (e.ChangedButton == MouseButton.Right
+            && _pendingRightGestureOrigin is not null)
+        {
+            bool wasDrag = _pendingRightGestureDragThresholdReached;
+            Point releasePoint = e.GetPosition(this);
+            _pendingRightGestureOrigin = null;
+            _pendingRightGestureCanTrace = false;
+            _pendingRightGestureDragThresholdReached = false;
+            ReleaseMouseCapture();
+            Cursor = Cursors.Arrow;
+            if (wasDrag)
+            {
+                CancelDelayedContextMenu();
+            }
+            else
+            {
+                RegisterRightDoubleClickCandidate(
+                    releasePoint,
+                    Environment.TickCount64);
+                _delayedContextMenuAwaitingMouseUp = false;
+                StartDelayedContextMenuTimer();
+                TryOpenDelayedContextMenu();
+            }
+            e.Handled = true;
+            return;
+        }
         if (e.ChangedButton == MouseButton.Left && _pressedLaneHeader is int pressedLane)
         {
             bool reordered = _laneHeaderDragActivated
@@ -3269,6 +3759,9 @@ public sealed class TimelineSurface : Control
         _eventPointDirectItemId = null;
         _eventPointEdits.Clear();
         _eventPointTracePoints.Clear();
+        bool lostPendingRightGesture = _pendingRightGestureOrigin is not null;
+        CancelPendingRightGesture(cancelDelayedMenu: lostPendingRightGesture);
+        _selectionToolGripOrigin = null;
         _pressedLaneHeader = null;
         _pressedLaneHeaderTargetsSharedGroup = false;
         _pressedSharedGroupId = null;
@@ -3477,6 +3970,15 @@ public sealed class TimelineSurface : Control
             ReleaseMouseCapture();
             SegmentPlacementCancelled?.Invoke(this, EventArgs.Empty);
             InvalidateVisual();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape
+            && (_pendingRightGestureOrigin is not null
+                || _delayedContextMenuTimer is not null
+                || _delayedContextMenuQueryCancellation is not null))
+        {
+            CancelPendingRightGesture(cancelDelayedMenu: true);
+            ReleaseMouseCapture();
             e.Handled = true;
         }
         base.OnKeyDown(e);
@@ -6725,50 +7227,76 @@ public sealed class TimelineSurface : Control
         {
             return;
         }
-        if (SurfaceMode == TimelineSurfaceMode.Arrangement
-            && Snapshot is TimelineRenderSnapshot arrangementSnapshot
-            && (uint)_dragCurrentLane < (uint)arrangementSnapshot.ArrangementLanes.Count
-            && IsArrangementParentLane(arrangementSnapshot.ArrangementLanes[_dragCurrentLane].Kind))
-        {
-            return;
-        }
-
         PrepareDragPreviewSelection(item);
         DragPreviewTransform transform = GetDragPreviewTransform(item);
-        bool immediateVectorNotePreview = ShouldDrawImmediateVectorNotePreview(item);
-        if (_dragKind is TimelineItemEditKind.ResizeStart or TimelineItemEditKind.ResizeEnd
-            && SupportsFullSelectionDragPreview(item.Kind)
-            && !immediateVectorNotePreview)
+        try
         {
-            DrawResizePreview(
-                context,
-                viewport,
-                item,
-                transform,
-                laneHeaderWidth,
-                rulerHeight);
-            return;
-        }
-        if (SupportsFullSelectionDragPreview(item.Kind))
-        {
-            bool rasterPreviewDrawn = !immediateVectorNotePreview
-                && _dragKind == TimelineItemEditKind.Move
-                && (item.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.DirectMidiNote or TimelineItemKind.TemplateNote
-                    ? TryDrawTranslatedPianoSelectionPreview(
-                        context,
-                        viewport,
-                        transform,
-                        laneHeaderWidth,
-                        rulerHeight)
-                    : IsEventPointKind(item.Kind)
-                        && TryDrawTranslatedEventPointSelectionPreview(
+            if (SurfaceMode == TimelineSurfaceMode.Arrangement
+                && Snapshot is TimelineRenderSnapshot arrangementSnapshot
+                && (uint)_dragCurrentLane < (uint)arrangementSnapshot.ArrangementLanes.Count
+                && IsArrangementParentLane(arrangementSnapshot.ArrangementLanes[_dragCurrentLane].Kind))
+            {
+                return;
+            }
+
+            bool immediateVectorNotePreview = ShouldDrawImmediateVectorNotePreview(item);
+            if (_dragKind is TimelineItemEditKind.ResizeStart or TimelineItemEditKind.ResizeEnd
+                && SupportsFullSelectionDragPreview(item.Kind)
+                && item.Kind != TimelineItemKind.Segment
+                && !immediateVectorNotePreview)
+            {
+                DrawResizePreview(
+                    context,
+                    viewport,
+                    item,
+                    transform,
+                    laneHeaderWidth,
+                    rulerHeight);
+                return;
+            }
+            if (SupportsFullSelectionDragPreview(item.Kind))
+            {
+                bool rasterPreviewDrawn = !immediateVectorNotePreview
+                    && _dragKind == TimelineItemEditKind.Move
+                    && (item.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.DirectMidiNote or TimelineItemKind.TemplateNote
+                        ? TryDrawTranslatedPianoSelectionPreview(
                             context,
                             viewport,
                             transform,
                             laneHeaderWidth,
-                            rulerHeight));
-            if (rasterPreviewDrawn)
-            {
+                            rulerHeight)
+                        : IsEventPointKind(item.Kind)
+                            && TryDrawTranslatedEventPointSelectionPreview(
+                                context,
+                                viewport,
+                                transform,
+                                laneHeaderWidth,
+                                rulerHeight));
+                if (rasterPreviewDrawn)
+                {
+                    DrawDragCopyMarker(
+                        context,
+                        viewport,
+                        item,
+                        transform,
+                        laneHeaderWidth,
+                        rulerHeight);
+                    return;
+                }
+                StreamGeometry geometry = GetDragPreviewGeometry(
+                    viewport,
+                    item,
+                    transform,
+                    laneHeaderWidth,
+                    rulerHeight);
+                Rect contentBounds = new(
+                    laneHeaderWidth,
+                    rulerHeight,
+                    Math.Max(0, ActualWidth - laneHeaderWidth),
+                    Math.Max(0, ActualHeight - rulerHeight));
+                context.PushClip(new RectangleGeometry(contentBounds));
+                context.DrawGeometry(null, _dragPreviewPen ?? _infoPen, geometry);
+                context.Pop();
                 DrawDragCopyMarker(
                     context,
                     viewport,
@@ -6778,20 +7306,18 @@ public sealed class TimelineSurface : Control
                     rulerHeight);
                 return;
             }
-            StreamGeometry geometry = GetDragPreviewGeometry(
-                viewport,
-                item,
-                transform,
-                laneHeaderWidth,
-                rulerHeight);
-            Rect contentBounds = new(
-                laneHeaderWidth,
-                rulerHeight,
-                Math.Max(0, ActualWidth - laneHeaderWidth),
-                Math.Max(0, ActualHeight - rulerHeight));
-            context.PushClip(new RectangleGeometry(contentBounds));
-            context.DrawGeometry(null, _dragPreviewPen ?? _infoPen, geometry);
-            context.Pop();
+
+            if (!TryGetDragPreviewBounds(
+                    item,
+                    transform,
+                    viewport,
+                    laneHeaderWidth,
+                    rulerHeight,
+                    out Rect rectangle))
+            {
+                return;
+            }
+            context.DrawRoundedRectangle(null, _marqueePen, rectangle, 2, 2);
             DrawDragCopyMarker(
                 context,
                 viewport,
@@ -6799,27 +7325,11 @@ public sealed class TimelineSurface : Control
                 transform,
                 laneHeaderWidth,
                 rulerHeight);
-            return;
         }
-
-        if (!TryGetDragPreviewBounds(
-                item,
-                transform,
-                viewport,
-                laneHeaderWidth,
-                rulerHeight,
-                out Rect rectangle))
+        finally
         {
-            return;
+            DrawDragDeltaLabel(context, transform);
         }
-        context.DrawRoundedRectangle(null, _marqueePen, rectangle, 2, 2);
-        DrawDragCopyMarker(
-            context,
-            viewport,
-            item,
-            transform,
-            laneHeaderWidth,
-            rulerHeight);
     }
 
     private StreamGeometry GetDragPreviewGeometry(
@@ -7714,7 +8224,10 @@ public sealed class TimelineSurface : Control
                 start = SaturatingAddTick(start, transform.TickDelta);
                 end = SaturatingAddTick(start, item.Length);
                 lane = checked(lane + transform.LaneDelta);
-                if (lane is < 0 or > 127)
+                int laneCount = SurfaceMode == TimelineSurfaceMode.PianoRoll
+                    ? 128
+                    : Snapshot?.LaneLabels.Count ?? int.MaxValue;
+                if (lane < 0 || lane >= laneCount)
                 {
                     bounds = Rect.Empty;
                     return false;
@@ -9228,6 +9741,517 @@ public sealed class TimelineSurface : Control
         context.Pop();
     }
 
+    private bool TryGetSelectionFloatingToolMetrics(
+        out TimelineItemKind kind,
+        out TimelineSelectionMetrics metrics)
+    {
+        kind = default;
+        metrics = default;
+        if (ToolMode != TimelineToolMode.Select
+            || SelectionSnapshot is not { Count: > 0, MetricsAreComplete: true } selection)
+        {
+            return false;
+        }
+
+        ReadOnlySpan<TimelineItemKind> candidates = SurfaceMode switch
+        {
+            TimelineSurfaceMode.Arrangement => [TimelineItemKind.Segment],
+            TimelineSurfaceMode.PianoRoll =>
+            [
+                TimelineItemKind.LogicalNote,
+                TimelineItemKind.DirectMidiNote,
+                TimelineItemKind.TemplateNote
+            ],
+            TimelineSurfaceMode.EventLanes =>
+            [
+                TimelineItemKind.LogicalParameterPoint,
+                TimelineItemKind.DirectMidiEvent,
+                TimelineItemKind.OpaqueMidiEvent,
+                TimelineItemKind.TemplateEvent
+            ],
+            TimelineSurfaceMode.Conductor => [TimelineItemKind.ConductorEvent],
+            _ => []
+        };
+        int matchingKinds = 0;
+        foreach (TimelineItemKind candidate in candidates)
+        {
+            if (!selection.TryGetMetrics(candidate, out TimelineSelectionMetrics value)
+                || value.Count <= 0)
+            {
+                continue;
+            }
+            matchingKinds++;
+            kind = candidate;
+            metrics = value;
+        }
+        if (matchingKinds != 1) return false;
+
+        foreach ((TimelineItemKind selectedKind, TimelineSelectionMetrics selectedMetrics)
+            in selection.Metrics)
+        {
+            if (selectedMetrics.Count <= 0
+                || selectedKind == kind
+                || IsNoteKind(kind) && selectedKind == TimelineItemKind.Velocity)
+            {
+                continue;
+            }
+            if (selectedKind is TimelineItemKind.Segment
+                or TimelineItemKind.LogicalNote
+                or TimelineItemKind.DirectMidiNote
+                or TimelineItemKind.TemplateNote
+                or TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.DirectMidiEvent
+                or TimelineItemKind.TemplateEvent
+                or TimelineItemKind.OpaqueMidiEvent
+                or TimelineItemKind.ConductorEvent)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private bool TryGetSelectionFloatingToolLayout(
+        TimelineViewport viewport,
+        out TimelineItemKind kind,
+        out TimelineSelectionMetrics metrics,
+        out Rect bounds)
+    {
+        const double height = 30;
+        const double gripWidth = 12;
+        const double buttonWidth = 24;
+        const double gap = 6;
+        if (!TryGetSelectionFloatingToolMetrics(out kind, out metrics))
+        {
+            bounds = Rect.Empty;
+            ClearSelectionFloatingToolBounds();
+            return false;
+        }
+
+        bool hasResize = TimelineToolPolicy.SupportsSelectionFloatingToolResize(kind);
+        double width = gripWidth + buttonWidth * (hasResize ? 4 : 2) + 4;
+        double header = GetLaneHeaderWidth();
+        double ruler = GetRulerHeight();
+        double naturalX = header + viewport.TickToX(metrics.MaximumEndTick) + 8;
+        double naturalY = IsEventPointKind(kind)
+            ? NormalizedToValueY(metrics.MaximumValue, ruler) - height - gap
+            : GetLaneTop(viewport, metrics.MinimumLane, ruler) - height - gap;
+
+        if (_selectionToolRevision != SelectionSnapshot!.Revision
+            || _selectionToolKind != kind)
+        {
+            _selectionToolRevision = SelectionSnapshot.Revision;
+            _selectionToolKind = kind;
+            _selectionToolPinnedTick = metrics.MaximumEndTick;
+            _selectionToolPinnedVertical = IsEventPointKind(kind)
+                ? metrics.MaximumValue
+                : metrics.MinimumLane;
+            _selectionToolFollowOffset = default;
+        }
+
+        double x;
+        double y;
+        if (_selectionToolPinned)
+        {
+            x = header + viewport.TickToX(_selectionToolPinnedTick) + 8;
+            y = IsEventPointKind(kind)
+                ? NormalizedToValueY(_selectionToolPinnedVertical, ruler) - height - gap
+                : GetLaneTop(
+                    viewport,
+                    (int)Math.Round(
+                        _selectionToolPinnedVertical,
+                        MidpointRounding.AwayFromZero),
+                    ruler) - height - gap;
+        }
+        else
+        {
+            x = naturalX + _selectionToolFollowOffset.X;
+            y = naturalY + _selectionToolFollowOffset.Y;
+            x = Math.Clamp(x, header + 2, Math.Max(header + 2, ActualWidth - width - 2));
+            y = Math.Clamp(y, ruler + 2, Math.Max(ruler + 2, ActualHeight - height - 2));
+        }
+
+        bounds = new(x, y, width, height);
+        _selectionToolBounds = bounds;
+        _selectionToolGripBounds = new(bounds.X, bounds.Y, gripWidth, bounds.Height);
+        double buttonX = bounds.X + gripWidth + 2;
+        _selectionToolPinBounds = new(buttonX, bounds.Y + 3, buttonWidth, height - 6);
+        buttonX += buttonWidth;
+        _selectionToolResizeStartBounds = hasResize
+            ? new(buttonX, bounds.Y + 3, buttonWidth, height - 6)
+            : Rect.Empty;
+        if (hasResize) buttonX += buttonWidth;
+        _selectionToolResizeEndBounds = hasResize
+            ? new(buttonX, bounds.Y + 3, buttonWidth, height - 6)
+            : Rect.Empty;
+        if (hasResize) buttonX += buttonWidth;
+        _selectionToolMoveBounds = new(buttonX, bounds.Y + 3, buttonWidth, height - 6);
+        return true;
+    }
+
+    private void DrawSelectionFloatingTool(
+        DrawingContext context,
+        TimelineViewport viewport,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        _ = laneHeaderWidth;
+        _ = rulerHeight;
+        if (!IsSelectionFloatingToolEnabled)
+        {
+            ClearSelectionFloatingToolBounds();
+            return;
+        }
+        if (!TryGetSelectionFloatingToolLayout(
+                viewport,
+                out _,
+                out _,
+                out Rect bounds)
+            || !bounds.IntersectsWith(new(0, 0, ActualWidth, ActualHeight)))
+        {
+            return;
+        }
+
+        Brush background = Brush("Brush.Surface.2", Color.FromRgb(24, 29, 36));
+        Brush border = Brush("Brush.Border", Color.FromRgb(42, 48, 58));
+        Brush foreground = Brush("Brush.Text.Primary", Color.FromRgb(241, 243, 245));
+        Brush active = Brush("Brush.Red.Subtle", Color.FromRgb(75, 29, 34));
+        Pen borderPen = FrozenPen(border, 1);
+        Pen iconPen = FrozenPen(foreground, 1);
+        context.DrawRoundedRectangle(background, borderPen, bounds, 4, 4);
+        if (_selectionToolPinned)
+        {
+            context.DrawRoundedRectangle(active, null, _selectionToolPinBounds, 3, 3);
+        }
+
+        double gripCenterX = _selectionToolGripBounds.X + _selectionToolGripBounds.Width / 2;
+        for (int row = -1; row <= 1; row++)
+        {
+            context.DrawEllipse(
+                foreground,
+                null,
+                new(gripCenterX, bounds.Y + bounds.Height / 2 + row * 5),
+                1,
+                1);
+        }
+        DrawLockIcon(context, _selectionToolPinBounds, iconPen, _selectionToolPinned);
+        if (!_selectionToolResizeStartBounds.IsEmpty)
+        {
+            DrawBoundaryResizeIcon(
+                context,
+                _selectionToolResizeStartBounds,
+                iconPen,
+                startEdge: true);
+            DrawBoundaryResizeIcon(
+                context,
+                _selectionToolResizeEndBounds,
+                iconPen,
+                startEdge: false);
+        }
+        DrawMoveIcon(context, _selectionToolMoveBounds, iconPen);
+    }
+
+    private static void DrawLockIcon(
+        DrawingContext context,
+        Rect bounds,
+        Pen pen,
+        bool locked)
+    {
+        double centerX = bounds.X + bounds.Width / 2;
+        double top = bounds.Y + 5;
+        Rect body = new(centerX - 4, top + 7, 8, 7);
+        context.DrawRectangle(null, pen, body);
+        StreamGeometry shackle = new();
+        using (StreamGeometryContext geometry = shackle.Open())
+        {
+            geometry.BeginFigure(new(centerX - 3, top + 7), false, false);
+            geometry.BezierTo(
+                new(centerX - 3, top + (locked ? 1 : 3)),
+                new(centerX + 3, top + 1),
+                new(centerX + 3, top + 7),
+                true,
+                false);
+        }
+        shackle.Freeze();
+        context.DrawGeometry(null, pen, shackle);
+    }
+
+    private static void DrawHorizontalArrowIcon(DrawingContext context, Rect bounds, Pen pen)
+    {
+        double centerX = bounds.X + bounds.Width / 2;
+        double centerY = bounds.Y + bounds.Height / 2;
+        context.DrawLine(pen, new(centerX - 6, centerY), new(centerX + 6, centerY));
+        context.DrawLine(pen, new(centerX - 6, centerY), new(centerX - 3, centerY - 3));
+        context.DrawLine(pen, new(centerX - 6, centerY), new(centerX - 3, centerY + 3));
+        context.DrawLine(pen, new(centerX + 6, centerY), new(centerX + 3, centerY - 3));
+        context.DrawLine(pen, new(centerX + 6, centerY), new(centerX + 3, centerY + 3));
+    }
+
+    private static void DrawBoundaryResizeIcon(
+        DrawingContext context,
+        Rect bounds,
+        Pen pen,
+        bool startEdge)
+    {
+        double centerX = bounds.X + bounds.Width / 2;
+        double centerY = bounds.Y + bounds.Height / 2;
+        double boundaryX = centerX + (startEdge ? 4 : -4);
+        double arrowX = centerX + (startEdge ? -6 : 6);
+        context.DrawLine(
+            pen,
+            new(boundaryX, centerY - 6),
+            new(boundaryX, centerY + 6));
+        context.DrawLine(pen, new(boundaryX, centerY), new(arrowX, centerY));
+        double arrowDirection = startEdge ? 1 : -1;
+        context.DrawLine(
+            pen,
+            new(arrowX, centerY),
+            new(arrowX + 3 * arrowDirection, centerY - 3));
+        context.DrawLine(
+            pen,
+            new(arrowX, centerY),
+            new(arrowX + 3 * arrowDirection, centerY + 3));
+    }
+
+    private static void DrawMoveIcon(DrawingContext context, Rect bounds, Pen pen)
+    {
+        DrawHorizontalArrowIcon(context, bounds, pen);
+        double centerX = bounds.X + bounds.Width / 2;
+        double centerY = bounds.Y + bounds.Height / 2;
+        context.DrawLine(pen, new(centerX, centerY - 6), new(centerX, centerY + 6));
+        context.DrawLine(pen, new(centerX, centerY - 6), new(centerX - 3, centerY - 3));
+        context.DrawLine(pen, new(centerX, centerY - 6), new(centerX + 3, centerY - 3));
+        context.DrawLine(pen, new(centerX, centerY + 6), new(centerX - 3, centerY + 3));
+        context.DrawLine(pen, new(centerX, centerY + 6), new(centerX + 3, centerY + 3));
+    }
+
+    private bool TryBeginSelectionFloatingToolGesture(
+        Point point,
+        TimelineViewport viewport)
+    {
+        if (!TryGetSelectionFloatingToolLayout(
+                viewport,
+                out TimelineItemKind kind,
+                out TimelineSelectionMetrics metrics,
+                out _)
+            || !_selectionToolBounds.Contains(point))
+        {
+            return false;
+        }
+
+        if (_selectionToolGripBounds.Contains(point))
+        {
+            _selectionToolGripOrigin = point;
+            _selectionToolGripStartTick = _selectionToolPinnedTick;
+            _selectionToolGripStartVertical = _selectionToolPinnedVertical;
+            _selectionToolGripStartFollowOffset = _selectionToolFollowOffset;
+            CaptureMouse();
+            Cursor = Cursors.SizeAll;
+            return true;
+        }
+        if (_selectionToolPinBounds.Contains(point))
+        {
+            ToggleSelectionFloatingToolPin(viewport, metrics, kind);
+            InvalidateVisual();
+            return true;
+        }
+        TimelineItemEditKind editKind;
+        if (!_selectionToolResizeStartBounds.IsEmpty
+            && _selectionToolResizeStartBounds.Contains(point))
+        {
+            editKind = TimelineItemEditKind.ResizeStart;
+        }
+        else if (!_selectionToolResizeEndBounds.IsEmpty
+            && _selectionToolResizeEndBounds.Contains(point))
+        {
+            editKind = TimelineItemEditKind.ResizeEnd;
+        }
+        else if (_selectionToolMoveBounds.Contains(point))
+        {
+            editKind = TimelineItemEditKind.Move;
+        }
+        else
+        {
+            return true;
+        }
+
+        TimelineRenderItem anchor = metrics.EarliestItem;
+        ModifierKeys modifiers = Keyboard.Modifiers;
+        bool controlCopyRequested = editKind == TimelineItemEditKind.Move
+            && (modifiers & ModifierKeys.Control) != 0;
+        bool mixedArrangementSegments = controlCopyRequested
+            && kind == TimelineItemKind.Segment
+            && ComputeMixedArrangementSegmentSelection(anchor);
+        bool copySupported = TimelineToolPolicy.SupportsSelectionFloatingToolCopyDrag(
+            SurfaceMode,
+            kind,
+            editKind)
+            && !mixedArrangementSegments;
+        if (controlCopyRequested && !copySupported)
+        {
+            Cursor = Cursors.No;
+            return true;
+        }
+        _dragItem = anchor;
+        _dragKind = editKind;
+        _dragModifiers = modifiers;
+        _dragOrigin = point;
+        _dragOriginTick = viewport.XToTick(point.X - GetLaneHeaderWidth());
+        _dragOriginLane = YToLane(viewport, point.Y - GetRulerHeight());
+        _dragCurrentTick = _dragOriginTick;
+        _dragCurrentLane = _dragOriginLane;
+        _dragActivated = false;
+        _dragCopyRequested = controlCopyRequested;
+        _deferredControlClickToggle = false;
+        _deferredPlainDrawSegmentSelection = false;
+        _dragTimeLocked = false;
+        _dragPreviewSelectionPrepared = false;
+        _dragPreviewSelection = null;
+        _dragPreviewMixedArrangementSegmentSelection = false;
+        InvalidateDragPreviewGeometry();
+        PrepareDragPitchPreview(anchor);
+        CaptureMouse();
+        return true;
+    }
+
+    private void ToggleSelectionFloatingToolPin(
+        TimelineViewport viewport,
+        TimelineSelectionMetrics metrics,
+        TimelineItemKind kind)
+    {
+        const double toolHeight = 30;
+        const double gap = 6;
+        double header = GetLaneHeaderWidth();
+        double ruler = GetRulerHeight();
+        if (_selectionToolPinned)
+        {
+            double naturalX = header + viewport.TickToX(metrics.MaximumEndTick) + 8;
+            double naturalY = IsEventPointKind(kind)
+                ? NormalizedToValueY(metrics.MaximumValue, ruler) - toolHeight - gap
+                : GetLaneTop(viewport, metrics.MinimumLane, ruler) - toolHeight - gap;
+            _selectionToolFollowOffset = new(
+                _selectionToolBounds.X - naturalX,
+                _selectionToolBounds.Y - naturalY);
+            _selectionToolPinned = false;
+            return;
+        }
+
+        _selectionToolPinnedTick = Math.Max(
+            0,
+            viewport.XToTick(_selectionToolBounds.X - header - 8));
+        double verticalReference = _selectionToolBounds.Y + toolHeight + gap;
+        _selectionToolPinnedVertical = IsEventPointKind(kind)
+            ? ValueYToNormalized(verticalReference, ruler)
+            : YToLane(viewport, verticalReference - ruler);
+        _selectionToolPinned = true;
+    }
+
+    private void UpdateSelectionFloatingToolGrip(
+        Point point,
+        Point origin,
+        TimelineViewport viewport)
+    {
+        Vector delta = point - origin;
+        if (!_selectionToolPinned)
+        {
+            _selectionToolFollowOffset = _selectionToolGripStartFollowOffset + delta;
+            return;
+        }
+
+        long tickDelta = (long)Math.Round(
+            delta.X / Math.Max(double.Epsilon, viewport.PixelsPerTick),
+            MidpointRounding.AwayFromZero);
+        _selectionToolPinnedTick = Math.Max(
+            0,
+            SaturatingAddTick(_selectionToolGripStartTick, tickDelta));
+        if (IsEventPointKind(_selectionToolKind))
+        {
+            double contentHeight = Math.Max(1, ActualHeight - GetRulerHeight());
+            double range = Math.Max(1d / 256, _valueViewMaximum - _valueViewMinimum);
+            _selectionToolPinnedVertical = Math.Clamp(
+                _selectionToolGripStartVertical - delta.Y / contentHeight * range,
+                0,
+                1);
+        }
+        else
+        {
+            _selectionToolPinnedVertical = Math.Clamp(
+                _selectionToolGripStartVertical + delta.Y / Math.Max(1, LaneHeight),
+                0,
+                Math.Max(0, (Snapshot?.LaneLabels.Count ?? 1) - 1));
+        }
+    }
+
+    private void DrawDragDeltaLabel(
+        DrawingContext context,
+        DragPreviewTransform transform)
+    {
+        string text;
+        if (_dragKind is TimelineItemEditKind.ResizeStart or TimelineItemEditKind.ResizeEnd)
+        {
+            text = $"{FormatSigned(transform.TickDelta)} Ticks";
+        }
+        else if (_dragItem is TimelineRenderItem item && IsEventPointKind(item.Kind))
+        {
+            double valueDelta = transform.ValueDelta * (ValueAxisMaximum - ValueAxisMinimum);
+            text = $"{FormatSigned(transform.TickDelta)} Ticks, {valueDelta:+0.##;-0.##;0} Value";
+        }
+        else if (SurfaceMode == TimelineSurfaceMode.PianoRoll)
+        {
+            text = $"{FormatSigned(-transform.LaneDelta)} Keys, {FormatSigned(transform.TickDelta)} Ticks";
+        }
+        else
+        {
+            text = $"{FormatSigned(transform.LaneDelta)} Lanes, {FormatSigned(transform.TickDelta)} Ticks";
+        }
+
+        FormattedText formatted = GetFormattedText(
+            text,
+            Brush("Brush.Text.Primary", Color.FromRgb(241, 243, 245)),
+            11,
+            FontWeights.Normal);
+        Point pointer = _hoverPoint ?? _dragOrigin;
+        double width = formatted.Width + 12;
+        double height = formatted.Height + 8;
+        double x = Math.Clamp(
+            pointer.X + 12,
+            2,
+            Math.Max(2, ActualWidth - width - 2));
+        double y = Math.Clamp(
+            pointer.Y + 12,
+            2,
+            Math.Max(2, ActualHeight - height - 2));
+        Rect background = new(
+            x,
+            y,
+            width,
+            height);
+        context.DrawRoundedRectangle(
+            Brush("Brush.Surface.2", Color.FromRgb(24, 29, 36)),
+            _borderPen,
+            background,
+            3,
+            3);
+        context.DrawText(formatted, new(background.X + 6, background.Y + 4));
+
+        static string FormatSigned(long value) => value.ToString("+0;-0;0", CultureInfo.InvariantCulture);
+    }
+
+    private void ClearSelectionFloatingToolBounds()
+    {
+        _selectionToolBounds = Rect.Empty;
+        _selectionToolGripBounds = Rect.Empty;
+        _selectionToolPinBounds = Rect.Empty;
+        _selectionToolResizeStartBounds = Rect.Empty;
+        _selectionToolResizeEndBounds = Rect.Empty;
+        _selectionToolMoveBounds = Rect.Empty;
+    }
+
+    private static bool IsNoteKind(TimelineItemKind kind) =>
+        kind is TimelineItemKind.LogicalNote
+            or TimelineItemKind.DirectMidiNote
+            or TimelineItemKind.TemplateNote;
+
     private bool TryGetMarqueeBounds(
         Point origin,
         Point current,
@@ -9445,6 +10469,18 @@ public sealed class TimelineSurface : Control
 
     private void UpdateHoverCursor(Point point, TimelineViewport viewport)
     {
+        if (TryGetSelectionFloatingToolLayout(viewport, out _, out _, out _)
+            && _selectionToolBounds.Contains(point))
+        {
+            Cursor = _selectionToolGripBounds.Contains(point)
+                || _selectionToolMoveBounds.Contains(point)
+                    ? Cursors.SizeAll
+                    : _selectionToolResizeStartBounds.Contains(point)
+                        || _selectionToolResizeEndBounds.Contains(point)
+                        ? Cursors.SizeWE
+                        : Cursors.Hand;
+            return;
+        }
         if (_marqueeQueryPending)
         {
             Cursor = Cursors.Wait;
@@ -9983,6 +11019,36 @@ public sealed class TimelineSurface : Control
         int lane = YToLane(viewport, point.Y - GetRulerHeight());
         return TryGetArrangementSecondaryChipBounds(viewport, lane, out descriptor, out bounds)
             && bounds.Contains(point);
+    }
+
+    private long GetPositiveCreationOperationDelta(long pointerDelta, long targetTick)
+    {
+        if (pointerDelta <= 0) return 0;
+        if (!OperationUsesBars || TimeSignatureMap is null)
+        {
+            return TimelineToolPolicy.ResolvePositiveFixedStepCreationDelta(
+                pointerDelta,
+                Math.Max(1, OperationStepTicks));
+        }
+
+        // Bar snapping can change step at a time-signature boundary. Advance
+        // through the formal grid from the pointer anchor rather than snapping
+        // the final Note length, so the frozen initial length is preserved.
+        long cursor = Math.Max(0, _notePlacementPointerAnchorTick);
+        long desired = Math.Max(cursor, targetTick);
+        long accumulated = 0;
+        while (cursor < desired)
+        {
+            long next = TimelineGridQuantization.GetNextGridTick(
+                cursor,
+                Math.Max(1, OperationStepTicks),
+                useBars: true,
+                TimeSignatureMap);
+            long increment = Math.Max(1, checked(next - cursor));
+            accumulated = checked(accumulated + increment);
+            cursor = next;
+        }
+        return accumulated;
     }
 
     private static long SaturatingAddSigned(long value, long increment)

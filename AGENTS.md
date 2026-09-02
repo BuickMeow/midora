@@ -32,7 +32,7 @@ Project Source Data
 - 所有正式结果必须确定：不得依赖未规定的集合遍历顺序、线程竞争、历史分配、随机数、缓存命中或当前 UI 状态。
 - `[startTick, endTick)` 是统一范围语义。Segment、End Marker、播放范围和渲染范围的硬边界必须精确执行 NoteOff 与 Reset。
 - Mute/Solo 只属于运行时消费过滤；不得修改 Project、Canonical Compiled Result、MIDI 导出或音频渲染正式内容。
-- `.midora` 只保存源数据；不得保存编译结果、运行缓存、导出结果、Undo/Redo 或会话 UI 状态。
+- `.midora` 保存 Project Source Data，以及 SRS 明确批准、独立版本化且不影响音乐语义的 Project presentation；不得保存编译结果、运行缓存、导出结果、Undo/Redo 或普通会话 UI 状态。Project presentation 不属于 Project Domain，不进入编译、canonical fingerprint、音频缓存或 Project Modified。
 - UI 只能展示、编辑和导航正式模型及诊断，不得另建一套业务语义。
 
 ## 3. 初版范围护栏
@@ -59,7 +59,7 @@ Project Source Data
 - Playing、Buffering、实时预览和文件 Rendering 阶段的 callback、调度、合成协调、混音、buffer 搬运及文件采样写入线程不得产生托管堆分配。Preparing / Finalizing 可以分配；同进程其他非音频线程可以分配和触发 GC。
 - 音频缓冲协议以 frame 为基本单位，显式携带采样率、声道数、sample format、frame count；不得混淆 byte count、sample count 和 frame count。
 - 必须列出全部 enabled output device 并排除输入、loopback input、disabled、unplugged 和 not-present 端点。实时音频按设备初始化后报告的实际采样率生成；设备或实际采样率变化时丢弃全部 sample-domain 缓存。
-- Application Preferences 的可调实时参数为：Render-Ahead 20–2000 ms（默认 100）、Device Request 5–200 ms（默认 50）、Realtime Maximum Sample Voices per Unit Stream 1–16,777,216（默认 500）。离线 sample voice 上限属于 Project 的 Audio Render Settings，取值范围相同、默认 500。Application Preferences 还保存 session 音频缓存的本机绝对 root（默认 `%LOCALAPPDATA%\Midora\AudioCache`）和 reusable 上限（默认 16 GiB，允许 0）；实时 PCM 不跨进程，不提供 IPC Audio Buffer 设置；设备实际 buffer、callback period 和工作 block 只读。
+- Application Preferences 的可调实时参数为：Render-Ahead 20–2000 ms（默认 100）、Device Request 5–200 ms（默认 50）、Realtime Maximum Sample Voices per Unit Stream 1–16,777,216（默认 500）。离线 sample voice 上限属于 Project 的 Audio Render Settings，取值范围相同、默认 500。Session 音频缓存 root 固定为 `<ProgramRoot>\.tmp\AudioCache`，用户只配置 reusable 上限（默认 16 GiB，允许 0）；实时 PCM 不跨进程，不提供 IPC Audio Buffer 设置；设备实际 buffer、callback period 和工作 block 只读。
 - BASS/BASSMIDI/BASSWASAPI 的全局初始化、线程相关 device context、原生 handle、callback delegate/GCHandle 和卸载顺序必须集中管理。所有原生调用都要检查返回值，并立即读取当前线程的错误码。
 - 正式原生基线固定为 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`、BASSWASAPI `2.4.4.1 / 0x02040401` 以及 `bass-native-baseline.win-x64.json` 中的 SHA-256。仓库不保存 DLL；正式构建只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码，不得只校验 API 主版本或自动采用 vendor current/latest。
 - 音频文件渲染输出普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；采样率是用户选择的 8,000–192,000 Hz 整数，默认 48,000 Hz。文件专用 OutputDevice 直接按目标采样率生成，不依赖 WASAPI。超过 RIFF 大小上限时 Preparing 失败，不拆分、不回退 RF64。流式分块写入并使用临时文件—校验—原子发布事务。
@@ -120,6 +120,8 @@ Project Source Data
 27. 主窗口不得恢复 Global Inspector、Bottom Panel、Details/Tasks 展示表、对应菜单入口或布局偏好。Project-backed 属性编辑必须归属对象所在 Workspace、专用 Dialog 或显式 `Properties...`；Dialog 内只编辑 draft，只有 OK 才通过一个正式原子 Project command 提交，Cancel/关闭不得产生 Project 变更。多选 Mixed 字段须先显式启用统一赋值，并允许逐字段恢复打开窗口时的原值。用户界面不得展示 Stable ID。
 28. Logical Parameter Lane 只允许离散 Step point；不得恢复 Linear/自动曲线插值方式。Value Curve 与 Envelope 的插值语义不受此规则影响。
 29. Direct MIDI 编辑的精确碰撞规则固定：Note 在同 start tick + key 时保留原占位者并丢弃后来编辑者；Channel Event 在同 tick + 同正式 lane target 时后来编辑者覆盖原值。导入产生的既有重复记录在未被相关编辑命中时必须保留；碰撞检查必须限定到实际编辑键，不得扫描无关的大型 MIDI Track/Segment。
+30. 当前 `.midora` writer 固定为 Project Format 3，并要求唯一 `settings/project-presentation.json`。Format 1/2 继续只读并 detached migration；迁移会话普通 Save 必须在用户确认后先创建或复用来源逐字节一致的可见永久副本，再原子替换原路径。确认框显示并冻结副本路径；来源 identity 改变、路径被不同内容抢占或任一步失败均不得改变来源。Save Copy 写 Format 3，但不得清除 migration-dirty 或覆盖受保护来源。
+31. Midora 自建正式数据只写 `<ProgramRoot>\Data\{Preferences,Recent,Catalogs,Presets,Diagnostics}`，可重建工作数据只写 `<ProgramRoot>\.tmp\{AudioCache,SessionContent,CompilerRuns,AudioWorkerExchange}`；ProgramRoot 固定为 executable base directory。主窗口创建前必须验证本机 fixed drive、普通非 reparse-point 目录及 create/write/flush/atomic-replace/exclusive-lock/delete 能力，失败时 fail closed。当前版本不得 fallback、探测、读取、迁移或删除旧 `%LOCALAPPDATA%\Midora`。
 
 ## 8. 已批准的 UI 样式基线
 

@@ -2262,15 +2262,33 @@ public static class TimelineVelocityTileRasterizer
                 RasterHeight,
                 normalColor,
                 0.32);
+            int rawMarkerLeft = center - MarkerSize / 2;
+            int rawMarkerRight = rawMarkerLeft + MarkerSize;
+            int markerLeft = Math.Clamp(rawMarkerLeft, 0, RasterWidth);
+            int markerRight = Math.Clamp(rawMarkerRight, 0, RasterWidth);
+            int markerBottom = Math.Min(RasterHeight, top + MarkerSize);
             TimelinePianoTileRasterizer.FillRectangle(
                 pixels,
                 RasterWidth,
-                left,
+                markerLeft,
                 top,
-                right,
-                Math.Min(RasterHeight, top + 2),
+                markerRight,
+                markerBottom,
+                normalColor,
+                1);
+            TimelinePianoTileRasterizer.DrawRectangleOutline(
+                pixels,
+                RasterWidth,
+                markerLeft,
+                top,
+                markerRight,
+                markerBottom,
                 borderColor,
-                0.92);
+                1,
+                drawLeft: rawMarkerLeft >= 0,
+                drawTop: true,
+                drawRight: rawMarkerRight <= RasterWidth,
+                drawBottom: true);
         }
 
         void Collect(TimelineRenderItem item)

@@ -59,6 +59,41 @@ internal sealed class PersistentFormalValueSequence<T>
 
     public int Count { get; }
 
+    public T this[int index]
+    {
+        get
+        {
+            if ((uint)index >= (uint)Count)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            int chunkIndex = index / ChunkCapacity;
+            int localIndex = index % ChunkCapacity;
+            return _chunks[chunkIndex][localIndex];
+        }
+    }
+
+    public T[] CopyRange(int firstIndex, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(firstIndex);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (firstIndex > Count - count)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        if (count == 0) return [];
+        T[] result = new T[count];
+        int source = firstIndex;
+        int destination = 0;
+        while (destination < result.Length)
+        {
+            int chunkIndex = source / ChunkCapacity;
+            int localIndex = source % ChunkCapacity;
+            ImmutableArray<T> chunk = _chunks[chunkIndex];
+            int take = Math.Min(chunk.Length - localIndex, result.Length - destination);
+            chunk.AsSpan(localIndex, take).CopyTo(result.AsSpan(destination, take));
+            source += take;
+            destination += take;
+        }
+        return result;
+    }
+
     public static PersistentFormalValueSequence<T> Create<TSource>(
         IReadOnlyList<TSource> source,
         Func<TSource, T> convert)
@@ -1745,6 +1780,15 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         }
     }
 
+    public DirectMidiNoteObjectSource CreateObjectSource()
+    {
+        lock (_snapshotPublicationSync)
+        {
+            DirectMidiNoteFormalSequenceSnapshot formal = CreateFormalSequenceSnapshot();
+            return new(formal, CreateQuerySnapshot());
+        }
+    }
+
     internal DirectMidiNoteFormalSequenceSnapshot CreateFormalSequenceSnapshot()
     {
         lock (_snapshotPublicationSync)
@@ -3274,6 +3318,15 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         }
     }
 
+    public DirectMidiChannelEventObjectSource CreateObjectSource()
+    {
+        lock (_snapshotPublicationSync)
+        {
+            DirectMidiChannelEventFormalSequenceSnapshot formal = CreateFormalSequenceSnapshot();
+            return new(formal, CreateQuerySnapshot());
+        }
+    }
+
     internal DirectMidiChannelEventFormalSequenceSnapshot CreateFormalSequenceSnapshot()
     {
         lock (_snapshotPublicationSync)
@@ -4730,6 +4783,15 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
                 _generation);
             if (_batchChangeDepth == 0) _querySnapshot = snapshot;
             return snapshot;
+        }
+    }
+
+    public OpaqueMidiEventObjectSource CreateObjectSource()
+    {
+        lock (_snapshotPublicationSync)
+        {
+            OpaqueMidiEventFormalSequenceSnapshot formal = CreateFormalSequenceSnapshot();
+            return new(formal, CreateQuerySnapshot());
         }
     }
 

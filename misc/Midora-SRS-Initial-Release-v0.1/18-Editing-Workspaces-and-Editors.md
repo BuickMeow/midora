@@ -626,6 +626,14 @@ Source Path 使用稳定 ID 定位并显示最新名称。
 来源已删除时显示 Last Known Path，不按名称寻找替代对象。
 多来源问题显示 Primary Source 和 Related Sources。
 来源对象包含非法位置或 pitch 时，导航必须使用安全的显示投影并仍尽量定位该稳定 ID；不得因构建 viewport、lane 或 Selection 而使应用崩溃。
+
+### 18.10.6.1 Event Binding 快捷入口
+
+Event Instrument 左侧 `LOGICAL PARAMETERS` 区域提供 `Add Event Binding...`。对话框在一个页面内展示 Name、Target Kind、适用 CC/RPN/NRPN、目标 SubVoice 多选/All、Integer source range、Override/Add/Multiply 及所需 target/offset/factor range，并在提交前展示 exact-target Append/Replace 冲突。不得拆为“先建 Parameter、再建 Mapping、再编辑 Step”的强制流程。
+
+其中 `CONTROLLER` 选择器必须与 SubVoice `Add Event` 的 `CONTROLLER` 选择器复用同一份可编辑 BASSMIDI CC 目录、顺序和显示文本；不得在快捷绑定入口另行补入该目录未收录的 CC 或使用另一套名称格式。该 UI 约束不改变领域层对既有合法 Mapping 数据的读取与编译。
+
+默认名称使用 MIDI target 可见名称，未知 CC 回退 `CC n`；Catalog 名称只作为 Bank/Program 辅助显示。OK 只调用一个原子 Project command，失败保持窗口和 draft；Cancel 不修改 Project。成功后焦点返回 Event Instrument Workspace。
 ### 18.10.7 自动修复
 自动修复只允许同时满足：
 ```text

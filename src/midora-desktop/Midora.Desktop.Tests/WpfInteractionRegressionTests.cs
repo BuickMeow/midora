@@ -509,6 +509,97 @@ public sealed class WpfInteractionRegressionTests
                     _ => null);
                 Assert.NotNull(mappingFunctionDialog.Content);
 
+                MidoraProject bindingProject = new(480);
+                EventInstrument bindingInstrument = new(bindingProject)
+                {
+                    Name = "Binding Instrument",
+                    TemplateLengthTicks = 480
+                };
+                SubVoice bindingSubVoice = new(bindingProject) { Name = "Main" };
+                bindingInstrument.SubVoices.Add(bindingSubVoice);
+                for (int index = 1; index < 256; index++)
+                {
+                    bindingInstrument.SubVoices.Add(new SubVoice(bindingProject)
+                    {
+                        Name = $"SubVoice {index + 1}"
+                    });
+                }
+
+                bindingProject.EventInstruments.Add(bindingInstrument);
+                LogicalParameterEventBindingDialog bindingDialog = new(
+                    bindingInstrument,
+                    bindingSubVoice.Id);
+                Assert.NotNull(bindingDialog.Content);
+                Assert.Equal(
+                    MidiValueKind.ControlChange,
+                    Assert.IsType<ComboBox>(bindingDialog.FindName("KindBox")).SelectedItem);
+                ComboBox bindingControllerBox = Assert.IsType<ComboBox>(
+                    bindingDialog.FindName("ControllerBox"));
+                Assert.Same(MidiControlChangeCatalog.EditableControllers, bindingControllerBox.ItemsSource);
+                MidiControlChangeInfo selectedBindingController = Assert.IsType<MidiControlChangeInfo>(
+                    bindingControllerBox.SelectedItem);
+                Assert.Equal(11, selectedBindingController.Number);
+                Assert.Equal("11 - Expression (MSB)", selectedBindingController.DisplayName);
+                Assert.Equal(
+                    0,
+                    Assert.IsType<ComboBox>(bindingDialog.FindName("ScopeBox")).SelectedIndex);
+                Assert.Equal(
+                    LogicalParameterEventBindingOperation.Override,
+                    Assert.IsType<ComboBox>(bindingDialog.FindName("OperationBox")).SelectedItem);
+                Assert.False(string.IsNullOrWhiteSpace(
+                    Assert.IsType<TextBox>(bindingDialog.FindName("NameBox")).Text));
+                Assert.Equal(
+                    "0",
+                    Assert.IsType<TextBox>(bindingDialog.FindName("SourceMinimumBox")).Text);
+                Assert.Equal(
+                    "127",
+                    Assert.IsType<TextBox>(bindingDialog.FindName("SourceMaximumBox")).Text);
+                ComboBox conflictBox = Assert.IsType<ComboBox>(
+                    bindingDialog.FindName("ConflictBox"));
+                Assert.Same(comboItem, Assert.IsType<Style>(conflictBox.ItemContainerStyle).BasedOn);
+                ItemsControl subVoiceList = Assert.IsType<ItemsControl>(
+                    bindingDialog.FindName("SubVoiceList"));
+                Assert.IsNotAssignableFrom<Selector>(subVoiceList);
+                Assert.False(subVoiceList.IsEnabled);
+                Assert.True(VirtualizingPanel.GetIsVirtualizing(subVoiceList));
+                Assert.Equal(
+                    VirtualizationMode.Recycling,
+                    VirtualizingPanel.GetVirtualizationMode(subVoiceList));
+                Assert.True(ScrollViewer.GetCanContentScroll(subVoiceList));
+                Assert.True(subVoiceList.ApplyTemplate());
+                ScrollViewer subVoiceScrollViewer = Assert.IsType<ScrollViewer>(
+                    subVoiceList.Template.FindName("PART_ScrollViewer", subVoiceList));
+                Assert.Equal(
+                    Colors.Transparent,
+                    Assert.IsType<SolidColorBrush>(subVoiceScrollViewer.Background).Color);
+                Assert.IsType<ComboBox>(bindingDialog.FindName("ScopeBox")).SelectedIndex = 1;
+                Assert.True(subVoiceList.IsEnabled);
+                subVoiceList.Measure(new Size(320, 150));
+                subVoiceList.Arrange(new Rect(0, 0, 320, 150));
+                subVoiceList.UpdateLayout();
+                ItemsPresenter subVoiceItemsPresenter = Assert.IsType<ItemsPresenter>(
+                    subVoiceList.Template.FindName("PART_ItemsPresenter", subVoiceList));
+                subVoiceItemsPresenter.ApplyTemplate();
+                VirtualizingStackPanel subVoiceItemsPanel = Assert.IsType<VirtualizingStackPanel>(
+                    VisualTreeHelper.GetChild(subVoiceItemsPresenter, 0));
+                Assert.InRange(VisualTreeHelper.GetChildrenCount(subVoiceItemsPanel), 1, 64);
+                bindingDialog.Close();
+
+                MidoraProject emptyBindingProject = new(480);
+                EventInstrument emptyBindingInstrument = new(emptyBindingProject)
+                {
+                    Name = "Empty Binding Instrument",
+                    TemplateLengthTicks = 480
+                };
+                emptyBindingProject.EventInstruments.Add(emptyBindingInstrument);
+                LogicalParameterEventBindingDialog emptyBindingDialog = new(
+                    emptyBindingInstrument,
+                    currentSubVoiceId: null);
+                Assert.Equal(
+                    2,
+                    Assert.IsType<ComboBox>(emptyBindingDialog.FindName("ScopeBox")).SelectedIndex);
+                emptyBindingDialog.Close();
+
                 MouseWheelEventArgs closedWheel = new(Mouse.PrimaryDevice, 0, 120)
                 {
                     RoutedEvent = UIElement.PreviewMouseWheelEvent,

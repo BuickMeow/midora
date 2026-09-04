@@ -198,6 +198,7 @@ public static partial class MidiProjectImportService
         Dictionary<int, int> bucketCountBySourceTrack = orderedBuckets
             .GroupBy(value => value.Key.SourceTrackIndex)
             .ToDictionary(value => value.Key, value => value.Count());
+        int pureMidiTrackOrdinal = 0;
         foreach (ImportBucket bucket in orderedBuckets)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -237,8 +238,11 @@ public static partial class MidiProjectImportService
             PureMidiTrack track = new(project)
             {
                 Name = name,
-                MidiChannelRootId = root.Id
+                MidiChannelRootId = root.Id,
+                Color = ProjectTrackColorPolicy.ColorForPureMidiTrackOrdinal(
+                    pureMidiTrackOrdinal)
             };
+            pureMidiTrackOrdinal = checked(pureMidiTrackOrdinal + 1);
             project.PureMidiTracks.Add(track);
             project.ArrangementTracks.Add(new(
                 ArrangementTrackKind.PureMidiTrack,

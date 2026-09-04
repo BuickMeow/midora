@@ -109,6 +109,9 @@
 | INV-098 | Select 模式的浮动工具只投影同质且共同兼容的正式 Selection，并复用既有 move/resize/copy command adapter。Follow 是新 Surface 默认，Pin 改为锚定世界坐标；grip 在两种状态下均可手动移动。Move 仅对既有支持 Copy Drag 的对象允许 `Ctrl` Copy+Move，不支持时 Invalid；Note 与 Arrangement Segment 均提供独立的 ResizeStart/ResizeEnd，Point 不提供 Resize。普通/浮动 Move/Resize 在所有选择规模下都显示 Snap/Clamp 后的有效 delta，并共用小选择矢量、大选择 raster tile 预览；不得降级为仅 delta、逐对象 WPF 控件或全选择物化。工具状态不进入 Project、Undo、canonical 或 `.midora`。 |
 | INV-099 | Note 创建 Snap 量化 Pointer Down 后的长度 delta，不重写冻结初始长度；Arrangement 多 Segment Resize 的矢量预览与提交使用同一 shared delta/最小长度/边界；Velocity onset marker 在低缩放保持固定 device-size；Preview Keyboard velocity 按命中白键/黑键自身可见长度归一化。 |
 | INV-100 | Timeline 发起的模态窗口关闭后，在来源仍有效时恢复到原 Timeline Surface。Event Instrument/SubVoice Initial State 的合法整数越界值按正式 MIDI target 值域 Clamp，格式或目标无效仍拒绝。每次 Playback Start 必须针对当前已提交 Project revision 建立计划，新建 Instrument/Usage/Track/Segment/Note 不得依赖 Save/Reopen 才进入首次播放。 |
+| INV-101 | Instrument Catalog 是 `<ProgramRoot>\Data\Catalogs` 中独立版本化的程序级名称辅助数据；解析优先级固定为 User Override→Enabled SoundFont 顺序绑定的 Imported Profile→Enabled User Profile 顺序→General MIDI→数值 fallback。Catalog/Profile/名称与 SoundFontEntryId 不进入 Project、canonical、导出、音频配置等价性或缓存身份；损坏只回退名称。 |
+| INV-102 | `Add Event Binding...` 冻结当前目标 SubVoice IDs，并以一个失败原子的 Project command创建一个 Integer Logical Parameter、每 SubVoice 一个正式 Mapping及缺失的空 event owner；不得创建 tick 0 event。All 不动态包含以后新增者；CC91/93拒绝；Append/Replace顺序、Override/Add/Multiply accumulator语义、Round/Clamp及一次Undo/Redo必须确定。 |
+| INV-103 | Pure MIDI Track 新建/SMF导入按最终 global Arrangement位置使用固定八色 palette轮换；Duplicate/Copy/Paste继承，既有 Track 不因排序/删除重染。Logical Track继续使用独立 ColorOverride→Definition color；颜色只发布 presentation change，不得改变 canonical、导出或音频缓存。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -118,10 +121,10 @@
 | Project Format 1/2/3、presentation、旧格式原路径升级、ProgramRoot portable storage | 第 3、16、17、19～21 章 |
 | tick、TPQ、Tempo、拍号、Marker | 第 4 章 |
 | Port、Channel Unit、资源不足 | 第 5 章 |
-| 程序级多 SF2/SFZ 列表、目标 Bank/Program 映射、无 Enabled SoundFont、BASS 直接读取与缓存身份 | 第 6、13、15、17 章 |
+| 程序级多 SF2/SFZ 列表、目标 Bank/Program 映射、Instrument Catalog、显式 SF2 preset scan、无 Enabled SoundFont、BASS 直接读取与缓存身份 | 第 6、13、15、17、20 章；INV-101 |
 | Event Instrument 定义、Pre-Roll Ticks 与内部索引 | 第 7、9～13、16、18、24 章 |
 | SubVoice、Note/CC/RPN 等事件 | 第 8 章 |
-| Logical Parameter、映射和 C# 函数 | 第 9 章 |
+| Logical Parameter、映射、快捷 Event Binding 和受限 Mapping Function | 第 9、18、20 章；INV-102 |
 | Release、Loop、Envelope、Overlap | 第 10 章 |
 | Logical Track、Logical Segment、裁剪与 Logical Note | 第 11 章 |
 | CompileContext、资源分配、Compiled Result | 第 12 章 |
@@ -135,7 +138,7 @@
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、分页 ordinal/range query、detached edit、浮动工具、拖放、验证、快捷键和 UI 验收 | 第 18、20、23、24 章；INV-095～100 |
 | 初版排除项、实现自由度和变更控制 | 第 21 章 |
-| MIDI Channel Root、Pure MIDI Track、Midi Segment、SMF 导入、Running Status、Pure MIDI 导出拓扑 | 第 23 章 |
+| MIDI Channel Root、Pure MIDI Track、Track Color、Midi Segment、SMF 导入、Running Status、Pure MIDI 导出拓扑 | 第 23、24 章；INV-103 |
 | Arrangement 平铺 Track order、Event Instrument Usage、隐式 Root、独立/共享 Duplicate、共享块、跨类型 Note 剪贴板、Pure MIDI/Conductor 概览缓存 | 第 24 章 |
 | 极端 Pure MIDI page pack、分页 canonical、滚动事件 IPC、范围查询 UI | 第 12、13、16、18、23、24 章 |
 ## 22.3 推荐引用方式

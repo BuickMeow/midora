@@ -15,7 +15,8 @@ public sealed record ApplicationPreferencesSaveResult(
 
 public sealed class ApplicationPreferencesStore
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
+    private const int PreviousSchemaVersion = 2;
     private const int MaximumFileBytes = 1024 * 1024;
     private readonly string _filePath;
 
@@ -50,11 +51,12 @@ public sealed class ApplicationPreferencesStore
                 json = new byte[checked((int)stream.Length)];
                 stream.ReadExactly(json);
             }
+            StrictApplicationJson.RejectDuplicateProperties(json);
             ApplicationPreferencesJsonV1 dto = JsonSerializer.Deserialize(
                 json,
                 ApplicationPreferencesJsonContextV1.Default.ApplicationPreferencesJsonV1)
                 ?? throw new InvalidDataException("The Application Preferences JSON is null.");
-            if (dto.SchemaVersion != CurrentSchemaVersion)
+            if (dto.SchemaVersion is not (PreviousSchemaVersion or CurrentSchemaVersion))
             {
                 throw new InvalidDataException(
                     $"Unsupported Application Preferences schema version {dto.SchemaVersion}.");
@@ -84,6 +86,7 @@ public sealed class ApplicationPreferencesStore
                         ?? throw new InvalidDataException(
                             "Application Preferences soundFonts is required."))
                     .Select(value => new ApplicationSoundFontPreference(
+                        ReadSoundFontEntryId(value, dto.SchemaVersion),
                         value.Path,
                         value.Enabled,
                         ReadTarget(value)).Normalize())
@@ -168,6 +171,7 @@ public sealed class ApplicationPreferencesStore
                 SoundFonts = preferences.SoundFonts
                     .Select(value => new ApplicationSoundFontPreferenceJsonV1
                     {
+                        EntryId = value.EntryId.ToString(),
                         Path = Path.GetFullPath(value.Path),
                         Enabled = value.Enabled,
                         TargetBankMsb = value.Target?.BankMsb,
@@ -276,6 +280,34 @@ public sealed class ApplicationPreferencesStore
             value.TargetProgram!.Value);
     }
 
+    private static SoundFontEntryId ReadSoundFontEntryId(
+        ApplicationSoundFontPreferenceJsonV1 value,
+        int schemaVersion)
+    {
+        if (schemaVersion == PreviousSchemaVersion)
+        {
+            if (value.EntryId is not null)
+            {
+                throw new InvalidDataException(
+                    "Application Preferences schema 2 cannot contain a SoundFont entry ID.");
+            }
+            return SoundFontEntryId.CreateForSchema2Migration(value.Path);
+        }
+        if (value.EntryId is null)
+        {
+            throw new InvalidDataException(
+                "Application Preferences schema 3 requires every SoundFont entry ID.");
+        }
+        try
+        {
+            return SoundFontEntryId.Parse(value.EntryId);
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException)
+        {
+            throw new InvalidDataException("A SoundFont entry ID is invalid.", exception);
+        }
+    }
+
     private static StopCursorBehavior ParseStopCursorBehavior(string? value)
     {
         if (value is null)
@@ -337,18 +369,21 @@ internal sealed class ApplicationPreferencesJsonV1
 internal sealed class ApplicationSoundFontPreferenceJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Path { get; set; }
+    public string? EntryId { get; set; }
 
     [JsonPropertyOrder(1)]
-    public bool Enabled { get; set; }
+    public required string Path { get; set; }
 
     [JsonPropertyOrder(2)]
-    public byte? TargetBankMsb { get; set; }
+    public bool Enabled { get; set; }
 
     [JsonPropertyOrder(3)]
-    public byte? TargetBankLsb { get; set; }
+    public byte? TargetBankMsb { get; set; }
 
     [JsonPropertyOrder(4)]
+    public byte? TargetBankLsb { get; set; }
+
+    [JsonPropertyOrder(5)]
     public byte? TargetProgram { get; set; }
 }
 

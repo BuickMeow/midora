@@ -688,9 +688,11 @@ internal static class ObjectPropertiesProjection
     public static void Rebuild(
         ObjectPropertiesViewModel properties,
         MidoraProject? project,
-        WorkspaceViewModel? workspace)
+        WorkspaceViewModel? workspace,
+        InstrumentCatalogResolver instrumentCatalogResolver)
     {
         ArgumentNullException.ThrowIfNull(properties);
+        ArgumentNullException.ThrowIfNull(instrumentCatalogResolver);
         if (project is null || workspace is null)
         {
             properties.Replace("No selection", "Select an object in the active Workspace.", []);
@@ -711,7 +713,12 @@ internal static class ObjectPropertiesProjection
         }
         if (workspace is InstrumentWorkspaceViewModel instrumentWorkspace)
         {
-            RebuildInstrument(properties, project, instrumentWorkspace, selectedId);
+            RebuildInstrument(
+                properties,
+                project,
+                instrumentWorkspace,
+                selectedId,
+                instrumentCatalogResolver);
             return;
         }
 
@@ -1600,7 +1607,8 @@ internal static class ObjectPropertiesProjection
         ObjectPropertiesViewModel properties,
         MidoraProject project,
         InstrumentWorkspaceViewModel workspace,
-        MidoraId? selectedId)
+        MidoraId? selectedId,
+        InstrumentCatalogResolver instrumentCatalogResolver)
     {
         EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == workspace.ObjectId);
         if (instrument is null)
@@ -1897,6 +1905,23 @@ internal static class ObjectPropertiesProjection
             }
         }
 
+        PropertyField bankMsb = StateField(
+            "instrument.initial.bankMsb",
+            "INITIAL BANK MSB",
+            instrument.InitialState.BankMsb);
+        PropertyField bankLsb = StateField(
+            "instrument.initial.bankLsb",
+            "INITIAL BANK LSB",
+            instrument.InitialState.BankLsb);
+        PropertyField program = StateField(
+            "instrument.initial.program",
+            "INITIAL PROGRAM (0–127)",
+            instrument.InitialState.Program);
+        PropertyField catalogName = CreateCatalogProgramNameField(
+            instrumentCatalogResolver,
+            bankMsb,
+            bankLsb,
+            program);
         properties.Replace(
             instrument.Name,
             "Event Instrument",
@@ -1915,13 +1940,70 @@ internal static class ObjectPropertiesProjection
              Field("instrument.longLifecycle", "LONG NOTE LIFECYCLE", instrument.LongLifecycle),
              Field("instrument.loopStart", "LOOP START (blank = unset)", instrument.LoopStartTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
              Field("instrument.loopEnd", "LOOP END (blank = unset)", instrument.LoopEndTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
-             StateField("instrument.initial.bankMsb", "INITIAL BANK MSB", instrument.InitialState.BankMsb),
-             StateField("instrument.initial.bankLsb", "INITIAL BANK LSB", instrument.InitialState.BankLsb),
-             StateField("instrument.initial.program", "INITIAL PROGRAM (0–127)", instrument.InitialState.Program),
+             bankMsb,
+             bankLsb,
+             program,
+             catalogName,
              StateField("instrument.initial.pitchBend", "INITIAL PITCH BEND", instrument.InitialState.PitchBend),
              StateField("instrument.initial.pitchRangeSemitones", "INITIAL PITCH RANGE SEMITONES", instrument.InitialState.PitchBendRangeSemitones),
              StateField("instrument.initial.pitchRangeCents", "INITIAL PITCH RANGE CENTS", instrument.InitialState.PitchBendRangeCents),
              .. ExtraStateFields("instrument.initial", instrument.InitialState)]);
+    }
+
+    private static PropertyField CreateCatalogProgramNameField(
+        InstrumentCatalogResolver resolver,
+        PropertyField bankMsb,
+        PropertyField bankLsb,
+        PropertyField program)
+    {
+        PropertyField result = Field(
+            "instrument.initial.catalogProgramName",
+            "CATALOG NAME (AUXILIARY)",
+            string.Empty,
+            editable: false);
+
+        void Refresh()
+        {
+            string[] values = [bankMsb.Value, bankLsb.Value, program.Value];
+            if (values.All(string.IsNullOrWhiteSpace))
+            {
+                result.Value = "No complete Bank/Program state";
+                return;
+            }
+            if (values.Any(string.IsNullOrWhiteSpace))
+            {
+                result.Value = "Complete Bank MSB, Bank LSB, and Program to resolve a Catalog name";
+                return;
+            }
+            if (!byte.TryParse(bankMsb.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte parsedMsb)
+                || parsedMsb > 127
+                || !byte.TryParse(bankLsb.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte parsedLsb)
+                || parsedLsb > 127
+                || !byte.TryParse(program.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte parsedProgram)
+                || parsedProgram > 127)
+            {
+                result.Value = "Enter Bank MSB, Bank LSB, and Program values from 0 to 127";
+                return;
+            }
+
+            result.Value = resolver.ResolveProgram(
+                new InstrumentAddress(parsedMsb, parsedLsb, parsedProgram)).DisplayText;
+        }
+
+        bankMsb.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(PropertyField.Value)) Refresh();
+        };
+        bankLsb.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(PropertyField.Value)) Refresh();
+        };
+        program.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(PropertyField.Value)) Refresh();
+        };
+        Refresh();
+        return result;
     }
 
     private static IProjectEditCommand CreateSubVoiceEdit(

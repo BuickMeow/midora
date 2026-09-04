@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-09-01**
+> 最近修订日期：**2026-09-02**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,13 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-09-02 修订摘要
+
+- Instrument Catalog 固定为 `<ProgramRoot>\Data\Catalogs` 中的程序级辅助数据：多个有序/可启用 Profile、General MIDI 内置表、用户 override、Imported SF2 快照及带来源名称解析。每个 SoundFont Preference 项新增只用于 Profile 关联的稳定 GUID；ID、Catalog 与名称不进入 Project、音频身份或 canonical。
+- SF2 preset 读取只允许用户显式 `Scan Presets...`，流式读取 RIFF `sfbk/pdta/phdr` 并跳过 sample；raw bank >127 必须显式映射。Catalog store/import/export 使用严格版本化 JSON、资源上限、预览式 Replace/Merge与原子发布，损坏只回退名称。
+- Event Instrument 新增一次完成的 `Add Event Binding...`：冻结当前目标 SubVoice、创建一个 Integer Logical Parameter、每目标一个正式 Mapping及缺失空 owner，不创建 tick 0 event；All 不动态扩展。Override/Add/Multiply复用 accumulator，Multiply精确支持 source→factor range，冲突显式 Append/Replace/Cancel并保持一次Undo/Redo。
+- Pure MIDI Track 固定八色低饱和 palette，按最终 global Arrangement位置轮换；SMF导入和新建使用该规则，Duplicate/Copy/Paste继承，既有 Track 不因排序/删除重染。Logical Track保留现有 Definition继承和独立 ColorOverride。
 
 ## 2026-09-01 修订摘要
 

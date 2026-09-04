@@ -1758,4 +1758,7 @@ Compile 和 MIDI Export 不依赖 SoundFont 加载。
 17. 新建单个 Logical Note 的放置手势只提供虚线视觉预览，不启动音频 Preview；
 18. Pitch Ruler 与 Event Instrument / SubVoice 虚拟键盘复用同一因果 Gate、`Int64.MaxValue` 哨兵、未渲染 frontier、互斥、零分配和清理规则，不存在独立裸 MIDI 路径；
 19. 无 SF2、已有播放任务或输出不可用时，合法单音符放置仍可提交，并且只形成一个 Project Undo。
+20. Instrument Catalog Editor 不显示内部 ID，Cancel 零写入，Replace/Merge 在一次确认后原子保存；SF2 scan 不读取 sample payload、不重建 Worker。
+21. `Add Event Binding...` 对 current/multiple/all SubVoice 一次提交；缺 owner只建空入口、不建 tick 0 event，任一失败无 partial Project edit。
+22. Pure MIDI Track 新建/导入颜色按固定 palette 确定轮换，Duplicate继承；Logical Track override 继续只影响本 Track。
 具体像素、控件类、颜色值、动画参数和内部实现应在 UI 原型、实现设计或实现设计继续确定，但不得改变本章已经明确的交互语义和系统边界。

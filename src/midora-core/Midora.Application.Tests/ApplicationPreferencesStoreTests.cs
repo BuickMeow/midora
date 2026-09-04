@@ -315,6 +315,81 @@ public sealed class ApplicationPreferencesStoreTests
         sfzWithTarget.Validate();
     }
 
+    [Fact]
+    public void Schema2SoundFontsReceiveStableIdsAndNextSaveWritesSchema3()
+    {
+        using TemporaryDirectory directory = new();
+        string path = Path.Combine(directory.Path, "preferences.json");
+        ApplicationPreferencesStore store = new(path);
+        ApplicationPreferences original = ApplicationPreferences.Default with
+        {
+            SoundFonts = [new(Path.Combine(directory.Path, "legacy.sf2"), true)]
+        };
+        Assert.True(store.Save(original).Succeeded);
+
+        JsonObject root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8))!.AsObject();
+        root["schemaVersion"] = 2;
+        JsonObject legacySoundFont = root["soundFonts"]!.AsArray()[0]!.AsObject();
+        Assert.True(legacySoundFont.Remove("entryId"));
+        File.WriteAllText(
+            path,
+            root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        ApplicationPreferencesLoadResult first = store.Load();
+        ApplicationPreferencesLoadResult second = store.Load();
+
+        Assert.Null(first.Notice);
+        Assert.Null(second.Notice);
+        SoundFontEntryId migratedId = Assert.Single(first.Preferences.SoundFonts).EntryId;
+        Assert.NotEqual(default, migratedId);
+        Assert.Equal(migratedId, Assert.Single(second.Preferences.SoundFonts).EntryId);
+        Assert.True(store.Save(first.Preferences).Succeeded);
+        JsonObject rewritten = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8))!.AsObject();
+        Assert.Equal(3, rewritten["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(
+            migratedId.ToString(),
+            rewritten["soundFonts"]!.AsArray()[0]!["entryId"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void DuplicateJsonPropertiesAreRejectedInsteadOfLastValueWinning()
+    {
+        using TemporaryDirectory directory = new();
+        string path = Path.Combine(directory.Path, "preferences.json");
+        ApplicationPreferencesStore store = new(path);
+        Assert.True(store.Save(ApplicationPreferences.Default).Succeeded);
+        string valid = File.ReadAllText(path, Encoding.UTF8);
+        string duplicate = valid.Replace(
+            "\"schemaVersion\": 3",
+            "\"schemaVersion\": 3,\n  \"schemaVersion\": 3",
+            StringComparison.Ordinal);
+        Assert.NotEqual(valid, duplicate);
+        File.WriteAllText(path, duplicate, new UTF8Encoding(false));
+
+        ApplicationPreferencesLoadResult result = store.Load();
+
+        Assert.Equal(ApplicationPreferences.Default, result.Preferences);
+        Assert.Equal("PreferenceReadFailed", result.Notice?.Code);
+        Assert.IsType<InvalidDataException>(result.Notice?.Error);
+    }
+
+    [Fact]
+    public void DuplicateSoundFontEntryIdsAreRejected()
+    {
+        SoundFontEntryId id = SoundFontEntryId.Create();
+        ApplicationPreferences invalid = ApplicationPreferences.Default with
+        {
+            SoundFonts =
+            [
+                new(id, Path.GetFullPath("first.sf2"), true),
+                new(id, Path.GetFullPath("second.sf2"), true)
+            ]
+        };
+
+        Assert.Throws<ArgumentException>(invalid.Validate);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(long.MaxValue)]

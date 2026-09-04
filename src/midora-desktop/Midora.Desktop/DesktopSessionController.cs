@@ -106,6 +106,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly ProjectOpenCoordinator _opening;
     private ApplicationPreferences _applicationPreferences =
         new ApplicationPreferencesStore().Load().Preferences;
+    private InstrumentCatalogResolver _instrumentCatalogResolver = new(
+        InstrumentCatalogState.Default,
+        Array.Empty<InstrumentCatalogSoundFontEntry>());
     private readonly HashSet<MidoraId> _mutedTrackIds = [];
     private readonly HashSet<MidoraId> _soloTrackIds = [];
     private readonly HashSet<MidoraId> _mutedSharedGroupIds = [];
@@ -1256,8 +1259,18 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         ArgumentNullException.ThrowIfNull(workspace);
         ObjectPropertiesViewModel result = new();
-        ObjectPropertiesProjection.Rebuild(result, Project, workspace);
+        ObjectPropertiesProjection.Rebuild(
+            result,
+            Project,
+            workspace,
+            _instrumentCatalogResolver);
         return result;
+    }
+
+    public void SetInstrumentCatalogResolver(InstrumentCatalogResolver resolver)
+    {
+        ArgumentNullException.ThrowIfNull(resolver);
+        _instrumentCatalogResolver = resolver;
     }
 
     public void ApplyProjectSettingsField(PropertyField field)
@@ -2352,6 +2365,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                                || changes.PresentationEventInstrumentIds.Contains(instrumentId)))
                     || TimelineWorkspaceViewModel.FindMidiSegment(Project!, segmentId) is { } midi
                     && (pureTrackIds.Contains(midi.Track.Id)
+                        || changes.PresentationTrackIds.Contains(midi.Track.Id)
                         || rootIds.Contains(midi.Track.MidiChannelRootId))),
             WorkspaceKind.EventInstrumentLibrary => instrumentIds.Count != 0
                 || changes.PresentationEventInstrumentIds.Count != 0,

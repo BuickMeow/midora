@@ -366,6 +366,7 @@ public static partial class MidiProjectImportService
             .ToDictionary(value => value.Key, value => value.Count());
         HashSet<int> fallbackSourceTracks = [];
         int fallbackCount = 0;
+        int pureMidiTrackOrdinal = 0;
         foreach (StreamingBucket bucket in buckets)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -399,7 +400,14 @@ public static partial class MidiProjectImportService
             string name = bucketCountBySourceTrack[bucket.Key.SourceTrackIndex] == 1
                 ? baseName
                 : $"{baseName} [Port {targetPort + 1}, Channel {bucket.Key.Channel + 1}]";
-            PureMidiTrack track = new(project) { Name = name, MidiChannelRootId = root.Id };
+            PureMidiTrack track = new(project)
+            {
+                Name = name,
+                MidiChannelRootId = root.Id,
+                Color = ProjectTrackColorPolicy.ColorForPureMidiTrackOrdinal(
+                    pureMidiTrackOrdinal)
+            };
+            pureMidiTrackOrdinal = checked(pureMidiTrackOrdinal + 1);
             project.PureMidiTracks.Add(track);
             project.ArrangementTracks.Add(new(
                 ArrangementTrackKind.PureMidiTrack,

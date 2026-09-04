@@ -1007,3 +1007,31 @@ Per-Note Instance Isolation 关闭时，启用映射依赖每音符上下文
 未保存的临时 UI 输入错误
 ```
 ---
+
+## 9.13 快捷 Logical Parameter Event Binding
+
+### 9.13.1 原子创建
+
+Event Instrument Editor 的 `Add Event Binding...` 必须一次冻结并提交：一个 Integer Logical Parameter、一个合法 non-Note MIDI target、当前一个或多个 SubVoice、Operation/range 以及 exact-target 冲突策略。每个目标 SubVoice 获得一个正式 `LogicalParameterMapping`；缺少对应 `SubVoiceEventMapping` 时只创建空 owner，不得创建 tick 0 或其他 Template Event/Curve Point。
+
+`All SubVoices` 只等于按下 OK 时存在的 SubVoice ID 集；未来新增 SubVoice 不自动绑定。任一目标无效、CC91/CC93、重复目标 ID、范围非法或冲突未决均令整个命令零提交；一次 Undo/Redo 必须恢复全部对象身份和原顺序。
+
+### 9.13.2 冲突与顺序
+
+同一 `(SubVoice,target)` 已有 Logical Parameter Mapping 时，UI 必须列出其执行顺序，并要求明确选择：
+
+- Append：新 Mapping 放在该 exact target 最后一项之后；
+- Replace：替换该 exact target 的全部既有 Mapping，新项占据原首项位置，其他 target 相对顺序不变；
+- Cancel：不执行。
+
+同 target 的 target rounding/overflow 设置继续共享。快捷创建固定使用 `Round` 与最终 `Clamp`；普通 Mapping 的 Fail/Clamp能力不变。
+
+### 9.13.3 运算
+
+- Override：以 Logical Parameter absolute value 覆盖 accumulator `c`；Parameter default 使用目标正式 reset/default；
+- Add：`c + offset`；Parameter default 为 0，默认 range 为目标对应双极范围；
+- Multiply：先把 Integer source range 线性映射到用户 factor range，再执行 `c × factor`；`default=1` 指映射后的 factor 必须精确为 1。factor range 必须包含 1，Parameter default 通过逆映射取得且必须是 source range 内的精确整数；否则快捷创建整批拒绝。
+
+运算必须复用本章正式 accumulator、held raw target state、Mapping order、rounding 与 overflow，不得由 UI 自己计算 MIDI 结果。若现有图形 Step 不能精确表示 Multiply remap，实现可由同一原子命令建立一个受当前受限 Mapping Expression ABI约束的共享表达式资源；不得开放任意代码或不同执行器。
+
+Override 是绝对覆盖：目标已有非默认 Initial State 或 raw event 时，它可以改变输出；UI 必须明确显示该含义。这里的 `default=target default` 只表示相对正式 reset/default 的中性值，不得声称对任意已有 target state 都是 no-op。

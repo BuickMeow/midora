@@ -1891,6 +1891,75 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task TrackPresentationColorsRefreshOnlyTheAffectedTrackWorkspace()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Track presentation colors",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        MidoraColor instrumentColor = new(0x21, 0x43, 0x65);
+        session.Execute(ProjectDomainEditCommands.UpdateEventInstrumentColor(
+            instrument.Id,
+            instrumentColor));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Logical", instrument.Id));
+        LogicalTrack logicalTrack = Assert.Single(session.Project.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(logicalTrack.Id, 0, 480));
+        Segment logicalSegment = Assert.Single(logicalTrack.Segments);
+
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI"));
+        PureMidiTrack midiTrack = Assert.Single(session.Project.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.CreateMidiSegment(midiTrack.Id, 0, 480));
+        MidiSegment midiSegment = Assert.Single(midiTrack.Segments);
+
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        TimelineWorkspaceViewModel logicalEditor = session.OpenSegment(logicalSegment.Id);
+        TimelineWorkspaceViewModel midiEditor = session.OpenSegment(midiSegment.Id);
+        TimelineRenderSnapshot logicalBefore = logicalEditor.Snapshot!;
+        TimelineRenderSnapshot midiBefore = midiEditor.Snapshot!;
+
+        MidoraColor logicalOverride = new(0x57, 0x68, 0x79);
+        session.Execute(ProjectDomainEditCommands.UpdateLogicalTrackProperties(
+            logicalTrack.Id,
+            logicalTrack.Name,
+            logicalOverride));
+
+        TimelineRenderSnapshot arrangementSnapshot = arrangement.Snapshot!;
+        TimelineRenderItem renderedLogicalSegment = Assert.Single(
+            arrangementSnapshot.Items,
+            value => value.Id == logicalSegment.Id);
+        Assert.Equal(0xff576879u, renderedLogicalSegment.AccentColor);
+        Assert.NotSame(logicalBefore, logicalEditor.Snapshot);
+        Assert.Same(midiBefore, midiEditor.Snapshot);
+
+        TimelineRenderSnapshot midiBeforeColor = midiEditor.Snapshot!;
+        MidoraColor midiColor = new(0x87, 0x76, 0x65);
+        session.Execute(ProjectDomainEditCommands.UpdatePureMidiTrackProperties(
+            midiTrack.Id,
+            midiTrack.Name,
+            midiColor));
+
+        arrangementSnapshot = arrangement.Snapshot!;
+        TimelineRenderItem renderedMidiSegment = Assert.Single(
+            arrangementSnapshot.Items,
+            value => value.Id == midiSegment.Id);
+        Assert.Equal(0xff877665u, renderedMidiSegment.AccentColor);
+        Assert.NotSame(midiBeforeColor, midiEditor.Snapshot);
+
+        session.Execute(ProjectDomainEditCommands.UpdateLogicalTrackColorOverride(
+            logicalTrack.Id,
+            colorOverride: null));
+        arrangementSnapshot = arrangement.Snapshot!;
+        renderedLogicalSegment = Assert.Single(
+            arrangementSnapshot.Items,
+            value => value.Id == logicalSegment.Id);
+        Assert.Equal(0xff214365u, renderedLogicalSegment.AccentColor);
+    }
+
+    [Fact]
     public async Task ExplicitSubVoiceEventLaneSelectionWinsOverSelectedPointDuringRebuild()
     {
         await using DesktopSessionController session = new();

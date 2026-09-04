@@ -1,7 +1,7 @@
 # Midora 大型编辑与可视化扩展实施方案（已定案记录）
 
 - 日期：2026-08-31
-- 状态：**非规范性决策记录与实施计划；阶段 1、2 已完成并经产品所有者验收；阶段 3 已获授权并进入实施；阶段 4～8 尚未授权实施**
+- 状态：**非规范性决策记录与实施计划；阶段 1～3 已完成并经产品所有者验收；阶段 4 已获授权实施；阶段 5～8 尚未授权实施**
 - 适用仓库基线：`b8ed363`
 - 目的：把本轮需求整理为可审查、可逐项定案、可分阶段实施的长期存档。
 
@@ -875,7 +875,7 @@ create Definition
 
 - Catalog 手工编辑、导入/导出、冲突策略、SF2 扫描与 SoundFont 更新后的显示；
 - 快捷 Mapping 的单个/全部 SubVoice、缺 Lane 自动添加、Override/Add/Multiply 和失败原子；
-- 以后新增 SubVoice 时 All SubVoices 动态绑定、删除/Undo、保存重开；
+- All SubVoices 只冻结命令提交时的当前成员；以后新增 SubVoice 不自动绑定，并验证删除/Undo、保存重开；
 - Catalog 名称只影响 UI，不改变 Bank/Program 数值或 canonical fingerprint；
 - MIDI 导入、新建、Duplicate 的颜色轮换和 Properties；Logical Track override 不回写共享 Definition。
 

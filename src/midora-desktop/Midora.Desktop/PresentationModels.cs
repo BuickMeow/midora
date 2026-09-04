@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Threading;
+using Midora.Application;
 using Midora.Compiler;
 using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
@@ -1683,12 +1684,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     && instruments.TryGetValue(usage.EventInstrumentId, out EventInstrument? foundInstrument)
                         ? foundInstrument
                         : project.FindEventInstrumentDefinition(track);
-                uint instrumentColor = instrument?.Color is MidoraColor color
-                    ? ToOpaqueArgb(color)
-                    : 0;
-                uint accentColor = track.ColorOverride is MidoraColor overrideColor
-                    ? ToOpaqueArgb(overrideColor)
-                    : instrumentColor;
+                uint accentColor = ToOpaqueArgb(
+                    ProjectTrackColorPolicy.ResolveDisplayColor(project, track));
                 string definitionName = instrument is null
                     ? "Unbound"
                     : string.IsNullOrWhiteSpace(instrument.Name)
@@ -1732,9 +1729,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 && midiTracks.TryGetValue(reference.TrackId, out PureMidiTrack? midiTrack))
             {
                 roots.TryGetValue(midiTrack.MidiChannelRootId, out MidiChannelRoot? root);
-                uint accentColor = midiTrack.Color is MidoraColor trackColor
-                    ? ToOpaqueArgb(trackColor)
-                    : 0;
+                uint accentColor = ToOpaqueArgb(
+                    ProjectTrackColorPolicy.ResolveDisplayColor(midiTrack));
                 string route = root is null
                     ? "Missing MIDI Channel Root"
                     : root.RoutingMode == MidiChannelRootRoutingMode.Auto

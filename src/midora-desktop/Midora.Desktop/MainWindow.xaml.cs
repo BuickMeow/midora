@@ -38,8 +38,15 @@ public partial class MainWindow : Window
     private const uint MonitorDefaultToNearest = 0x00000002;
     private readonly DesktopSessionController _session = new();
     private readonly ApplicationPreferencesStore _preferenceStore = new();
+    private readonly InstrumentCatalogStore _instrumentCatalogStore = new();
     private readonly RecentProjectsService _recentProjects = new(new RecentProjectsStore());
     private ApplicationPreferences _preferences = ApplicationPreferences.Default;
+    private InstrumentCatalogState _instrumentCatalog = InstrumentCatalogState.Default;
+    private InstrumentCatalogResolver _instrumentCatalogResolver = new(
+        InstrumentCatalogState.Default,
+        Array.Empty<InstrumentCatalogSoundFontEntry>());
+    private bool _instrumentCatalogCanPublish = true;
+    private ApplicationPreferenceNotice? _instrumentCatalogNotice;
     private HwndSource? _windowSource;
     private bool _closeApproved;
     private bool _closeRequestInProgress;
@@ -121,6 +128,7 @@ public partial class MainWindow : Window
             TimelineSurface.AltGestureConsumedEvent,
             new RoutedEventHandler(OnTimelineAltGestureConsumed));
         LoadDesktopPreferences();
+        ReloadInstrumentCatalogSnapshot(reportNoticeInStatus: true);
         _playbackTimer = new(DispatcherPriority.Render)
         {
             Interval = TimeSpan.FromMilliseconds(33)
@@ -342,30 +350,27 @@ public partial class MainWindow : Window
                 isError: true);
             return;
         }
-        ApplicationPreferencesDialog dialog = new(_preferences) { Owner = this };
+        ApplicationPreferencesDialog dialog = new(
+            _preferences,
+            _instrumentCatalog,
+            TryPublishApplicationPreferences) { Owner = this };
         if (ShowModalDialog(dialog) != true || dialog.Result is null) return;
 
         ApplicationPreferences preferences = dialog.Result;
         bool rebuildAudioWorker = _session.RequiresAudioWorkerRebuild(preferences);
         if (!rebuildAudioWorker)
         {
-            ApplicationPreferencesSaveResult saved = _preferenceStore.Save(preferences);
-            if (!saved.Succeeded)
-            {
-                ShowError(
-                    "Application Preferences",
-                    saved.Notice?.Message ?? "Application Preferences could not be saved.");
-                return;
-            }
             try
             {
                 await _session.ApplyApplicationPreferencesAsync(preferences);
                 _preferences = preferences;
+                RefreshInstrumentCatalogResolver();
                 _session.SetStatusMessage("Application Preferences were saved and applied.");
             }
             catch (Exception exception)
             {
                 _preferences = preferences;
+                RefreshInstrumentCatalogResolver();
                 ShowError(
                     "Application Preferences",
                     $"Preferences were saved, but could not be applied: {exception.Message}");
@@ -373,21 +378,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool persisted = false;
         bool applied = await RunOperationAsync(
             "Saving Settings",
             async cancellationToken =>
             {
-                ApplicationPreferencesSaveResult saved = await Task.Run(
-                    () => _preferenceStore.Save(preferences),
-                    cancellationToken);
-                if (!saved.Succeeded)
-                {
-                    throw new IOException(
-                        saved.Notice?.Message
-                        ?? "Application Preferences could not be saved.");
-                }
-                persisted = true;
                 _preferences = preferences;
                 await _session.ApplyApplicationPreferencesAsync(
                     preferences,
@@ -397,15 +391,99 @@ public partial class MainWindow : Window
             lockLevel: DesktopTaskLockLevel.FullApplication);
         if (applied)
         {
+            _preferences = preferences;
+            RefreshInstrumentCatalogResolver();
             _session.SetStatusMessage(
                 "Application Preferences were saved; the audio Worker is ready.");
         }
-        else if (persisted)
+        else
         {
             // The durable settings and in-memory preference snapshot must agree even when
             // operational BASS initialization fails. A later settings Apply or playback attempt
             // can retry initialization without silently reverting what was saved.
             _preferences = preferences;
+            RefreshInstrumentCatalogResolver();
+        }
+    }
+
+    private string? TryPublishApplicationPreferences(ApplicationPreferences preferences)
+    {
+        try
+        {
+            ApplicationPreferencesSaveResult saved = _preferenceStore.Save(preferences);
+            return saved.Succeeded
+                ? null
+                : saved.Notice?.Message ?? "Application Preferences could not be saved.";
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or InvalidDataException
+            or InvalidOperationException
+            or NotSupportedException
+            or OverflowException)
+        {
+            return exception.Message;
+        }
+    }
+
+    private void OnInstrumentCatalogsClick(object sender, RoutedEventArgs e)
+    {
+        if (!PrepareForModalSurface())
+        {
+            return;
+        }
+
+        ReloadInstrumentCatalogSnapshot(reportNoticeInStatus: false);
+        if (_instrumentCatalogNotice is not null)
+        {
+            MessageDialog.Show(
+                this,
+                _instrumentCatalogNotice.Message,
+                "Instrument Catalogs",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        if (!_instrumentCatalogCanPublish)
+        {
+            return;
+        }
+
+        InstrumentCatalogDialog dialog = new(
+            _instrumentCatalog,
+            _preferences.SoundFonts,
+            TryPublishInstrumentCatalog)
+        {
+            Owner = this
+        };
+        if (ShowModalDialog(dialog) != true || dialog.Result is null)
+        {
+            return;
+        }
+
+        _instrumentCatalog = dialog.Result;
+        _instrumentCatalogCanPublish = true;
+        _instrumentCatalogNotice = null;
+        RefreshInstrumentCatalogResolver();
+        _session.SetStatusMessage("Instrument Catalogs were saved.");
+    }
+
+    private string? TryPublishInstrumentCatalog(InstrumentCatalogState catalog)
+    {
+        try
+        {
+            InstrumentCatalogSaveResult saved = _instrumentCatalogStore.Save(catalog);
+            return saved.Succeeded
+                ? null
+                : saved.Notice?.Message ?? "Instrument Catalogs could not be saved.";
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or InvalidDataException
+            or InvalidOperationException
+            or NotSupportedException
+            or OverflowException)
+        {
+            return exception.Message;
         }
     }
 
@@ -1400,6 +1478,15 @@ public partial class MainWindow : Window
                         Add("Open", OnArrangementHeaderOpenClick);
                     if (header.Kind != ArrangementLaneKind.Conductor)
                         Add("Rename…", OnArrangementHeaderRenameClick, "F2", editable);
+                    if (header.Kind is ArrangementLaneKind.LogicalTrack
+                        or ArrangementLaneKind.PureMidiTrack)
+                    {
+                        Add(
+                            "Properties…",
+                            OnArrangementTrackPropertiesClick,
+                            "Ctrl+P",
+                            editable);
+                    }
                     if (header.Kind == ArrangementLaneKind.LogicalTrack)
                     {
                         Add("Edit Event Instrument…", OnArrangementHeaderEditEventInstrumentClick,
@@ -3266,6 +3353,35 @@ public partial class MainWindow : Window
             workspace));
     }
 
+    private void OnAddLogicalParameterEventBindingClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement
+            {
+                DataContext: InstrumentWorkspaceViewModel
+                {
+                    ObjectId: MidoraId instrumentId
+                } workspace
+            }
+            || _session.Project is null)
+        {
+            return;
+        }
+
+        EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
+        LogicalParameterEventBindingDialog dialog = new(
+            instrument,
+            workspace.ActiveSubVoiceId,
+            request => TrySubmitDialogEdit(() => ExecuteAndSelectCreated(
+                ProjectDomainEditCommands.CreateLogicalParameterEventBinding(
+                    instrumentId,
+                    request),
+                workspace)))
+        {
+            Owner = this
+        };
+        _ = ShowModalDialog(dialog);
+    }
+
     private void OnAddEnumItemClick(object sender, RoutedEventArgs e)
     {
         if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
@@ -4842,6 +4958,85 @@ public partial class MainWindow : Window
             };
             _session.Execute(command);
         });
+    }
+
+    private void OnArrangementTrackPropertiesClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
+            || descriptor.ObjectId is not MidoraId trackId)
+        {
+            return;
+        }
+        _ = OpenArrangementTrackProperties(descriptor.Kind, trackId);
+    }
+
+    private bool OpenArrangementTrackProperties(
+        ArrangementLaneKind kind,
+        MidoraId trackId)
+    {
+        if (!_session.CanEditProject || _session.Project is not MidoraProject project)
+        {
+            return false;
+        }
+
+        string? Submit(string name, MidoraColor? color) => TrySubmitDialogEdit(() =>
+        {
+            IProjectEditCommand command = kind switch
+            {
+                ArrangementLaneKind.LogicalTrack =>
+                    ProjectDomainEditCommands.UpdateLogicalTrackProperties(
+                        trackId,
+                        name,
+                        color),
+                ArrangementLaneKind.PureMidiTrack =>
+                    ProjectDomainEditCommands.UpdatePureMidiTrackProperties(
+                        trackId,
+                        name,
+                        color),
+                _ => throw new InvalidOperationException(
+                    "The selected Arrangement row has no Track properties.")
+            };
+            _session.Execute(command);
+        });
+
+        TrackPropertiesDialog dialog;
+        if (kind == ArrangementLaneKind.LogicalTrack)
+        {
+            LogicalTrack? track = project.Tracks.FirstOrDefault(value => value.Id == trackId);
+            if (track is null) return false;
+            dialog = new(
+                "Logical Track Properties",
+                track.Name,
+                track.ColorOverride,
+                ProjectTrackColorPolicy.ResolveDisplayColor(project, track),
+                supportsInheritedColor: true,
+                submit: Submit)
+            {
+                Owner = this
+            };
+        }
+        else if (kind == ArrangementLaneKind.PureMidiTrack)
+        {
+            PureMidiTrack? track = project.PureMidiTracks.FirstOrDefault(value => value.Id == trackId);
+            if (track is null) return false;
+            dialog = new(
+                "MIDI Track Properties",
+                track.Name,
+                track.Color,
+                ProjectTrackColorPolicy.ResolveDisplayColor(track),
+                supportsInheritedColor: false,
+                submit: Submit)
+            {
+                Owner = this
+            };
+        }
+        else
+        {
+            return false;
+        }
+
+        _ = ShowModalDialog(dialog);
+        return true;
     }
 
     private void OnArrangementTrackRouteSettingsClick(object sender, RoutedEventArgs e)
@@ -8676,6 +8871,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private static string? TrySubmitDialogEdit(Action operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        try
+        {
+            operation();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception.Message;
+        }
+    }
+
     internal bool PrepareForModalSurface()
     {
         if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel) return true;
@@ -8839,6 +9048,25 @@ public partial class MainWindow : Window
         {
             _session.SetStatusMessage(loaded.Notice.Message, isError: true);
         }
+    }
+
+    private void ReloadInstrumentCatalogSnapshot(bool reportNoticeInStatus)
+    {
+        InstrumentCatalogLoadResult loaded = _instrumentCatalogStore.Load();
+        _instrumentCatalog = loaded.Catalog;
+        _instrumentCatalogCanPublish = loaded.CanPublish;
+        _instrumentCatalogNotice = loaded.Notice;
+        RefreshInstrumentCatalogResolver();
+        if (reportNoticeInStatus && loaded.Notice is not null)
+        {
+            _session.SetStatusMessage(loaded.Notice.Message, isError: true);
+        }
+    }
+
+    private void RefreshInstrumentCatalogResolver()
+    {
+        _instrumentCatalogResolver = new(_instrumentCatalog, _preferences.SoundFonts);
+        _session.SetInstrumentCatalogResolver(_instrumentCatalogResolver);
     }
 
     private void SaveDesktopPreferences()
@@ -9094,6 +9322,16 @@ public partial class MainWindow : Window
     private bool TryOpenActiveProperties()
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return false;
+        if (workspace is TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Arrangement
+            }
+            && _arrangementHeaderShortcut is { } trackShortcut
+            && ArrangementShortcutTargetExists(trackShortcut))
+        {
+            _ = OpenArrangementTrackProperties(trackShortcut.Kind, trackShortcut.Id);
+            return true;
+        }
         if (workspace is InstrumentWorkspaceViewModel instrumentWorkspace
             && _session.Project?.EventInstruments.FirstOrDefault(
                 value => value.Id == instrumentWorkspace.ObjectId) is EventInstrument instrument

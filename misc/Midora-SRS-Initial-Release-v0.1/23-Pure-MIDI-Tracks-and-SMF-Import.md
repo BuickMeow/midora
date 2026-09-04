@@ -694,6 +694,19 @@ Track Header 的 hover/pressed、重排、Rename、Copy/Cut/Paste/Duplicate、De
 
 Pure MIDI Segment 除 Direct Note preview 外，还在 Note 上层绘制统一颜色、50% 透明度的 non-Note event 线；两层独立缓存和局部失效。Conductor 第一行使用独立缓存的按类型着色圆点概览。完整视觉、LOD 与性能边界见第 24.11、24.14 节。
 
+## 23.20 Pure MIDI Track 颜色分配
+
+新建与 SMF 导入的 Pure MIDI Track 必须获得固定八色低饱和调色板中的 concrete color。调色板及顺序固定为：
+
+```text
+#6d7fa8  #9b6a6a  #6f936f  #9a815f
+#806fa3  #60918c  #9a6f8a  #849064
+```
+
+选择颜色时，以 Track 最终插入的 global Arrangement 位置之前出现的 Pure MIDI Track 数量对 8 取模；不得按 Root、随机数、路径、名称或 hash 分配。中间插入、删除、重排或 Root 变化不得重染既有 Track。
+
+Duplicate 与 Copy/Paste 继承源 Track 的 concrete color。旧数据缺少颜色时只使用固定 fallback，不按当前 Arrangement order 动态推导。Properties 可原子修改颜色；颜色进入 Project Undo/Redo 和 Modified，但不影响 compiler、canonical、MIDI Export、Audio Render 或音频缓存。
+
 ### 23.14.2 共享 Segment/Piano Roll
 
 不得从头复制第三套 Timeline 编辑器。实现应抽取并复用：

@@ -401,4 +401,8 @@ Rendering
 ```
 Buffering 是播放状态，不自动显示为 Error。
 Buffering 状态文本使用纯黄色。只有音频后端提供同一 recovery 区间内单调、可验证的已准备 frame 与目标 frame 时，才追加 `(<N>%)`；不得根据经过时间猜测百分比。`100%` 表示该 recovery 区间准备完成并即将恢复 Playing。Buffering 期间主播放/停止按钮继续执行 Stop，但图标显示动态加载指示；恢复 Playing、Stopped 或 Error 后立即恢复停止/播放图标。
+
+## 17.8 Instrument Catalogs 全局入口
+
+Application 菜单提供 `Instrument Catalogs...`，打开独立模态 Catalog Editor。该编辑器不依赖活动 Project；Catalog-only 保存不得显示 Project Modified、触发 Project Compile 或重建音频 Worker。Application Preferences 的 SoundFonts 页可提供指向同一编辑器/显式 `Scan Presets...` 流程的入口，但 Preferences Apply 本身不得隐式扫描 SF2。
 ---

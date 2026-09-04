@@ -2493,14 +2493,8 @@ public sealed partial class MidoraCompiler : IDisposable
         return MappingEngine.Round(value, settings.Rounding);
     }
 
-    private static double DefaultTargetValue(MidiValueTarget target) => target.Kind switch
-    {
-        MidiValueKind.ControlChange => BuiltInControllerReset(target.Number),
-        MidiValueKind.PitchBend => 0,
-        MidiValueKind.PitchBendRangeSemitones => 2,
-        MidiValueKind.PitchBendRangeCents => 0,
-        _ => 0
-    };
+    private static double DefaultTargetValue(MidiValueTarget target) =>
+        MidiValueTargetDefaults.GetDefaultValue(target);
 
     private static double GetInitialTargetValue(
         MidiInitialState state,
@@ -2836,13 +2830,8 @@ public sealed partial class MidoraCompiler : IDisposable
         }
     }
 
-    private static int BuiltInControllerReset(int controller) => controller switch
-    {
-        7 => 100,
-        10 => 64,
-        11 => 127,
-        _ => 0
-    };
+    private static int BuiltInControllerReset(int controller) =>
+        MidiValueTargetDefaults.GetControllerDefaultValue(controller);
 
     private static LogicalUsageInterval[] BuildLogicalUsageIntervals(
         MidoraProject project,

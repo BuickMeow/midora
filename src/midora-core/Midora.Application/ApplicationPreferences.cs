@@ -186,11 +186,36 @@ public sealed record AppearancePreferences(string Language)
     }
 }
 
-public sealed record ApplicationSoundFontPreference(
-    string Path,
-    bool Enabled,
-    SoundFontTarget? Target = null)
+public sealed record ApplicationSoundFontPreference
 {
+    public ApplicationSoundFontPreference(
+        string path,
+        bool enabled,
+        SoundFontTarget? target = null)
+        : this(SoundFontEntryId.Create(), path, enabled, target)
+    {
+    }
+
+    public ApplicationSoundFontPreference(
+        SoundFontEntryId entryId,
+        string path,
+        bool enabled,
+        SoundFontTarget? target = null)
+    {
+        EntryId = entryId;
+        Path = path;
+        Enabled = enabled;
+        Target = target;
+    }
+
+    public SoundFontEntryId EntryId { get; init; }
+
+    public string Path { get; init; }
+
+    public bool Enabled { get; init; }
+
+    public SoundFontTarget? Target { get; init; }
+
     public ApplicationSoundFontPreference Normalize()
     {
         Validate();
@@ -199,6 +224,7 @@ public sealed record ApplicationSoundFontPreference(
 
     public void Validate()
     {
+        EntryId.Validate();
         new SoundFontConfiguration(Path, Target).Validate();
     }
 
@@ -293,10 +319,17 @@ public sealed record ApplicationPreferences(
                 "At most 256 SoundFonts can be configured.");
         }
         HashSet<string> paths = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<SoundFontEntryId> entryIds = [];
         foreach (ApplicationSoundFontPreference soundFont in SoundFonts)
         {
             ArgumentNullException.ThrowIfNull(soundFont);
             soundFont.Validate();
+            if (!entryIds.Add(soundFont.EntryId))
+            {
+                throw new ArgumentException(
+                    "The Application SoundFont list contains a duplicate entry ID.",
+                    nameof(SoundFonts));
+            }
             if (!paths.Add(Path.GetFullPath(soundFont.Path)))
             {
                 throw new ArgumentException(

@@ -23,6 +23,9 @@ public static partial class ProjectDomainEditCommands
                 nameof(trackName));
             int trackIndex = insertionIndex ?? project.ArrangementTracks.Count;
             ValidateInsertionIndex(trackIndex, project.ArrangementTracks.Count, nameof(insertionIndex));
+            MidoraColor trackColor = ProjectTrackColorPolicy.ColorForPureMidiTrackInsertion(
+                project,
+                trackIndex);
             MidiChannelRoot? existingFixed = routingMode == MidiChannelRootRoutingMode.Fixed
                 ? project.MidiChannelRoots.SingleOrDefault(value =>
                     value.RoutingMode == MidiChannelRootRoutingMode.Fixed
@@ -65,7 +68,8 @@ public static partial class ProjectDomainEditCommands
                         createdTrack = new(value)
                         {
                             Name = normalizedTrackName,
-                            MidiChannelRootId = root.Id
+                            MidiChannelRootId = root.Id,
+                            Color = trackColor
                         };
                     }
                     else
@@ -443,6 +447,9 @@ public static partial class ProjectDomainEditCommands
                     trackIndex = last + 1;
                 }
             }
+            MidoraColor trackColor = ProjectTrackColorPolicy.ColorForPureMidiTrackInsertion(
+                project,
+                trackIndex);
             return DeferredCreate(
                 RootChange(root.Id),
                 value =>
@@ -450,7 +457,8 @@ public static partial class ProjectDomainEditCommands
                     PureMidiTrack track = new(value)
                     {
                         Name = normalized,
-                        MidiChannelRootId = root.Id
+                        MidiChannelRootId = root.Id,
+                        Color = trackColor
                     };
                     value.PureMidiTracks.Add(track);
                     value.ArrangementTracks.Insert(

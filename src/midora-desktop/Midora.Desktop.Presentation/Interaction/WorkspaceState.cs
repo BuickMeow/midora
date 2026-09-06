@@ -503,6 +503,40 @@ public sealed class WorkspaceSelection
             quantize);
     }
 
+    /// <summary>
+    /// Prepares a replacement selection whose destination is known independently
+    /// of the old selection (for example Paste after Cut, or a cross-owner Paste).
+    /// A null source is intentional and must not inherit the previous kind/lane.
+    /// </summary>
+    public PreparedWorkspaceSelectionProjection PrepareProjection(
+        IReadOnlyList<MidoraId> resultIds,
+        WorkspaceTimelineSelectionSource? resultSource,
+        WorkspaceTimelineSelectionSource? resultQuantizeScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(resultIds);
+        cancellationToken.ThrowIfCancellationRequested();
+        CompressedMidoraIdSet ids = CompressedMidoraIdSet.Create(resultIds, cancellationToken);
+        MidoraId? primary = resultIds.Count == 0 ? null : resultIds[0];
+        Dictionary<WorkspaceTimelineSelectionSource, int>? sources = null;
+        if (ids.Count == 0)
+        {
+            sources = [];
+            resultSource = null;
+            resultQuantizeScope = null;
+        }
+        else if (resultSource is WorkspaceTimelineSelectionSource source)
+        {
+            sources = new() { [source] = ids.Count };
+            resultQuantizeScope = source.QuantizeScope;
+        }
+        RememberTimelineSources(ids, new TimelineSourceSnapshot(
+            sources, resultSource, resultQuantizeScope));
+        cancellationToken.ThrowIfCancellationRequested();
+        return PreparedWorkspaceSelectionProjection.CreateTrusted(
+            ids, primary, sources, resultSource, resultQuantizeScope);
+    }
+
     public void AdoptMaterialized(
         IEnumerable<MidoraId> ids,
         MidoraId? primary = null,

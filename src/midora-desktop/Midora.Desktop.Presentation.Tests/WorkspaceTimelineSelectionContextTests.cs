@@ -151,6 +151,63 @@ public sealed class WorkspaceTimelineSelectionContextTests
     }
 
     [Fact]
+    public void ExplicitPreparedDestinationReplacesOldSourceAndSurvivesHistoryRestoration()
+    {
+        WorkspaceSelection selection = new();
+        WorkspaceTimelineSelectionSource oldSource = DirectEventSource(10, 11);
+        WorkspaceTimelineSelectionSource destination = new(WorkspaceTimelineSelectionKind.TemplateNote,
+            new MidoraId(20), new MidoraId(21));
+        selection.Replace(new MidoraId(1), oldSource);
+        CompressedMidoraIdSet original = selection.SharedIds;
+        PreparedWorkspaceSelectionProjection projection = selection.PrepareProjection(
+            [new MidoraId(100), new MidoraId(101)], destination, null);
+        Assert.Same(original, selection.SharedIds);
+        Assert.Equal(oldSource, selection.HomogeneousTimelineSource);
+        selection.AdoptPrepared(projection);
+        Assert.Equal(destination, selection.HomogeneousTimelineSource);
+        Assert.Equal(destination.QuantizeScope, selection.HomogeneousTimelineQuantizeScope);
+        CompressedMidoraIdSet pasted = selection.SharedIds;
+        selection.AdoptMaterialized(original, new MidoraId(1), new MidoraId(1));
+        Assert.Equal(oldSource, selection.HomogeneousTimelineSource);
+        selection.AdoptMaterialized(pasted, new MidoraId(100), new MidoraId(100));
+        Assert.Equal(destination, selection.HomogeneousTimelineSource);
+    }
+
+    [Fact]
+    public void ExplicitUnknownAndEmptyResultsDoNotInheritOldRouting()
+    {
+        WorkspaceSelection selection = new();
+        var source = DirectEventSource(10, 11);
+        selection.Replace(new MidoraId(1), source);
+        selection.AdoptPrepared(selection.PrepareProjection([new MidoraId(2)], null, null));
+        Assert.Null(selection.HomogeneousTimelineSource);
+        Assert.Null(selection.HomogeneousTimelineQuantizeScope);
+        selection.AdoptPrepared(selection.PrepareProjection(
+            [new MidoraId(3), new MidoraId(4)], null, source.QuantizeScope));
+        Assert.Null(selection.HomogeneousTimelineSource);
+        Assert.Equal(source.QuantizeScope, selection.HomogeneousTimelineQuantizeScope);
+        selection.AdoptPrepared(selection.PrepareProjection([], source, source.QuantizeScope));
+        Assert.Empty(selection.Ids);
+        Assert.Null(selection.HomogeneousTimelineSource);
+        Assert.Null(selection.HomogeneousTimelineQuantizeScope);
+    }
+
+    [Fact]
+    public void CancellingExplicitDestinationProjectionDoesNotChangeSelection()
+    {
+        WorkspaceSelection selection = new();
+        var source = DirectEventSource(10, 11);
+        selection.Replace(new MidoraId(1), source);
+        CompressedMidoraIdSet original = selection.SharedIds;
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => selection.PrepareProjection(
+            [new MidoraId(2)], null, null, cancellation.Token));
+        Assert.Same(original, selection.SharedIds);
+        Assert.Equal(source, selection.HomogeneousTimelineSource);
+    }
+
+    [Fact]
     public void ArrangementSelectionUsesOneTypedContextAcrossTrackKinds()
     {
         WorkspaceSelection selection = new();

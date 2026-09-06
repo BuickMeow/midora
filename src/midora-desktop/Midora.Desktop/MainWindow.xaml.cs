@@ -10288,7 +10288,8 @@ public partial class MainWindow : Window
                         payload,
                         instrumentId,
                         ResolveInstrumentTargetLane(instrumentWorkspace).SubVoiceId,
-                        cursor),
+                        cursor,
+                        ResolveInstrumentTargetLane(instrumentWorkspace).Target),
                 InstrumentWorkspaceViewModel instrumentWorkspace
                     when instrumentWorkspace.ObjectId is MidoraId instrumentId
                     && payload.Kind == ProjectObjectClipboardKind.ValueCurveContent =>

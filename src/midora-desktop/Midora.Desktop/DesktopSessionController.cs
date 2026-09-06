@@ -1284,7 +1284,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     TimelineEditPreparationPhase.BuildingResult, 0, 0).InRange(0.97, 0));
                 cancellationToken.ThrowIfCancellationRequested();
                 PreparedWorkspaceSelectionProjection projection =
-                    selectionWorkspace?.Selection.PrepareProjection(
+                    command is IProjectClipboardPasteCommand paste
+                    ? ClipboardSelectionProjection.Prepare(
+                        document.Project, paste, selection.ResultSelectionIds,
+                        selectionWorkspace?.Selection, cancellationToken)
+                    : selectionWorkspace?.Selection.PrepareProjection(
                         selection.ResultSelectionIds,
                         cancellationToken)
                     ?? PreparedWorkspaceSelectionProjection.Create(

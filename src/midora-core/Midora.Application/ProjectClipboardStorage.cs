@@ -286,20 +286,33 @@ public static partial class ProjectObjectClipboard
             progress: BulkEditPreparationContext.Current!.ProgressInRange(0, 0.75));
 
     private static IProjectEditCommand KeepClipboardAlive(ProjectObjectClipboardPayload payload,
-        IProjectEditCommand command)
+        IProjectEditCommand command, ProjectClipboardPasteTarget? pasteTarget = null)
     {
         IProjectEditCommand detached = new SequentialProjectEditCommand(command.Name, [_ => command]);
+        ProjectClipboardPasteTarget target = pasteTarget ?? new(payload.Kind);
         return command is ITimelineSelectionResultEditCommand selection
-            ? new SelectionClipboardCommand(payload, detached, selection)
-            : new ClipboardCommand(payload, detached);
+            ? new SelectionClipboardCommand(payload, detached, selection, target)
+            : new ClipboardCommand(payload, detached, target);
     }
 
-    private class ClipboardCommand(ProjectObjectClipboardPayload payload, IProjectEditCommand command)
-        : IProgressReportingProjectEditCommand, IDisposable
+    private class ClipboardCommand(ProjectObjectClipboardPayload payload, IProjectEditCommand command,
+        ProjectClipboardPasteTarget pasteTarget)
+        : IProgressReportingProjectEditCommand, IProjectClipboardPasteCommand, IDisposable
     {
         private readonly ClipboardStorageOwner _storage = payload.StorageOwner;
+        private readonly ProjectObjectClipboardData _data = payload.Data;
         private IDisposable? _lease = payload.AcquireStorageLease();
+        private ProjectClipboardPasteSelectionKinds? _selectionKinds;
         public string Name => command.Name;
+        public ProjectClipboardPasteTarget PasteTarget { get; } = pasteTarget;
+        public ProjectClipboardPasteSelectionKinds GetPasteSelectionKinds(
+            CancellationToken cancellationToken = default)
+        {
+            ObjectDisposedException.ThrowIf(_lease is null, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            return _selectionKinds ??= DescribePasteSelection(
+                _data, PasteTarget.MidiTarget, cancellationToken);
+        }
         public IPreparedProjectEdit Prepare(MidoraProject project) => Prepare(project, default, null);
         public IPreparedProjectEdit Prepare(MidoraProject project, CancellationToken token) => Prepare(project, token, null);
         public IPreparedProjectEdit Prepare(MidoraProject project, CancellationToken token,
@@ -312,6 +325,10 @@ public static partial class ProjectObjectClipboard
             {
                 using var context = BulkEditPreparationContext.Enter(token, progress, project: project);
                 metadata = context.Resources.ReserveWorking(_storage.MetadataBytes);
+                if (_selectionKinds is null
+                    && _data is DirectMidiEventClipboardData or SubVoiceTimelineEventsClipboardData)
+                    progress?.Report(new(TimelineEditPreparationPhase.ReadingSelection, 0, 0));
+                _ = GetPasteSelectionKinds(token);
                 IPreparedProjectEdit prepared = command switch
                 {
                     IProgressReportingProjectEditCommand reporting => reporting.Prepare(project, token, progress),
@@ -336,8 +353,9 @@ public static partial class ProjectObjectClipboard
         }
     }
     private sealed class SelectionClipboardCommand(ProjectObjectClipboardPayload payload,
-        IProjectEditCommand command, ITimelineSelectionResultEditCommand selection)
-        : ClipboardCommand(payload, command), ITimelineSelectionResultEditCommand
+        IProjectEditCommand command, ITimelineSelectionResultEditCommand selection,
+        ProjectClipboardPasteTarget pasteTarget)
+        : ClipboardCommand(payload, command, pasteTarget), ITimelineSelectionResultEditCommand
     {
         public IReadOnlyList<MidoraId> ResultSelectionIds => selection.ResultSelectionIds;
     }

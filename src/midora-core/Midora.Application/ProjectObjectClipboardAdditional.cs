@@ -111,7 +111,7 @@ public static partial class ProjectObjectClipboard
         return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalParameterLaneClipboard(
             data,
             targetSegmentId,
-            editCursorTick));
+            editCursorTick), new(payload.Kind, targetSegmentId));
     }
 
     public static IProjectEditCommand CreatePasteLogicalParameterLaneContentCommand(
@@ -130,7 +130,7 @@ public static partial class ProjectObjectClipboard
             data,
             targetSegmentId,
             targetLaneId,
-            editCursorTick));
+            editCursorTick), new(payload.Kind, targetSegmentId, targetLaneId));
     }
 
     public static IProjectEditCommand CreatePasteConductorEventsCommand(

@@ -194,7 +194,9 @@ public static partial class ProjectObjectClipboard
     {
         MidiSegmentClipboardData data = RequirePayload<MidiSegmentClipboardData>(
             document, payload, ProjectObjectClipboardKind.MidiSegments);
-        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteMidiSegmentClipboard(data.Segments, targetTrackId, editCursorTick));
+        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteMidiSegmentClipboard(
+            data.Segments, targetTrackId, editCursorTick),
+            new(payload.Kind, targetTrackId, TargetIsDirectMidi: true));
     }
 
     public static IProjectEditCommand CreatePasteNotesCommand(
@@ -225,7 +227,9 @@ public static partial class ProjectObjectClipboard
                         PreserveOrders: false)),
                 _ => throw new ArgumentException("The clipboard payload does not contain MIDI-compatible Notes.", nameof(payload))
             };
-            return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteDirectMidiNoteClipboard(values, targetSegmentId, editCursorTick));
+            return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteDirectMidiNoteClipboard(
+                values, targetSegmentId, editCursorTick),
+                new(payload.Kind, targetSegmentId, TargetIsDirectMidi: true));
         }
         IReadOnlyList<LogicalNoteClipboardSnapshot> logicalValues = payload.Kind switch
         {
@@ -235,7 +239,8 @@ public static partial class ProjectObjectClipboard
                     value.StartOffset, value.LengthTicks, value.Key, value.NoteOnVelocity)),
             _ => throw new ArgumentException("The clipboard payload does not contain MIDI-compatible Notes.", nameof(payload))
         };
-        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalNoteClipboard(logicalValues, targetSegmentId, editCursorTick));
+        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalNoteClipboard(
+            logicalValues, targetSegmentId, editCursorTick), new(payload.Kind, targetSegmentId));
     }
 
     public static IProjectEditCommand CreatePasteDirectMidiEventsCommand(
@@ -247,7 +252,8 @@ public static partial class ProjectObjectClipboard
         DirectMidiEventClipboardData data = RequirePayload<DirectMidiEventClipboardData>(
             document, payload, ProjectObjectClipboardKind.DirectMidiEvents);
         return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteDirectMidiEventClipboard(
-            data.Events, targetSegmentId, editCursorTick));
+            data.Events, targetSegmentId, editCursorTick),
+            new(payload.Kind, targetSegmentId, TargetIsDirectMidi: true));
     }
 
     public static IProjectEditCommand CreatePasteOpaqueMidiEventsCommand(
@@ -259,7 +265,8 @@ public static partial class ProjectObjectClipboard
         OpaqueMidiEventClipboardData data = RequirePayload<OpaqueMidiEventClipboardData>(
             document, payload, ProjectObjectClipboardKind.OpaqueMidiEvents);
         return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteOpaqueMidiEventClipboard(
-            data.Events, targetSegmentId, editCursorTick));
+            data.Events, targetSegmentId, editCursorTick),
+            new(payload.Kind, targetSegmentId, TargetIsDirectMidi: true));
     }
 
     private static PureMidiTrackClipboardSnapshot SnapshotPureMidiTrack(PureMidiTrack track)
@@ -503,7 +510,7 @@ public static partial class ProjectDomainEditCommands
                     group.Key.Segments.Select(static value => value.ProjectRange));
             }
             MidiSegment[]? copies = null;
-            return Prepared(true, EverythingChange(), owner =>
+            return WithCreatedClipboardSelection(Prepared(true, EverythingChange(), owner =>
             {
                 copies ??= placements.Select(value => CreateMidiSegmentFromClipboard(owner, value.Snapshot, value.Start)).ToArray();
                 foreach (var group in placements.Select((value, index) => (value.Track, Copy: copies[index]))
@@ -514,7 +521,7 @@ public static partial class ProjectDomainEditCommands
             {
                 if (copies is null) throw new InvalidOperationException("Pasted MIDI Segments do not exist.");
                 for (int i = 0; i < copies.Length; i++) RemoveRequired(placements[i].Track.Segments, copies[i], "pasted MIDI Segment");
-            });
+            }), () => copies!.Select(static value => value.Id).ToArray());
         });
 
     internal static IProjectEditCommand PasteDirectMidiNoteClipboard(

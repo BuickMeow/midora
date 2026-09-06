@@ -194,7 +194,7 @@ public static partial class ProjectObjectClipboard
         return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteSegmentClipboard(
             data.Segments,
             activeTargetTrackId,
-            editCursorTick));
+            editCursorTick), new(payload.Kind, activeTargetTrackId));
     }
 
     public static IProjectEditCommand CreatePasteLogicalTrackCommand(
@@ -263,7 +263,7 @@ public static partial class ProjectObjectClipboard
         return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalNoteClipboard(
             data.Notes,
             targetSegmentId,
-            editCursorTick));
+            editCursorTick), new(payload.Kind, targetSegmentId));
     }
 
     private static T RequirePayload<T>(
@@ -529,7 +529,7 @@ public static partial class ProjectDomainEditCommands
             }).ToArray();
             ValidateClipboardSegmentPlacements(placements);
             Segment[]? copies = null;
-            return Prepared(
+            return WithCreatedClipboardSelection(Prepared(
                 hasChanges: true,
                 TrackChange(placements.Select(value => value.TargetTrack.Id).Distinct().ToArray()),
                 owner =>
@@ -563,7 +563,7 @@ public static partial class ProjectDomainEditCommands
                             copies[index],
                             "pasted Segment");
                     }
-                });
+                }), () => copies!.Select(static value => value.Id).ToArray());
         });
 
     internal static IProjectEditCommand PasteLogicalNoteClipboard(

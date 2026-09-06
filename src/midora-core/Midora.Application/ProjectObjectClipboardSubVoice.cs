@@ -123,7 +123,8 @@ public static partial class ProjectObjectClipboard
         ProjectObjectClipboardPayload payload,
         MidoraId targetEventInstrumentId,
         MidoraId targetSubVoiceId,
-        long editCursorTick)
+        long editCursorTick,
+        MidiValueTarget? target = null)
     {
         SubVoiceTimelineEventsClipboardData data =
             RequirePayload<SubVoiceTimelineEventsClipboardData>(
@@ -134,7 +135,7 @@ public static partial class ProjectObjectClipboard
             data,
             targetEventInstrumentId,
             targetSubVoiceId,
-            editCursorTick));
+            editCursorTick), new(payload.Kind, targetEventInstrumentId, targetSubVoiceId, MidiTarget: target));
     }
 
     public static IProjectEditCommand CreatePasteValueCurveContentCommand(

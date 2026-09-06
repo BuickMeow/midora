@@ -134,10 +134,10 @@ public sealed class ConductorTrack
         }
     }
 
-    public List<TempoChange> Tempos { get; } = [];
-    public List<TimeSignatureChange> TimeSignatures { get; } = [];
-    public List<KeySignatureChange> KeySignatures { get; } = [];
-    public List<ProjectMarker> Markers { get; } = [];
+    public List<TempoChange> Tempos { get; internal set; } = [];
+    public List<TimeSignatureChange> TimeSignatures { get; internal set; } = [];
+    public List<KeySignatureChange> KeySignatures { get; internal set; } = [];
+    public List<ProjectMarker> Markers { get; internal set; } = [];
     public ProjectEndMarker? EndMarker { get; set; }
     public long? EndMarkerTick => EndMarker?.Tick;
 }

@@ -27,7 +27,7 @@ public enum ProjectObjectClipboardKind
     ConductorEvents
 }
 
-public sealed class ProjectObjectClipboardPayload
+public sealed class ProjectObjectClipboardPayload : IDisposable
 {
     internal ProjectObjectClipboardPayload(
         object sourceSessionIdentity,
@@ -41,6 +41,7 @@ public sealed class ProjectObjectClipboardPayload
         ObjectCount = objectCount;
         PlainTextSummary = plainTextSummary;
         Data = data;
+        _storage = ClipboardCaptureScope.TakeStorage();
     }
 
     public ProjectObjectClipboardKind Kind { get; }
@@ -48,6 +49,19 @@ public sealed class ProjectObjectClipboardPayload
     public string PlainTextSummary { get; }
     internal object SourceSessionIdentity { get; }
     internal ProjectObjectClipboardData Data { get; }
+    private ClipboardStorageOwner? _storage;
+    internal ClipboardStorageOwner StorageOwner => _storage ?? throw new ObjectDisposedException(nameof(ProjectObjectClipboardPayload));
+    internal IDisposable AcquireStorageLease() => StorageOwner.Acquire();
+    public void Dispose()
+    {
+        Interlocked.Exchange(ref _storage, null)?.Release();
+        GC.SuppressFinalize(this);
+    }
+    ~ProjectObjectClipboardPayload()
+    {
+        try { Interlocked.Exchange(ref _storage, null)?.Release(); }
+        catch { /* Abandoned clipboard cleanup must never crash the process. */ }
+    }
 }
 
 public static partial class ProjectObjectClipboard
@@ -56,10 +70,12 @@ public static partial class ProjectObjectClipboard
         ProjectDocumentSession document,
         MidoraId logicalTrackId)
     {
+        using ClipboardCaptureScope capture = ClipboardCaptureScope.Enter();
         ArgumentNullException.ThrowIfNull(document);
         LogicalTrack track = document.Project.Tracks.SingleOrDefault(value => value.Id == logicalTrackId)
             ?? throw new ArgumentOutOfRangeException(nameof(logicalTrackId));
         EventInstrumentUsage? usage = document.Project.FindEventInstrumentUsage(track);
+        ClipboardCaptureScope.ReserveMetadata(track.Segments.Count, 2048);
         LogicalTrackClipboardSnapshot snapshot = new(
             track.Name,
             usage?.EventInstrumentId,
@@ -82,6 +98,7 @@ public static partial class ProjectObjectClipboard
         IReadOnlyCollection<MidoraId> segmentIds,
         MidoraId primarySegmentId)
     {
+        using ClipboardCaptureScope capture = ClipboardCaptureScope.Enter();
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(segmentIds);
         if (segmentIds.Count == 0)
@@ -90,16 +107,12 @@ public static partial class ProjectObjectClipboard
                 "At least one Segment must be copied.",
                 nameof(segmentIds));
         }
-        HashSet<MidoraId> requested = [];
+        ClipboardCaptureScope.ReserveMetadata(segmentIds.Count, 2048);
+        IReadOnlySet<MidoraId> requested = ValidateDistinctIds(segmentIds, nameof(segmentIds));
         List<(LogicalTrack Track, Segment Segment, int TrackIndex)> selected = [];
-        foreach (MidoraId id in segmentIds)
+        foreach (MidoraId id in requested)
         {
-            if (id == default || !requested.Add(id))
-            {
-                throw new ArgumentException(
-                    "Segment clipboard selections must contain distinct valid stable IDs.",
-                    nameof(segmentIds));
-            }
+            BulkEditPreparationContext.Current!.Token.ThrowIfCancellationRequested();
             selected.Add(FindSegment(document.Project, id));
         }
         var primary = selected.SingleOrDefault(value => value.Segment.Id == primarySegmentId);
@@ -132,6 +145,7 @@ public static partial class ProjectObjectClipboard
         MidoraId sourceSegmentId,
         IReadOnlyCollection<MidoraId> logicalNoteIds)
     {
+        using ClipboardCaptureScope capture = ClipboardCaptureScope.Enter();
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(logicalNoteIds);
         Segment source = FindSegment(document.Project, sourceSegmentId).Segment;
@@ -141,36 +155,29 @@ public static partial class ProjectObjectClipboard
                 "At least one Logical Note must be copied.",
                 nameof(logicalNoteIds));
         }
-        HashSet<MidoraId> requested = [];
-        foreach (MidoraId id in logicalNoteIds)
-        {
-            if (id == default || !requested.Add(id))
-            {
-                throw new ArgumentException(
-                    "Logical Note clipboard selections must contain distinct valid stable IDs.",
-                    nameof(logicalNoteIds));
-            }
-        }
-        LogicalNote[] selected = source.Notes
-            .ResolveByIdsInCollectionOrder(requested)
-            .ToArray();
-        if (selected.Length != requested.Count)
+        IReadOnlySet<MidoraId> requested = ValidateDistinctIds(logicalNoteIds, nameof(logicalNoteIds));
+        LogicalNoteQuerySnapshot snapshot = source.Notes.CreateQuerySnapshot();
+        long earliest = long.MaxValue;
+        IReadOnlyList<LogicalNoteClipboardSnapshot> absolute = ClipboardCaptureScope.Capture(
+            EnumerateClipboardSelection(document.Project, snapshot, requested)
+                .Select(value =>
+                {
+                    earliest = Math.Min(earliest, value.StartTick);
+                    return new LogicalNoteClipboardSnapshot(value.StartTick, value.LengthTicks, value.Note, value.Velocity);
+                }), requested.Count, reportReadProgress: false);
+        if (absolute.Count != requested.Count)
         {
             throw new ArgumentException(
                 "Every copied Logical Note must belong to the source Segment.",
                 nameof(logicalNoteIds));
         }
-        long earliest = selected.Min(value => value.StartTick);
-        LogicalNoteClipboardSnapshot[] snapshots = selected.Select(value => new LogicalNoteClipboardSnapshot(
-            checked(value.StartTick - earliest),
-            value.LengthTicks,
-            value.Note,
-            value.Velocity)).ToArray();
+        IReadOnlyList<LogicalNoteClipboardSnapshot> snapshots = new ProjectedClipboardList<LogicalNoteClipboardSnapshot, LogicalNoteClipboardSnapshot>(
+            absolute, value => value with { StartOffset = checked(value.StartOffset - earliest) });
         return new(
             document.ClipboardSessionIdentity,
             ProjectObjectClipboardKind.LogicalNotes,
-            snapshots.Length,
-            snapshots.Length == 1 ? "1 Logical Note" : $"{snapshots.Length} Logical Notes",
+            snapshots.Count,
+            snapshots.Count == 1 ? "1 Logical Note" : $"{snapshots.Count} Logical Notes",
             new LogicalNoteClipboardData(snapshots));
     }
 
@@ -184,10 +191,10 @@ public static partial class ProjectObjectClipboard
             targetDocument,
             payload,
             ProjectObjectClipboardKind.Segments);
-        return ProjectDomainEditCommands.PasteSegmentClipboard(
+        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteSegmentClipboard(
             data.Segments,
             activeTargetTrackId,
-            editCursorTick);
+            editCursorTick));
     }
 
     public static IProjectEditCommand CreatePasteLogicalTrackCommand(
@@ -200,11 +207,11 @@ public static partial class ProjectObjectClipboard
             targetDocument,
             payload,
             ProjectObjectClipboardKind.LogicalTrack);
-        return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
+        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalTrackClipboard(
             data.Track,
             targetEventInstrumentId,
             targetUsageId: null,
-            insertionIndex);
+            insertionIndex));
     }
 
     public static IProjectEditCommand CreatePasteLogicalTrackIntoUsageCommand(
@@ -220,11 +227,11 @@ public static partial class ProjectObjectClipboard
         EventInstrumentUsage usage = targetDocument.Project.EventInstrumentUsages
             .SingleOrDefault(value => value.Id == targetUsageId)
             ?? throw new ArgumentOutOfRangeException(nameof(targetUsageId));
-        return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
+        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalTrackClipboard(
             data.Track,
             usage.EventInstrumentId,
             usage.Id,
-            insertionIndex);
+            insertionIndex));
     }
 
     public static IProjectEditCommand CreatePasteLogicalTrackIndependentCommand(
@@ -236,11 +243,11 @@ public static partial class ProjectObjectClipboard
             targetDocument,
             payload,
             ProjectObjectClipboardKind.LogicalTrack);
-        return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
+        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalTrackClipboard(
             data.Track,
             data.Track.EventInstrumentId,
             targetUsageId: null,
-            insertionIndex);
+            insertionIndex));
     }
 
     public static IProjectEditCommand CreatePasteLogicalNotesCommand(
@@ -253,10 +260,10 @@ public static partial class ProjectObjectClipboard
             targetDocument,
             payload,
             ProjectObjectClipboardKind.LogicalNotes);
-        return ProjectDomainEditCommands.PasteLogicalNoteClipboard(
+        return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalNoteClipboard(
             data.Notes,
             targetSegmentId,
-            editCursorTick);
+            editCursorTick));
     }
 
     private static T RequirePayload<T>(
@@ -314,23 +321,26 @@ public static partial class ProjectObjectClipboard
     private static SegmentClipboardSnapshot SnapshotSegment(
         Segment segment,
         int trackOffset,
-        long startOffset) =>
-        new(
+        long startOffset)
+    {
+        ClipboardCaptureScope.ReserveMetadata(segment.ParameterLanes.Count, 1024);
+        return new(
             trackOffset,
             startOffset,
             segment.LengthTicks,
             segment.ContentOffsetTick,
-            segment.Notes.Select(value => new LogicalNoteClipboardSnapshot(
+            ClipboardCaptureScope.Capture(segment.Notes.CreateQuerySnapshot().EnumerateAll().Select(value => new LogicalNoteClipboardSnapshot(
                 value.StartTick,
                 value.LengthTicks,
                 value.Note,
-                value.Velocity)).ToArray(),
+                value.Velocity)), segment.Notes.Count),
             segment.ParameterLanes.Select(value => new LogicalParameterLaneClipboardSnapshot(
                 value.ParameterId,
-                value.Points.Select(point => new CurvePointClipboardSnapshot(
+                ClipboardCaptureScope.Capture(value.Points.CreateQuerySnapshot().EnumerateAll().Select(point => new CurvePointClipboardSnapshot(
                     point.Tick,
                     point.Value,
-                    CurveInterpolation.Step)).ToArray())).ToArray());
+                    CurveInterpolation.Step)), value.Points.Count))).ToArray());
+    }
 }
 
 internal abstract record ProjectObjectClipboardData;
@@ -345,23 +355,23 @@ internal sealed record LogicalTrackClipboardSnapshot(
 internal sealed record SegmentClipboardData(
     SegmentClipboardSnapshot[] Segments) : ProjectObjectClipboardData;
 internal sealed record LogicalNoteClipboardData(
-    LogicalNoteClipboardSnapshot[] Notes) : ProjectObjectClipboardData;
+    IReadOnlyList<LogicalNoteClipboardSnapshot> Notes) : ProjectObjectClipboardData;
 internal sealed record SegmentClipboardSnapshot(
     int TrackOffset,
     long StartOffset,
     long LengthTicks,
     long ContentOffsetTick,
-    LogicalNoteClipboardSnapshot[] Notes,
+    IReadOnlyList<LogicalNoteClipboardSnapshot> Notes,
     LogicalParameterLaneClipboardSnapshot[] ParameterLanes);
-internal sealed record LogicalNoteClipboardSnapshot(
+internal readonly record struct LogicalNoteClipboardSnapshot(
     long StartOffset,
     long LengthTicks,
     int Note,
     int Velocity);
 internal sealed record LogicalParameterLaneClipboardSnapshot(
     MidoraId ParameterId,
-    CurvePointClipboardSnapshot[] Points);
-internal sealed record CurvePointClipboardSnapshot(
+    IReadOnlyList<CurvePointClipboardSnapshot> Points);
+internal readonly record struct CurvePointClipboardSnapshot(
     long Tick,
     double Value,
     CurveInterpolation Interpolation);
@@ -438,14 +448,9 @@ public static partial class ProjectDomainEditCommands
                                 ?? snapshot.LastBoundEventInstrumentName,
                             ColorOverride = snapshot.ColorOverride
                         };
-                        foreach (SegmentClipboardSnapshot segment in snapshot.Segments)
-                        {
-                            Segment created = CreateSegmentFromClipboard(
-                                owner,
-                                segment,
-                                segment.StartOffset);
-                            InsertSegmentByTime(copy.Segments, created);
-                        }
+                        MergeClipboardSegments(copy.Segments, snapshot.Segments.Select(segment =>
+                            CreateSegmentFromClipboard(owner, segment, segment.StartOffset)),
+                            static value => value.ProjectStartTick, static value => value.Id);
                     }
                     else
                     {
@@ -539,10 +544,10 @@ public static partial class ProjectDomainEditCommands
                             .ToArray();
                         copies = created;
                     }
-                    for (int index = 0; index < copies.Length; index++)
-                    {
-                        InsertSegmentByTime(placements[index].TargetTrack.Segments, copies[index]);
-                    }
+                    foreach (var group in placements.Select((value, index) => (value.TargetTrack, Copy: copies[index]))
+                        .GroupBy(static value => value.TargetTrack))
+                        MergeClipboardSegments(group.Key.Segments, group.Select(static value => value.Copy),
+                            static value => value.ProjectStartTick, static value => value.Id);
                 },
                 _ =>
                 {
@@ -574,52 +579,7 @@ public static partial class ProjectDomainEditCommands
                     snapshots.Count == 0 ? nameof(snapshots) : nameof(editCursorTick));
             }
             SegmentLocation target = FindSegment(project, targetSegmentId);
-            LogicalNoteValue[] values = snapshots.Select(value => new LogicalNoteValue(
-                checked(editCursorTick + value.StartOffset),
-                value.LengthTicks,
-                value.Note,
-                value.Velocity)).ToArray();
-            ValidateLogicalNoteBatch(values);
-            LogicalNote[]? copies = null;
-            int insertionIndex = target.Segment.Notes.Count;
-            return ResolveTargetedExactLogicalNoteCollisions(Prepared(
-                hasChanges: true,
-                TrackChange(target.Track.Id),
-                owner =>
-                {
-                    if (copies is null)
-                    {
-                        copies = values.Select(value => new LogicalNote(owner)
-                        {
-                            StartTick = value.StartTick,
-                            LengthTicks = value.LengthTicks,
-                            Note = value.Note,
-                            Velocity = value.Velocity
-                        }).ToArray();
-                    }
-                    for (int index = 0; index < copies.Length; index++)
-                    {
-                        InsertAt(
-                            target.Segment.Notes,
-                            insertionIndex + index,
-                            copies[index],
-                            "pasted Logical Note");
-                    }
-                },
-                _ =>
-                {
-                    if (copies is null)
-                    {
-                        throw new InvalidOperationException(
-                            "Logical Note clipboard copies do not exist before the first Apply.");
-                    }
-                    int removed = target.Segment.Notes.RemoveRange(copies);
-                    if (removed != copies.Length)
-                        throw new InvalidOperationException("The pasted Logical Note set is no longer present.");
-                }), values.Select(value => new LogicalNoteCollisionTarget(
-                    target.Segment,
-                    value.StartTick,
-                    value.Note)));
+            return PrepareBoundedLogicalClipboardAppend(project, target, snapshots, editCursorTick);
         });
 
     private static Segment CreateSegmentFromClipboard(
@@ -633,38 +593,24 @@ public static partial class ProjectDomainEditCommands
             LengthTicks = snapshot.LengthTicks,
             ContentOffsetTick = snapshot.ContentOffsetTick
         };
-        HashSet<(long Tick, int Key)> noteStarts = [];
-        foreach (LogicalNoteClipboardSnapshot value in snapshot.Notes)
+        using var scope = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default, project: project);
+        var notes = FreezeClipboardSource(FirstClipboardValues(snapshot.Notes,
+            static value => value.StartOffset, static value => value.Note).Select(value =>
         {
             ValidateLogicalNote(value.StartOffset, value.LengthTicks, value.Note, value.Velocity);
-            if (!noteStarts.Add((value.StartOffset, value.Note)))
-            {
-                continue;
-            }
-            result.Notes.Add(new LogicalNote(project)
-            {
-                StartTick = value.StartOffset,
-                LengthTicks = value.LengthTicks,
-                Note = value.Note,
-                Velocity = value.Velocity
-            });
-        }
+            return new LogicalNoteSnapshotValue(project.AllocateStableId(), value.StartOffset,
+                value.LengthTicks, value.Note, value.Velocity);
+        }), static value => value.Id);
+        result.Notes.AdoptSource(project, notes, scope.Token);
         foreach (LogicalParameterLaneClipboardSnapshot value in snapshot.ParameterLanes)
         {
+            scope.Token.ThrowIfCancellationRequested();
             LogicalParameterLane lane = new(project) { ParameterId = value.ParameterId };
-            HashSet<long> pointTicks = [];
-            foreach (CurvePointClipboardSnapshot point in value.Points)
-            {
-                if (!pointTicks.Add(point.Tick))
-                {
-                    continue;
-                }
-                lane.Points.Add(new CurvePoint(
-                    project,
-                    point.Tick,
-                    point.Value,
-                    CurveInterpolation.Step));
-            }
+            var points = FreezeClipboardSource(FirstClipboardValues(value.Points,
+                static point => point.Tick, static _ => 0).Select(point =>
+                    new CurvePointSnapshotValue(project.AllocateStableId(), point.Tick, point.Value, CurveInterpolation.Step)),
+                static point => point.Id);
+            lane.Points.AdoptSource(project, points, scope.Token);
             result.ParameterLanes.Add(lane);
         }
         return result;
@@ -676,31 +622,9 @@ public static partial class ProjectDomainEditCommands
         foreach (IGrouping<LogicalTrack, SegmentClipboardPlacement> group in placements
             .GroupBy(value => value.TargetTrack))
         {
-            SegmentClipboardPlacement[] ordered = group
-                .OrderBy(value => value.ProjectStartTick)
-                .ToArray();
-            for (int index = 0; index < ordered.Length; index++)
-            {
-                TickRange range = new(
-                    ordered[index].ProjectStartTick,
-                    checked(ordered[index].ProjectStartTick
-                        + ordered[index].Snapshot.LengthTicks));
-                if (group.Key.Segments.Any(value => range.Intersects(value.ProjectRange)))
-                {
-                    throw new InvalidOperationException(
-                        "Pasted Segments would overlap an existing Segment.");
-                }
-                if (index != 0)
-                {
-                    long previousEnd = checked(ordered[index - 1].ProjectStartTick
-                        + ordered[index - 1].Snapshot.LengthTicks);
-                    if (previousEnd > ordered[index].ProjectStartTick)
-                    {
-                        throw new InvalidOperationException(
-                            "Pasted Segments would overlap each other.");
-                    }
-                }
-            }
+            ValidateClipboardSegmentRanges(group.Select(value => new TickRange(value.ProjectStartTick,
+                checked(value.ProjectStartTick + value.Snapshot.LengthTicks))),
+                group.Key.Segments.Select(static value => value.ProjectRange));
         }
     }
 

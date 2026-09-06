@@ -16,6 +16,11 @@ public readonly record struct PagedEditResourceBudget
     public const long DefaultMaximumSpillBytes = 16L * 1024 * 1024 * 1024;
     public const long DefaultMaximumRecordCount = 100_000_000;
 
+    public PagedEditResourceBudget() : this(DefaultMaximumRecordCount,
+        DefaultMaximumWorkingBytes, DefaultMaximumResidentBytes,
+        DefaultMaximumSpillBytes, DefaultPageRecordCount,
+        DefaultCancellationCheckInterval) { }
+
     public PagedEditResourceBudget(
         long maximumRecordCount = DefaultMaximumRecordCount,
         long maximumWorkingBytes = DefaultMaximumWorkingBytes,

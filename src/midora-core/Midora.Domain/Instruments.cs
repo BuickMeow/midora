@@ -610,8 +610,82 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
     public TemplateEventQuerySnapshot CreateQuerySnapshot() =>
         new(_store.CreateSnapshot());
 
+    public void AdoptSnapshot(MidoraProject project, TemplateEventQuerySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _store.AdoptSnapshot(snapshot.Values, value =>
+        {
+            TemplateEvent result = new(project, value.Id)
+            {
+                Kind = value.Kind, Tick = value.Tick, LengthTicks = value.LengthTicks,
+                Number = value.Number, Value = value.Value, SecondaryValue = value.SecondaryValue,
+                HasBankMsb = value.HasBankMsb, HasBankLsb = value.HasBankLsb,
+                FollowPitchDelta = value.FollowPitchDelta
+            };
+            result.AttachTo(_owner);
+            return result;
+        });
+    }
+
+    public void AdoptSource(MidoraProject project, IImmutableTimelineValueSource<TemplateEventSnapshotValue> source,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        _store.AdoptSource(source, value =>
+        {
+            TemplateEvent result = new(project, value.Id)
+            {
+                Kind = value.Kind, Tick = value.Tick, LengthTicks = value.LengthTicks,
+                Number = value.Number, Value = value.Value, SecondaryValue = value.SecondaryValue,
+                HasBankMsb = value.HasBankMsb, HasBankLsb = value.HasBankLsb,
+                FollowPitchDelta = value.FollowPitchDelta
+            };
+            result.AttachTo(_owner);
+            return result;
+        }, cancellationToken);
+    }
+
+    public void AdoptEditedSnapshot(MidoraProject project, TemplateEventQuerySnapshot snapshot,
+        IImmutableTimelineValueSource<TimelineValueEdit<TemplateEventSnapshotValue>> changes,
+        IImmutableTimelineValueSource<TemplateEventSnapshotValue>? appended = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _store.AdoptEditedSnapshot(snapshot.Values, changes, appended, value =>
+        {
+            TemplateEvent result = new(project, value.Id)
+            {
+                Kind = value.Kind, Tick = value.Tick, LengthTicks = value.LengthTicks,
+                Number = value.Number, Value = value.Value, SecondaryValue = value.SecondaryValue,
+                HasBankMsb = value.HasBankMsb, HasBankLsb = value.HasBankLsb,
+                FollowPitchDelta = value.FollowPitchDelta
+            };
+            result.AttachTo(_owner);
+            return result;
+        }, cancellationToken);
+    }
+
     public bool TryGetById(MidoraId id, out TemplateEvent? value) =>
         _store.TryGetById(id, out value);
+
+    public void AdoptSplicedSnapshot(MidoraProject project, TemplateEventQuerySnapshot snapshot,
+        IImmutableTimelineValueSource<TimelineValueSplice> splices,
+        IIndexedImmutableTimelineValueSource<TemplateEventSnapshotValue> values, CancellationToken cancellationToken = default)
+    {
+        _store.AdoptSplicedSnapshot(snapshot.Values, splices, values, value =>
+        {
+            TemplateEvent result = new(project, value.Id)
+            {
+                Kind = value.Kind, Tick = value.Tick, LengthTicks = value.LengthTicks,
+                Number = value.Number, Value = value.Value, SecondaryValue = value.SecondaryValue,
+                HasBankMsb = value.HasBankMsb, HasBankLsb = value.HasBankLsb, FollowPitchDelta = value.FollowPitchDelta
+            };
+            result.AttachTo(_owner);
+            return result;
+        }, cancellationToken);
+    }
 
     public IReadOnlyList<TemplateEvent> ResolveByIdsInCollectionOrder(
         IReadOnlyCollection<MidoraId> ids) =>

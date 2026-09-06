@@ -43,10 +43,14 @@ public static class ProjectSegmentIndex
         private readonly object _gate = new();
         private readonly Dictionary<MidoraId, LogicalSegmentIndexEntry> _logical = [];
         private readonly Dictionary<MidoraId, MidiSegmentIndexEntry> _midi = [];
+        private List<LogicalTrack> _logicalCatalog;
+        private List<PureMidiTrack> _midiCatalog;
 
         public Index(MidoraProject project)
         {
             _project = project;
+            _logicalCatalog = project.Tracks;
+            _midiCatalog = project.PureMidiTracks;
             Rebuild();
         }
 
@@ -54,6 +58,7 @@ public static class ProjectSegmentIndex
         {
             lock (_gate)
             {
+                RefreshCatalogRoots();
                 if (_midi.ContainsKey(id)) return null;
                 if (_logical.TryGetValue(id, out LogicalSegmentIndexEntry cached)
                     && TryRefresh(cached, out LogicalSegmentIndexEntry refreshed))
@@ -73,6 +78,7 @@ public static class ProjectSegmentIndex
         {
             lock (_gate)
             {
+                RefreshCatalogRoots();
                 if (_logical.ContainsKey(id)) return null;
                 if (_midi.TryGetValue(id, out MidiSegmentIndexEntry cached)
                     && TryRefresh(cached, out MidiSegmentIndexEntry refreshed))
@@ -85,6 +91,23 @@ public static class ProjectSegmentIndex
                 MidiSegmentIndexEntry? found = ScanMidi(id);
                 if (found is not null) _midi.Add(id, found.Value);
                 return found;
+            }
+        }
+
+        private void RefreshCatalogRoots()
+        {
+            // A detached transaction may replace an entire Track catalog. The
+            // old Track still owns its old Segments, so validating its child
+            // list alone cannot establish that it remains in this Project.
+            if (!ReferenceEquals(_logicalCatalog, _project.Tracks))
+            {
+                _logicalCatalog = _project.Tracks;
+                _logical.Clear();
+            }
+            if (!ReferenceEquals(_midiCatalog, _project.PureMidiTracks))
+            {
+                _midiCatalog = _project.PureMidiTracks;
+                _midi.Clear();
             }
         }
 

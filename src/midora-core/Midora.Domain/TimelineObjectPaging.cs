@@ -77,6 +77,12 @@ public interface ITimelineObjectSource<TValue>
     long SourceRevision { get; }
     int PageCapacity { get; }
 
+    TValue GetByOrdinal(int ordinal)
+    {
+        if (!TryGetPageByOrdinal(ordinal, 1, out var page)) throw new ArgumentOutOfRangeException(nameof(ordinal));
+        return page.Values[0];
+    }
+
     bool TryGetPageByOrdinal(
         int firstOrdinal,
         int count,
@@ -84,6 +90,9 @@ public interface ITimelineObjectSource<TValue>
 
     int FindOrdinalAtOrAfterTick(long tick);
     bool TryFindOrdinalById(MidoraId id, out int ordinal);
+    void PrepareOrdinalLookup(CancellationToken cancellationToken = default) => cancellationToken.ThrowIfCancellationRequested();
+    void PrepareOrdinalLookup(IImmutableTimelineOrdinalIndexBuilder builder, CancellationToken cancellationToken = default) =>
+        PrepareOrdinalLookup(cancellationToken);
     IEnumerable<TValue> QueryTickRange(TimelineObjectRangeQuery query);
     void Prefetch(TimelineObjectRangeQuery query, CancellationToken cancellationToken = default);
 }

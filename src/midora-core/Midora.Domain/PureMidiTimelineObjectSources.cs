@@ -12,6 +12,7 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
     private readonly ImmutableHashSet<MidoraId> _removedSourceIds;
     private readonly ImmutableDictionary<MidoraId, TValue> _replacements;
     private readonly PersistentFormalValueSequence<TValue> _added;
+    private readonly ImmutableDictionary<MidoraId, int>? _addedIndices;
     private readonly Func<TValue, MidoraId> _getId;
     private readonly Func<TValue, long> _getStartTick;
     private readonly Func<TimelineObjectRangeQuery, IEnumerable<TValue>> _query;
@@ -32,7 +33,8 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
         Func<TValue, MidoraId> getId,
         Func<TValue, long> getStartTick,
         Func<TimelineObjectRangeQuery, IEnumerable<TValue>> query,
-        Action<TimelineObjectRangeQuery, CancellationToken> prefetch)
+        Action<TimelineObjectRangeQuery, CancellationToken> prefetch,
+        ImmutableDictionary<MidoraId, int>? addedIndices = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(sourceCount);
         ArgumentOutOfRangeException.ThrowIfNegative(count);
@@ -42,6 +44,7 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
         _removedSourceIds = removedSourceIds ?? throw new ArgumentNullException(nameof(removedSourceIds));
         _replacements = replacements ?? throw new ArgumentNullException(nameof(replacements));
         _added = added ?? throw new ArgumentNullException(nameof(added));
+        _addedIndices = addedIndices?.Count == added.Count ? addedIndices : null;
         _getId = getId ?? throw new ArgumentNullException(nameof(getId));
         _getStartTick = getStartTick ?? throw new ArgumentNullException(nameof(getStartTick));
         _query = query ?? throw new ArgumentNullException(nameof(query));
@@ -68,6 +71,23 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
     public int Count { get; }
     public long SourceRevision { get; }
     public int PageCapacity => DefaultPageCapacity;
+
+    internal bool TryGetAdded(MidoraId id, out int ordinal, out TValue value)
+    {
+        if (_addedIndices is not null && _addedIndices.TryGetValue(id, out int index))
+        { ordinal = checked(_liveSourceCount + index); value = _added[index]; return true; }
+        ordinal = -1; value = default; return false;
+    }
+
+    internal bool MapSourceValue(int sourceIndex, TValue sourceValue, out int ordinal, out TValue value)
+    {
+        MidoraId id = _getId(sourceValue);
+        if ((uint)sourceIndex >= (uint)_sourceCount || _removedSourceIds.Contains(id))
+        { ordinal = -1; value = default; return false; }
+        ordinal = checked(sourceIndex - LowerBound(_removedSourceOrdinals, sourceIndex));
+        value = _replacements.TryGetValue(id, out var replacement) ? replacement : sourceValue;
+        return true;
+    }
 
     public bool TryGetPageByOrdinal(
         int firstOrdinal,
@@ -119,6 +139,16 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
             ordinal = checked(sourceIndex - LowerBound(_removedSourceOrdinals, sourceIndex));
             return true;
         }
+        if (_addedIndices is not null)
+        {
+            if (_addedIndices.TryGetValue(id, out int addedIndex))
+            {
+                ordinal = checked(_liveSourceCount + addedIndex);
+                return true;
+            }
+            ordinal = -1;
+            return false;
+        }
         for (int index = 0; index < _added.Count; index++)
         {
             if (_getId(_added[index]) != id) continue;
@@ -137,7 +167,7 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
         CancellationToken cancellationToken = default) =>
         _prefetch(query, cancellationToken);
 
-    private TValue GetByOrdinal(int ordinal)
+    internal TValue GetByOrdinal(int ordinal)
     {
         if ((uint)ordinal >= (uint)Count)
             throw new ArgumentOutOfRangeException(nameof(ordinal));
@@ -152,6 +182,7 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
 
     private int SourceIndexForVisibleOrdinal(int visibleOrdinal)
     {
+        if (_removedSourceOrdinals.Length == 0) return visibleOrdinal;
         int low = 0;
         int high = _sourceCount;
         while (low < high)
@@ -200,12 +231,15 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
 public sealed class DirectMidiNoteObjectSource : ITimelineObjectSource<DirectMidiNoteValue>
 {
     private readonly PureMidiFormalTimelineObjectSource<DirectMidiNoteValue> _source;
+    private readonly DirectMidiNoteQuerySnapshot _query;
+    private readonly IPureMidiSegmentContentSource? _paged;
 
     internal DirectMidiNoteObjectSource(
         DirectMidiNoteFormalSequenceSnapshot formal,
         DirectMidiNoteQuerySnapshot query)
     {
         IPureMidiSegmentContentSource? source = formal.ClearsSource ? null : formal.Source;
+        _query = query; _paged = source;
         _source = new(
             source?.NoteCount ?? 0,
             index => source!.GetNote(index),
@@ -228,12 +262,33 @@ public sealed class DirectMidiNoteObjectSource : ITimelineObjectSource<DirectMid
                 range.EndTick,
                 range.MinimumLane,
                 range.MaximumLane,
-                cancellationToken));
+                cancellationToken),
+            formal.AddedIndices);
     }
 
     public int Count => _source.Count;
     public long SourceRevision => _source.SourceRevision;
     public int PageCapacity => _source.PageCapacity;
+    public DirectMidiNoteValue GetByOrdinal(int ordinal) => _source.GetByOrdinal(ordinal);
+    internal IEnumerable<DirectMidiNoteSourceMatch> QueryByIds(IReadOnlySet<MidoraId> ids)
+    {
+        foreach (var match in _query.ResolveSourceMatches(ids))
+            if (_source.MapSourceValue(match.Index, match.Value, out int ordinal, out var value)) yield return new(ordinal, value);
+        foreach (var id in ids)
+            if (_source.TryGetAdded(id, out int ordinal, out var value)) yield return new(ordinal, value);
+    }
+    internal bool TryQueryByIdsCached(IReadOnlySet<MidoraId> ids, List<DirectMidiNoteSourceMatch> destination)
+    {
+        List<DirectMidiNoteSourceMatch> matches = [];
+        if (_paged is IPureMidiCachedContentSource cached)
+        { if (!cached.TryQueryCachedNotesByIds(ids, matches)) return false; }
+        else if (_paged is not null) matches.AddRange(_paged.QueryNotesByIds(ids));
+        foreach (var match in matches)
+            if (_source.MapSourceValue(match.Index, match.Value, out int ordinal, out var value)) destination.Add(new(ordinal, value));
+        foreach (var id in ids)
+            if (_source.TryGetAdded(id, out int ordinal, out var value)) destination.Add(new(ordinal, value));
+        return true;
+    }
     public bool TryGetPageByOrdinal(int firstOrdinal, int count, out TimelineObjectPage<DirectMidiNoteValue> page) =>
         _source.TryGetPageByOrdinal(firstOrdinal, count, out page);
     public int FindOrdinalAtOrAfterTick(long tick) => _source.FindOrdinalAtOrAfterTick(tick);
@@ -246,12 +301,15 @@ public sealed class DirectMidiNoteObjectSource : ITimelineObjectSource<DirectMid
 public sealed class DirectMidiChannelEventObjectSource : ITimelineObjectSource<DirectMidiChannelEventValue>
 {
     private readonly PureMidiFormalTimelineObjectSource<DirectMidiChannelEventValue> _source;
+    private readonly DirectMidiChannelEventQuerySnapshot _query;
+    private readonly IPureMidiSegmentContentSource? _paged;
 
     internal DirectMidiChannelEventObjectSource(
         DirectMidiChannelEventFormalSequenceSnapshot formal,
         DirectMidiChannelEventQuerySnapshot query)
     {
         IPureMidiSegmentContentSource? source = formal.ClearsSource ? null : formal.Source;
+        _query = query; _paged = source;
         _source = new(
             source?.ChannelEventCount ?? 0,
             index => source!.GetChannelEvent(index),
@@ -268,12 +326,33 @@ public sealed class DirectMidiChannelEventObjectSource : ITimelineObjectSource<D
             (range, cancellationToken) => query.PrefetchRange(
                 range.StartTick,
                 range.EndTick,
-                cancellationToken));
+                cancellationToken),
+            formal.AddedIndices);
     }
 
     public int Count => _source.Count;
     public long SourceRevision => _source.SourceRevision;
     public int PageCapacity => _source.PageCapacity;
+    public DirectMidiChannelEventValue GetByOrdinal(int ordinal) => _source.GetByOrdinal(ordinal);
+    internal IEnumerable<DirectMidiChannelEventSourceMatch> QueryByIds(IReadOnlySet<MidoraId> ids)
+    {
+        foreach (var match in _query.ResolveSourceMatches(ids))
+            if (_source.MapSourceValue(match.Index, match.Value, out int ordinal, out var value)) yield return new(ordinal, value);
+        foreach (var id in ids)
+            if (_source.TryGetAdded(id, out int ordinal, out var value)) yield return new(ordinal, value);
+    }
+    internal bool TryQueryByIdsCached(IReadOnlySet<MidoraId> ids, List<DirectMidiChannelEventSourceMatch> destination)
+    {
+        List<DirectMidiChannelEventSourceMatch> matches = [];
+        if (_paged is IPureMidiCachedContentSource cached)
+        { if (!cached.TryQueryCachedChannelEventsByIds(ids, matches)) return false; }
+        else if (_paged is not null) matches.AddRange(_paged.QueryChannelEventsByIds(ids));
+        foreach (var match in matches)
+            if (_source.MapSourceValue(match.Index, match.Value, out int ordinal, out var value)) destination.Add(new(ordinal, value));
+        foreach (var id in ids)
+            if (_source.TryGetAdded(id, out int ordinal, out var value)) destination.Add(new(ordinal, value));
+        return true;
+    }
     public bool TryGetPageByOrdinal(int firstOrdinal, int count, out TimelineObjectPage<DirectMidiChannelEventValue> page) =>
         _source.TryGetPageByOrdinal(firstOrdinal, count, out page);
     public int FindOrdinalAtOrAfterTick(long tick) => _source.FindOrdinalAtOrAfterTick(tick);
@@ -286,12 +365,15 @@ public sealed class DirectMidiChannelEventObjectSource : ITimelineObjectSource<D
 public sealed class OpaqueMidiEventObjectSource : ITimelineObjectSource<OpaqueMidiEventValue>
 {
     private readonly PureMidiFormalTimelineObjectSource<OpaqueMidiEventValue> _source;
+    private readonly OpaqueMidiEventQuerySnapshot _query;
+    private readonly IPureMidiSegmentContentSource? _paged;
 
     internal OpaqueMidiEventObjectSource(
         OpaqueMidiEventFormalSequenceSnapshot formal,
         OpaqueMidiEventQuerySnapshot query)
     {
         IPureMidiSegmentContentSource? source = formal.ClearsSource ? null : formal.Source;
+        _query = query; _paged = source;
         _source = new(
             source?.OpaqueEventCount ?? 0,
             index => source!.GetOpaqueEvent(index),
@@ -308,12 +390,33 @@ public sealed class OpaqueMidiEventObjectSource : ITimelineObjectSource<OpaqueMi
             (range, cancellationToken) => query.PrefetchRange(
                 range.StartTick,
                 range.EndTick,
-                cancellationToken));
+                cancellationToken),
+            formal.AddedIndices);
     }
 
     public int Count => _source.Count;
     public long SourceRevision => _source.SourceRevision;
     public int PageCapacity => _source.PageCapacity;
+    public OpaqueMidiEventValue GetByOrdinal(int ordinal) => _source.GetByOrdinal(ordinal);
+    internal IEnumerable<OpaqueMidiEventSourceMatch> QueryByIds(IReadOnlySet<MidoraId> ids)
+    {
+        foreach (var match in _query.ResolveSourceMatches(ids))
+            if (_source.MapSourceValue(match.Index, match.Value, out int ordinal, out var value)) yield return new(ordinal, value);
+        foreach (var id in ids)
+            if (_source.TryGetAdded(id, out int ordinal, out var value)) yield return new(ordinal, value);
+    }
+    internal bool TryQueryByIdsCached(IReadOnlySet<MidoraId> ids, List<OpaqueMidiEventSourceMatch> destination)
+    {
+        List<OpaqueMidiEventSourceMatch> matches = [];
+        if (_paged is IPureMidiCachedContentSource cached)
+        { if (!cached.TryQueryCachedOpaqueEventsByIds(ids, matches)) return false; }
+        else if (_paged is not null) matches.AddRange(_paged.QueryOpaqueEventsByIds(ids));
+        foreach (var match in matches)
+            if (_source.MapSourceValue(match.Index, match.Value, out int ordinal, out var value)) destination.Add(new(ordinal, value));
+        foreach (var id in ids)
+            if (_source.TryGetAdded(id, out int ordinal, out var value)) destination.Add(new(ordinal, value));
+        return true;
+    }
     public bool TryGetPageByOrdinal(int firstOrdinal, int count, out TimelineObjectPage<OpaqueMidiEventValue> page) =>
         _source.TryGetPageByOrdinal(firstOrdinal, count, out page);
     public int FindOrdinalAtOrAfterTick(long tick) => _source.FindOrdinalAtOrAfterTick(tick);

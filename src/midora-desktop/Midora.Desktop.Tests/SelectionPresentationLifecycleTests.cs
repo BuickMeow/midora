@@ -280,11 +280,14 @@ public sealed class SelectionPresentationLifecycleTests
 
                 Assert.Empty(workspace.Selection.Ids);
                 Assert.Empty(workspace.SelectionSnapshot.Ids);
+                MidiSegment published = session.Project.PureMidiTracks.Single(value => value.Id == track.Id)
+                    .Segments.Single(value => value.Id == segment.Id);
                 Assert.Equal(
                     96,
-                    Assert.Single(segment.ChannelEvents, value =>
+                    Assert.Single(published.ChannelEvents, value =>
                         value.Kind == DirectMidiChannelEventKind.ControlChange
                         && value.Data1 == 11).Data2);
+                Assert.Empty(segment.ChannelEvents);
             }
             finally
             {

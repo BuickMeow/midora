@@ -1272,11 +1272,17 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         StagedProjectEdit staged = document.PrepareEdit(
             command,
             cancellationToken,
-            progress);
+            progress is null ? null : new BeforeSelectionProjectionProgress(progress));
         try
         {
             if (staged.PreparedSelection is PreparedTimelineSelection selection)
             {
+                // Project preparation is not the end of the foreground task:
+                // compressing/result-projecting the selection can still spill
+                // or be cancelled. Its work count is not known here.
+                progress?.Report(new TimelineEditPreparationProgress(
+                    TimelineEditPreparationPhase.BuildingResult, 0, 0).InRange(0.97, 0));
+                cancellationToken.ThrowIfCancellationRequested();
                 PreparedWorkspaceSelectionProjection projection =
                     selectionWorkspace?.Selection.PrepareProjection(
                         selection.ResultSelectionIds,
@@ -1289,6 +1295,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     new(selectionWorkspace?.Selection, projection));
             }
             cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new(TimelineEditPreparationPhase.Ready, 1, 1));
             return staged;
         }
         catch
@@ -1296,6 +1303,16 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             staged.Dispose();
             throw;
         }
+    }
+
+    private sealed class BeforeSelectionProjectionProgress(IProgress<TimelineEditPreparationProgress> target)
+        : IProgress<TimelineEditPreparationProgress>
+    {
+        public void Report(TimelineEditPreparationProgress value) => target.Report(
+            value.Phase == TimelineEditPreparationPhase.Ready
+                ? new TimelineEditPreparationProgress(TimelineEditPreparationPhase.BuildingResult,
+                    value.Completed, value.Total).InWorkRange(0.97, 0)
+                : value.InRange(0, 0.97));
     }
 
     internal bool TryGetPreparedWorkspaceSelectionProjection(
@@ -1382,6 +1399,16 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             {
                 lock (_modelRefreshGate) _workspaceSelectionHistoryPruneRequested = false;
             }
+            // An exact-key collision can discard every newly copied note while
+            // still producing a valid (empty) result selection. Selection-only
+            // publication must not create history or mark the Project modified.
+            if (preparedSelectionPublication is not null)
+            {
+                workspace.Selection.AdoptPrepared(preparedSelectionPublication.Projection);
+                if (_uiDispatcher is null)
+                    StoreCurrentWorkspaceSelections(document.CurrentStateId, before);
+                else QueueSelectionHistoryCapture(document.CurrentStateId);
+            }
             return result;
         }
 
@@ -1406,6 +1433,14 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         WorkspaceViewModel workspace,
         IReadOnlyCollection<PropertyField> fields)
     {
+        IProjectEditCommand? command = CreateObjectPropertiesEdit(workspace, fields);
+        if (command is not null) ExecutePreservingWorkspaceSelection(command, workspace);
+    }
+
+    internal IProjectEditCommand? CreateObjectPropertiesEdit(
+        WorkspaceViewModel workspace,
+        IReadOnlyCollection<PropertyField> fields)
+    {
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(fields);
         if (Project is null || !Workspaces.Contains(workspace))
@@ -1417,7 +1452,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         PropertyField[] pending = fields
             .Where(field => field.HasPendingChange)
             .ToArray();
-        if (pending.Length == 0) return;
+        if (pending.Length == 0) return null;
         if (pending.Any(field => !ObjectPropertiesProjection.CanApplyFromOwnedEditor(workspace, field)))
         {
             throw new InvalidOperationException("One or more object properties are read-only.");
@@ -1427,11 +1462,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             field => field.Key,
             field => field.Value,
             StringComparer.Ordinal);
-        IProjectEditCommand command = ObjectPropertiesProjection.CreateEditCommand(
+        return ObjectPropertiesProjection.CreateEditCommand(
             Project,
             workspace,
             edits);
-        ExecutePreservingWorkspaceSelection(command, workspace);
     }
 
     public ObjectPropertiesViewModel CreateObjectProperties(WorkspaceViewModel workspace)
@@ -1835,6 +1869,17 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
     }
 
+    internal void CaptureSelectionBeforeHistoryTransition() => CompletePendingSelectionHistoryCaptureBeforeEdit();
+
+    internal void PublishHistoryTransition(PreparedProjectHistoryTransition transition)
+    {
+        if (Document is not ProjectDocumentSession document)
+            throw new InvalidOperationException("The Project was closed while preparing history.");
+        RequestWorkspaceSelectionRestore(transition.TargetStateId);
+        try { document.PublishHistoryTransition(transition); }
+        catch { CancelWorkspaceSelectionRestore(transition.TargetStateId); throw; }
+    }
+
     public void Redo()
     {
         CompletePendingSelectionHistoryCaptureBeforeEdit();
@@ -2192,6 +2237,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         PrepareWorkspaceRuntimeState(workspace);
         workspace.Rebuild(Project, _revision);
+        workspace.PresentationDocumentRevision = Document?.PublicationRevision ?? -1;
         workspace.RefreshSelectionPresentation();
         if (workspace is TimelineWorkspaceViewModel timeline)
         {
@@ -2375,6 +2421,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             PrepareWorkspaceRuntimeState(created);
             created.Rebuild(Project, _revision);
+            created.PresentationDocumentRevision = Document?.PublicationRevision ?? -1;
             if (created is TimelineWorkspaceViewModel timeline)
             {
                 timeline.UpdatePlaybackCursor(Project, CurrentTick);
@@ -2415,6 +2462,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 }
                 PrepareWorkspaceRuntimeState(workspace);
                 workspace.Rebuild(Project, _revision);
+                workspace.PresentationDocumentRevision = Document?.PublicationRevision ?? -1;
                 workspace.RefreshSelectionPresentation();
                 if (workspace is TimelineWorkspaceViewModel timeline)
                 {
@@ -2469,6 +2517,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
             PrepareWorkspaceRuntimeState(workspace);
             workspace.Rebuild(Project, _revision);
+            workspace.PresentationDocumentRevision = Document?.PublicationRevision ?? -1;
             WorkspaceRebuildCount++;
             workspace.RefreshSelectionPresentation();
             rebuilt.Add(workspace);

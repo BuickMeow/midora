@@ -22,6 +22,8 @@ public static partial class ProjectDomainEditCommands
 
             SegmentLocation segment = FindSegment(project, segmentId);
             LogicalParameterLane lane = FindLogicalParameterLane(segment.Segment, laneId);
+            if (points.Count >= BoundedPointThreshold || lane.Points.Count >= BoundedPointThreshold)
+                return UpsertBoundedLogicalParameterPoints(segmentId, laneId, points).Prepare(project);
             LogicalParameterDefinition definition = FindBoundLogicalParameter(
                 project,
                 segment.Track,

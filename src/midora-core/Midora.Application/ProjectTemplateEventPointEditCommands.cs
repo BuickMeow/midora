@@ -11,6 +11,9 @@ public static partial class ProjectDomainEditCommands
         MidoraId subVoiceId,
         MidiValueTarget target,
         IReadOnlyCollection<TemplateEventPointEdit> points) =>
+        points.Count >= BoundedPointThreshold
+        ? BoundedUpsertTemplatePoints(eventInstrumentId, subVoiceId, target, points)
+        :
         Command("Draw template event points", project =>
         {
             ArgumentNullException.ThrowIfNull(points);
@@ -20,6 +23,8 @@ public static partial class ProjectDomainEditCommands
             }
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (voice.Events.Count >= BoundedPointThreshold)
+                return BoundedUpsertTemplatePoints(eventInstrumentId, subVoiceId, target, points).Prepare(project);
             TemplateEventPointEdit[] edits = points
                 .OrderBy(value => value.Tick)
                 .ToArray();

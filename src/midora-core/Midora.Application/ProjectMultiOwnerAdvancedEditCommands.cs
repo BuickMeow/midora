@@ -260,6 +260,7 @@ public static partial class ProjectDomainEditCommands
                 "A Timeline owner operation requires at least one owner.");
 
         List<IPreparedProjectEdit> prepared = new(commands.Count);
+        using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
         try
         {
             ReportPreparationProgress(
@@ -271,8 +272,11 @@ public static partial class ProjectDomainEditCommands
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 ITimelineSelectionResultEditCommand command = commands[index];
+                IProgress<TimelineEditPreparationProgress> childProgress = new BulkEditProgressRange(
+                    progress, (double)index / commands.Count, 1d / commands.Count);
+                using var childScope = BulkEditPreparationContext.Enter(cancellationToken, childProgress, project: project);
                 IPreparedProjectEdit edit = command is IProgressReportingProjectEditCommand reporting
-                    ? reporting.Prepare(project, cancellationToken, progress: null)
+                    ? reporting.Prepare(project, cancellationToken, childProgress)
                     : command is ICancellableProjectEditCommand cancellable
                         ? cancellable.Prepare(project, cancellationToken)
                         : command.Prepare(project);
@@ -332,7 +336,12 @@ public static partial class ProjectDomainEditCommands
                 "A Timeline owner operation requires at least one owner.",
                 nameof(owners));
         HashSet<TKey> ownerKeys = [];
-        HashSet<MidoraId> objectIds = [];
+        // Preserve eager validation for bounded small caller-owned lists.
+        // Large selection resolution belongs to cancellable Prepare, not the
+        // UI command constructor; globally unique IDs then cannot validly
+        // resolve in two different owners, and each owner checks duplicates.
+        bool eagerIds = owners.Sum(owner => (long)(owner is null ? 0 : ids(owner)?.Count ?? 0)) <= 4096;
+        HashSet<MidoraId>? selectedIds = eagerIds ? [] : null;
         T[] result = new T[owners.Count];
         int index = 0;
         foreach (T owner in owners)
@@ -344,13 +353,13 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(selected);
             if (selected.Count == 0)
                 throw new ArgumentException("Every Timeline owner selection must be non-empty.", nameof(owners));
-            foreach (MidoraId id in selected)
-            {
-                if (id == default || !objectIds.Add(id))
-                    throw new ArgumentException(
-                        "Timeline selections must contain distinct valid stable IDs.",
-                        nameof(owners));
-            }
+            if (selectedIds is not null)
+                foreach (MidoraId id in selected)
+                    if (id == default || !selectedIds.Add(id))
+                        throw new ArgumentException("Timeline owner selections must contain distinct valid object IDs.", nameof(owners));
+            // ID membership and duplicates are checked while preparing each
+            // owner, by the bounded formal-ordinal selection resolver. Do not
+            // build a second, selection-sized HashSet on the UI command path.
             result[index++] = freeze(owner);
         }
         return result;
@@ -363,7 +372,7 @@ public static partial class ProjectDomainEditCommands
             owners,
             static value => value.SegmentId,
             ids,
-            static value => value with { NoteIds = value.NoteIds.ToArray() })
+            static value => value with { NoteIds = FreezeOwnerIds(value.NoteIds) })
         .OrderBy(static value => value.SegmentId)
         .ToArray();
 
@@ -374,7 +383,7 @@ public static partial class ProjectDomainEditCommands
             owners,
             static value => value.SegmentId,
             ids,
-            static value => value with { NoteIds = value.NoteIds.ToArray() })
+            static value => value with { NoteIds = FreezeOwnerIds(value.NoteIds) })
         .OrderBy(static value => value.SegmentId)
         .ToArray();
 
@@ -385,7 +394,7 @@ public static partial class ProjectDomainEditCommands
             owners,
             static value => (value.EventInstrumentId, value.SubVoiceId),
             ids,
-            static value => value with { NoteIds = value.NoteIds.ToArray() })
+            static value => value with { NoteIds = FreezeOwnerIds(value.NoteIds) })
         .OrderBy(static value => value.EventInstrumentId)
         .ThenBy(static value => value.SubVoiceId)
         .ToArray();
@@ -396,7 +405,7 @@ public static partial class ProjectDomainEditCommands
             owners,
             static value => value.SegmentId,
             static value => value.PointIds,
-            static value => value with { PointIds = value.PointIds.ToArray() })
+            static value => value with { PointIds = FreezeOwnerIds(value.PointIds) })
         .OrderBy(static value => value.SegmentId)
         .ToArray();
 
@@ -406,7 +415,7 @@ public static partial class ProjectDomainEditCommands
             owners,
             static value => value.SegmentId,
             static value => value.EventIds,
-            static value => value with { EventIds = value.EventIds.ToArray() })
+            static value => value with { EventIds = FreezeOwnerIds(value.EventIds) })
         .OrderBy(static value => value.SegmentId)
         .ToArray();
 
@@ -416,10 +425,22 @@ public static partial class ProjectDomainEditCommands
             owners,
             static value => (value.EventInstrumentId, value.SubVoiceId),
             static value => value.EventIds,
-            static value => value with { EventIds = value.EventIds.ToArray() })
+            static value => value with { EventIds = FreezeOwnerIds(value.EventIds) })
         .OrderBy(static value => value.EventInstrumentId)
         .ThenBy(static value => value.SubVoiceId)
         .ToArray();
+
+    private static IReadOnlyCollection<MidoraId> FreezeOwnerIds(IReadOnlyCollection<MidoraId> ids)
+    {
+        if (ids is CompactMidoraIdList or BoundedImmutableValueSource<MidoraId>)
+            return CompactMidoraIdList.Freeze((IReadOnlyList<MidoraId>)ids);
+        if (ids.Count <= 4096)
+            return CompactMidoraIdList.Freeze(ids as IReadOnlyList<MidoraId> ?? ids.ToArray());
+        // Formal UI callers already supply immutable selection roots. Unknown
+        // large programmatic sources are read only during cancellable Prepare;
+        // do not enumerate and materialize them on the UI constructor path.
+        return ids;
+    }
 
     private static ProjectChangeSet MergeTimelineChanges(IEnumerable<ProjectChangeSet> values)
     {
@@ -597,6 +618,13 @@ public static partial class ProjectDomainEditCommands
 
         public long ExpectedNextStableId { get; }
         public long ReplacementNextStableId => _next;
+
+        public MidoraId ReserveNext()
+        {
+            long current = _next;
+            _next = checked(_next + 1);
+            return MidoraId.FromSequence(current);
+        }
 
         public DetachedStableIdReservation Reserve(int count)
         {

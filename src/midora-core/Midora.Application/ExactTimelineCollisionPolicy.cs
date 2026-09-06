@@ -1033,6 +1033,7 @@ internal static class ExactTimelineCollisionPolicy
 
         public bool HasChanges => source.HasChanges;
         public ProjectChangeSet Changes => source.Changes;
+        public bool HasPreparedSelection => source is IPreparedTimelineSelectionEdit { HasPreparedSelection: true };
         public PreparedTimelineSelection PreparedSelection =>
             GetPreparedSelection(source);
 
@@ -1082,6 +1083,7 @@ internal static class ExactTimelineCollisionPolicy
 
         public bool HasChanges => source.HasChanges;
         public ProjectChangeSet Changes => source.Changes;
+        public bool HasPreparedSelection => source is IPreparedTimelineSelectionEdit { HasPreparedSelection: true };
         public PreparedTimelineSelection PreparedSelection =>
             GetPreparedSelection(source);
 
@@ -1126,6 +1128,7 @@ internal static class ExactTimelineCollisionPolicy
     {
         public bool HasChanges => Source.HasChanges;
         public ProjectChangeSet Changes => Source.Changes;
+        public bool HasPreparedSelection => Source is IPreparedTimelineSelectionEdit { HasPreparedSelection: true };
         public PreparedTimelineSelection PreparedSelection =>
             GetPreparedSelection(Source);
         public void Apply(MidoraProject project) => Source.Apply(project);

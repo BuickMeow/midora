@@ -10,7 +10,7 @@ namespace Midora.Desktop.Presentation.Interaction;
 /// Stable IDs remain the public identity; the page number is only an in-memory
 /// storage address and is never persisted or used as business identity.
 /// </summary>
-public sealed class CompressedMidoraIdSet : IReadOnlySet<MidoraId>
+public sealed class CompressedMidoraIdSet : ITimelineInMemoryIdSet
 {
     private const int PageShift = 12;
     private const int PageSize = 1 << PageShift;

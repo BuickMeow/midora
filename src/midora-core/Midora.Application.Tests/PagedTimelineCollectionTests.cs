@@ -841,10 +841,12 @@ public sealed class PagedTimelineCollectionTests
         IPreparedProjectEdit edit = ExactTimelineCollisionPolicy.Wrap(project, source);
 
         edit.Apply(project);
-        Assert.Equal(40_000, segment.Notes.Count);
+        Assert.Equal(40_000, track.Segments.Single(value => value.Id == segment.Id).Notes.Count);
+        Assert.Equal(20_000, segment.Notes.Count); // Frozen Undo root remains unchanged.
 
         edit.Undo(project);
-        Assert.Equal(notes, segment.Notes);
+        Assert.Same(segment, track.Segments.Single(value => value.Id == segment.Id));
+        Assert.Equal(notes, track.Segments.Single(value => value.Id == segment.Id).Notes);
     }
 
     [Fact]
@@ -878,10 +880,12 @@ public sealed class PagedTimelineCollectionTests
         IPreparedProjectEdit edit = ExactTimelineCollisionPolicy.Wrap(project, source);
 
         edit.Apply(project);
-        Assert.Equal(40_000, voice.Events.Count);
+        Assert.Equal(40_000, instrument.SubVoices.Single(value => value.Id == voice.Id).Events.Count);
+        Assert.Equal(20_000, voice.Events.Count); // Frozen Undo root remains unchanged.
 
         edit.Undo(project);
-        Assert.Equal(notes, voice.Events);
+        Assert.Same(voice, instrument.SubVoices.Single(value => value.Id == voice.Id));
+        Assert.Equal(notes, instrument.SubVoices.Single(value => value.Id == voice.Id).Events);
         Assert.Equal(100_000, instrument.TemplateLengthTicks);
     }
 

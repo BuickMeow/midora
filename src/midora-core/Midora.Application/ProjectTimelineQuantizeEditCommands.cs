@@ -13,6 +13,17 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(options);
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             SegmentLocation location = FindSegment(project, segmentId);
+            if (noteIds.Count >= BoundedNoteThreshold || location.Segment.Notes.Count >= BoundedNoteThreshold)
+            {
+                using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+                long frozenStep = ResolveQuantizeStep(project, options.Grid);
+                return PrepareBoundedLogicalNotes(project, location, noteIds, _ => value =>
+                {
+                    var result = QuantizeSegmentNote(new(value.StartTick, value.LengthTicks, value.Note, value.Velocity),
+                        location.Segment.ProjectStartTick, location.Segment.ContentOffsetTick, frozenStep, options.Mode);
+                    return result.Discard ? null : value with { StartTick = result.Value.StartTick, LengthTicks = result.Value.LengthTicks };
+                }, publishResult: publishResult, formalCollisions: true);
+            }
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedLogicalNote[] selected = SelectAdvancedLogicalNotes(location.Segment, noteIds);
@@ -60,6 +71,18 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(options);
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
+            if (noteIds.Count > 4096 || location.Segment.Notes.Count > 4096)
+            {
+                using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+                long frozenStep = ResolveQuantizeStep(project, options.Grid);
+                return PrepareBoundedDirectMidiNoteTransform(project, segmentId, noteIds, _ => value =>
+                {
+                    var result = QuantizeSegmentNote(new(value.StartTick, value.LengthTicks, value.Key, value.NoteOnVelocity),
+                        location.Segment.ProjectStartTick, location.Segment.ContentOffsetTick, frozenStep, options.Mode);
+                    return result.Discard ? null : value with { StartTick = result.Value.StartTick,
+                        LengthTicks = result.Value.LengthTicks };
+                }, formalCollisions: true, publishResult: publishResult);
+            }
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedDirectNote[] selected = SelectAdvancedDirectNotes(location.Segment, noteIds);
@@ -112,6 +135,17 @@ public static partial class ProjectDomainEditCommands
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold)
+            {
+                using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+                long frozenStep = ResolveQuantizeStep(project, options.Grid);
+                return PrepareBoundedTemplateNotes(project, instrument, voice, noteIds, _ => value =>
+                {
+                    var result = QuantizeTemplateNote(new(value.Tick, value.LengthTicks, value.Number, value.Value),
+                        instrument.TemplateLengthTicks, frozenStep, options.Mode);
+                    return result.Discard ? null : value with { Tick = result.Value.StartTick, LengthTicks = result.Value.LengthTicks };
+                }, publishResult: publishResult, formalCollisions: true);
+            }
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(instrument, voice);
             AdvancedTemplateNote[] selected = SelectAdvancedTemplateNotes(voice, noteIds);
@@ -181,9 +215,14 @@ public static partial class ProjectDomainEditCommands
         MidoraId? laneId,
         IReadOnlyCollection<MidoraId> pointIds,
         TimelineQuantizeGrid grid) =>
+        pointIds.Count >= BoundedPointThreshold
+        ? BoundedQuantizeLogicalPoints(segmentId, laneId, pointIds, grid)
+        :
         ResultCommand("Quantize logical parameter points", (project, publishResult, cancellationToken, progress) =>
         {
             SegmentLocation location = FindSegment(project, segmentId);
+            if (location.Segment.ParameterLanes.Any(lane => (laneId is null || lane.Id == laneId) && lane.Points.Count >= BoundedPointThreshold))
+                return ForwardBoundedSelection(BoundedQuantizeLogicalPoints(segmentId, laneId, pointIds, grid), project, publishResult, cancellationToken, progress);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             IReadOnlySet<MidoraId> requested = ValidateTimelineSelectionIds(
@@ -294,6 +333,20 @@ public static partial class ProjectDomainEditCommands
         ResultCommand("Quantize Direct MIDI events", (project, publishResult, cancellationToken, progress) =>
         {
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
+            if (eventIds.Count > 4096 || location.Segment.ChannelEvents.Count > 4096)
+            {
+                using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+                long frozenStep = ResolveQuantizeStep(project, grid);
+                return PrepareBoundedDirectMidiEventTransform(project, segmentId, eventIds, _ => value =>
+                {
+                    if (value.Kind is DirectMidiChannelEventKind.NoteOn or DirectMidiChannelEventKind.NoteOff)
+                        throw new ArgumentException("Select non-note MIDI Events only.", nameof(eventIds));
+                    long absolute = SegmentLocalToAbsolute(value.Tick, location.Segment.ProjectStartTick, location.Segment.ContentOffsetTick);
+                    long tick = SegmentAbsoluteToLocal(SnapProjectAbsolute(absolute, frozenStep),
+                        location.Segment.ProjectStartTick, location.Segment.ContentOffsetTick);
+                    return tick < 0 ? null : value with { Tick = tick };
+                }, BoundedEventCollisionMode.FormalLatest, publishResult);
+            }
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             IReadOnlySet<MidoraId> requested = ValidateTimelineSelectionIds(
@@ -365,10 +418,16 @@ public static partial class ProjectDomainEditCommands
         MidoraId subVoiceId,
         IReadOnlyCollection<MidoraId> eventIds,
         TimelineQuantizeGrid grid) =>
+        eventIds.Count >= BoundedPointThreshold
+        ? BoundedTemplatePoints("Quantize SubVoice events", eventInstrumentId, subVoiceId,
+            eventIds, BoundedPointOperation.Quantize, grid: grid)
+        :
         ResultCommand("Quantize SubVoice events", (project, publishResult, cancellationToken, progress) =>
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (voice.Events.Count >= BoundedPointThreshold)
+                return ForwardBoundedSelection(BoundedTemplatePoints("Quantize SubVoice events", eventInstrumentId, subVoiceId, eventIds, BoundedPointOperation.Quantize, grid: grid), project, publishResult, cancellationToken, progress);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(instrument, voice);
             IReadOnlySet<MidoraId> requested = ValidateTimelineSelectionIds(

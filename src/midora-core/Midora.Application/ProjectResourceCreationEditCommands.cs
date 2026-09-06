@@ -53,7 +53,6 @@ public static partial class ProjectDomainEditCommands
                 value =>
                 {
                     SubVoice copy = CloneSubVoice(value, source, normalizedName);
-                    RemoveLaterExactTimelineCollisions(copy);
                     instrument.SubVoices.Insert(index, copy);
                     return copy;
                 },
@@ -946,28 +945,7 @@ public static partial class ProjectDomainEditCommands
                     sourceMapping.TargetSettings.Overflow));
             copy.EventMappings.Add(mappingCopy);
         }
-        foreach (TemplateEvent sourceEvent in source.Events)
-        {
-            TemplateEvent eventCopy = new(project);
-            SetTemplateEvent(eventCopy, CaptureTemplateEvent(sourceEvent));
-            copy.Events.Add(eventCopy);
-        }
-        foreach (ValueCurve sourceCurve in source.Curves)
-        {
-            ValueCurve curveCopy = new(project) { Target = sourceCurve.Target };
-            SetTargetSettings(
-                curveCopy.TargetSettings,
-                new(sourceCurve.TargetSettings.Rounding, sourceCurve.TargetSettings.Overflow));
-            foreach (CurvePoint point in sourceCurve.Points)
-            {
-                curveCopy.Points.Add(new CurvePoint(
-                    project,
-                    point.Tick,
-                    point.Value,
-                    point.Interpolation));
-            }
-            copy.Curves.Add(curveCopy);
-        }
+        CopyBoundedSubVoiceTimeline(project, source, copy);
         return copy;
     }
 

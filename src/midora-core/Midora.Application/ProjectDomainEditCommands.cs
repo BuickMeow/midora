@@ -424,6 +424,8 @@ public static partial class ProjectDomainEditCommands
             {
                 throw new InvalidOperationException("Only Segments on the same Logical Track can be joined.");
             }
+            if (LogicalSegmentRecordCount(first.Segment) + LogicalSegmentRecordCount(second.Segment) >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalSegmentJoin(project, first, second);
             long nextStableId = project.NextStableId;
             Segment joined = SegmentEditing.Join(project, first.Segment, second.Segment);
             if (project.NextStableId != nextStableId)

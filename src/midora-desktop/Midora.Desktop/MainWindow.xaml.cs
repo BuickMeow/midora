@@ -106,6 +106,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = _session;
+        _session.PropertyChanged += OnClipboardSessionChanged;
         SourceInitialized += OnSourceInitialized;
         StateChanged += OnWindowStateChanged;
         PreviewKeyDown += OnPreviewKeyDown;
@@ -177,6 +178,10 @@ public partial class MainWindow : Window
 
     protected override async void OnClosed(EventArgs e)
     {
+        _session.PropertyChanged -= OnClipboardSessionChanged;
+        _projectClipboard?.Dispose();
+        _projectClipboard = null;
+        _clipboardDocument = null;
         if (_windowSource is not null)
         {
             _windowSource.RemoveHook(OnWindowMessage);
@@ -547,8 +552,25 @@ public partial class MainWindow : Window
         };
     }
 
-    private void OnUndoClick(object sender, RoutedEventArgs e) => RunSynchronous("Undo", _session.Undo);
-    private void OnRedoClick(object sender, RoutedEventArgs e) => RunSynchronous("Redo", _session.Redo);
+    private void OnUndoClick(object sender, RoutedEventArgs e) => RunHistoryTransition(redo: false);
+    private void OnRedoClick(object sender, RoutedEventArgs e) => RunHistoryTransition(redo: true);
+    private async void RunHistoryTransition(bool redo)
+    {
+        if (!_session.CanEditProject || _session.Document is not ProjectDocumentSession document
+            || (redo ? !document.CanRedo : !document.CanUndo)) return;
+        WorkspaceViewModel? workspace = _session.ActiveWorkspace;
+        TimelineSurface? source = _lastTimelineCommandSurface;
+        _session.CaptureSelectionBeforeHistoryTransition();
+        await RunOperationAsync(redo ? "Redo" : "Undo", async token =>
+        {
+            _session.ActiveForegroundTask?.Report("Preparing history transition...", 0);
+            PreparedProjectHistoryTransition prepared = await Task.Run(
+                () => document.PrepareHistoryTransition(redo, token), token);
+            _session.ActiveForegroundTask!.SealCancellationBeforePublication();
+            _session.PublishHistoryTransition(prepared);
+        }, canCancel: true);
+        if (workspace is not null) RestoreModalCommandFocus(workspace, source);
+    }
     private void OnNavigateBackClick(object sender, RoutedEventArgs e) => _session.NavigateBack();
     private void OnNavigateForwardClick(object sender, RoutedEventArgs e) => _session.NavigateForward();
 
@@ -1086,17 +1108,24 @@ public partial class MainWindow : Window
         SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
     }
 
+    private WorkspaceViewModel? _preparedSelectionWorkspace;
+    private long _preparedSelectionRevision = -1;
+
     private void SelectCreatedWorkspaceObjects(
         WorkspaceViewModel workspace,
         long firstNewStableId,
         bool replaceSelectionWhenNoObjectSurvives = false,
-        WorkspaceTimelineSelectionSource? timelineSource = null) =>
+        WorkspaceTimelineSelectionSource? timelineSource = null)
+    {
+        if (ReferenceEquals(workspace, _preparedSelectionWorkspace)
+            && _session.Document?.PublicationRevision == _preparedSelectionRevision) return;
         SelectCreatedWorkspaceObjects(
             _session,
             workspace,
             firstNewStableId,
             replaceSelectionWhenNoObjectSurvives,
             timelineSource);
+    }
 
     internal static void SelectCreatedWorkspaceObjects(
         DesktopSessionController session,
@@ -1108,10 +1137,10 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(workspace);
         if (session.Project is not MidoraProject project) return;
-        static MidoraId[] NewIds<T>(IEnumerable<T> items, Func<T, MidoraId> id, long first) =>
-            items.Select(id).Where(value => value.Value >= first).Distinct().ToArray();
+        static CompressedMidoraIdSet NewIds<T>(IEnumerable<T> items, Func<T, MidoraId> id, long first) =>
+            CompressedMidoraIdSet.Create(items.Select(id).Where(value => value.Value >= first));
 
-        MidoraId[] created = workspace switch
+        CompressedMidoraIdSet created = workspace switch
         {
             TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } =>
                 NewIds(project.Tracks.SelectMany(item => item.Segments), item => item.Id, firstNewStableId),
@@ -1121,13 +1150,13 @@ public partial class MainWindow : Window
                 ObjectId: MidoraId segmentId
             } => SegmentSelection(segmentId),
             TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor } conductor =>
-                conductor.ConductorEvents.Select(item => item.Id)
-                    .Where(id => id.Value >= firstNewStableId).Distinct().ToArray(),
+                CompressedMidoraIdSet.Create(conductor.ConductorEvents.Select(item => item.Id)
+                    .Where(id => id.Value >= firstNewStableId)),
             InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId } =>
                 InstrumentSelection(instrumentId),
-            _ => []
+            _ => CompressedMidoraIdSet.Empty
         };
-        if (created.Length == 0)
+        if (created.Count == 0)
         {
             if (replaceSelectionWhenNoObjectSurvives)
             {
@@ -1151,39 +1180,56 @@ public partial class MainWindow : Window
         session.RefreshWorkspaceSelection(workspace);
         return;
 
-        MidoraId[] SegmentSelection(MidoraId segmentId)
-            => TimelineWorkspaceViewModel.FindCreatedSegmentObjectIds(
-                project,
-                segmentId,
-                firstNewStableId);
+        CompressedMidoraIdSet SegmentSelection(MidoraId segmentId)
+        {
+            if (TimelineWorkspaceViewModel.FindSegment(project, segmentId) is { Segment: var logical })
+            {
+                var lanes = NewIds(logical.ParameterLanes, static value => value.Id, firstNewStableId);
+                if (lanes.Count != 0) return lanes;
+                return CompressedMidoraIdSet.Create(CreatedIn(logical.Notes.CreateQuerySnapshot())
+                    .Concat(logical.ParameterLanes.SelectMany(lane => CreatedIn(lane.Points.CreateQuerySnapshot()))));
+            }
+            if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is not { Segment: var midi })
+                return CompressedMidoraIdSet.Empty;
+            var notes = CompressedMidoraIdSet.Create(CreatedIn(midi.Notes.CreateObjectSource()));
+            if (notes.Count != 0) return notes;
+            var events = CompressedMidoraIdSet.Create(CreatedIn(midi.ChannelEvents.CreateObjectSource()));
+            return events.Count != 0 ? events : CompressedMidoraIdSet.Create(CreatedIn(midi.OpaqueEvents.CreateObjectSource()));
+        }
 
-        MidoraId[] InstrumentSelection(MidoraId instrumentId)
+        IEnumerable<MidoraId> CreatedIn<T>(ITimelineObjectSource<T> source)
+        {
+            for (long value = firstNewStableId; value < project.NextStableId; value++)
+            {
+                MidoraId id = new(value);
+                if (source.TryFindOrdinalById(id, out _)) yield return id;
+            }
+        }
+
+        CompressedMidoraIdSet InstrumentSelection(MidoraId instrumentId)
         {
             EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId);
-            if (instrument is null) return [];
-            MidoraId[] preferred = NewIds(instrument.SubVoices, item => item.Id, firstNewStableId);
-            if (preferred.Length != 0) return preferred;
+            if (instrument is null) return CompressedMidoraIdSet.Empty;
+            CompressedMidoraIdSet preferred = NewIds(instrument.SubVoices, item => item.Id, firstNewStableId);
+            if (preferred.Count != 0) return preferred;
             preferred = NewIds(instrument.LogicalParameters, item => item.Id, firstNewStableId);
-            if (preferred.Length != 0) return preferred;
+            if (preferred.Count != 0) return preferred;
             preferred = NewIds(instrument.ParameterMappings, item => item.Id, firstNewStableId);
-            if (preferred.Length != 0) return preferred;
+            if (preferred.Count != 0) return preferred;
             preferred = NewIds(instrument.MappingFunctions, item => item.Id, firstNewStableId);
-            if (preferred.Length != 0) return preferred;
+            if (preferred.Count != 0) return preferred;
             preferred = NewIds(instrument.Envelopes, item => item.Id, firstNewStableId);
-            if (preferred.Length != 0) return preferred;
-            preferred = NewIds(instrument.SubVoices.SelectMany(item => item.Events), item => item.Id, firstNewStableId);
-            if (preferred.Length != 0) return preferred;
+            if (preferred.Count != 0) return preferred;
+            preferred = CompressedMidoraIdSet.Create(instrument.SubVoices.SelectMany(item => CreatedIn(item.Events.CreateQuerySnapshot())));
+            if (preferred.Count != 0) return preferred;
             preferred = NewIds(instrument.SubVoices.SelectMany(item => item.Curves), item => item.Id, firstNewStableId);
-            if (preferred.Length != 0) return preferred;
-            preferred = NewIds(
-                instrument.SubVoices.SelectMany(item => item.Curves).SelectMany(item => item.Points),
-                item => item.Id,
-                firstNewStableId);
-            if (preferred.Length != 0) return preferred;
+            if (preferred.Count != 0) return preferred;
+            preferred = CompressedMidoraIdSet.Create(instrument.SubVoices.SelectMany(item => item.Curves).SelectMany(item => CreatedIn(item.Points.CreateQuerySnapshot())));
+            if (preferred.Count != 0) return preferred;
             return workspace is InstrumentWorkspaceViewModel instrumentWorkspace
-                ? instrumentWorkspace.MappingSteps.Select(item => item.Id)
-                    .Where(id => id.Value >= firstNewStableId).Distinct().ToArray()
-                : [];
+                ? CompressedMidoraIdSet.Create(instrumentWorkspace.MappingSteps.Select(item => item.Id)
+                    .Where(id => id.Value >= firstNewStableId))
+                : CompressedMidoraIdSet.Empty;
         }
     }
 
@@ -1754,16 +1800,54 @@ public partial class MainWindow : Window
         Add("Clear Time Range", OnClearTimeRangeClick);
     }
 
-    private void OnEditTimelinePropertiesClick(object sender, RoutedEventArgs e)
+    private async void OnEditTimelinePropertiesClick(object sender, RoutedEventArgs e)
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
-        ObjectPropertiesViewModel properties = _session.CreateObjectProperties(workspace);
+        await OpenWorkspacePropertiesAsync(workspace);
+    }
+
+    private async Task OpenWorkspacePropertiesAsync(WorkspaceViewModel workspace)
+    {
+        try { await OpenWorkspacePropertiesCoreAsync(workspace); }
+        catch (Exception exception) { ShowError("Properties", exception.Message); }
+    }
+
+    private async Task OpenWorkspacePropertiesCoreAsync(WorkspaceViewModel workspace)
+    {
+        if (!PrepareForModalSurface()) return;
+        ObjectPropertiesViewModel? properties = null;
+        if (workspace.Selection.Ids.Count > 1 && _session.Project is MidoraProject project)
+        {
+            ObjectPropertiesSelectionContext selection = ObjectPropertiesSelectionContext.Capture(workspace);
+            long revision = _session.Document!.PublicationRevision;
+            bool completed = await RunOperationAsync("Read Properties", async token =>
+            {
+                using DispatcherCoalescingProgress<TimelineEditPreparationProgress> progress = new(
+                    Dispatcher, TimeSpan.FromMilliseconds(100),
+                    value => _session.ActiveForegroundTask?.Report(
+                        FormatTimelineEditPreparationProgress(value), value.IsIndeterminate ? null : value.OverallFraction));
+                properties = await Task.Run(() => ObjectPropertiesProjection.ReadMultiSelection(
+                    project, selection, token, progress), token);
+                progress.Flush();
+                token.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(_session.Project, project)
+                    || _session.Document!.PublicationRevision != revision)
+                    throw new InvalidOperationException("The Properties source changed while it was being read.");
+            }, canCancel: true);
+            if (!completed)
+            {
+                RestoreModalCommandFocus(workspace, _lastTimelineCommandSurface);
+                return;
+            }
+        }
+        else properties = _session.CreateObjectProperties(workspace);
+        if (properties is null) return;
         if (!ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties))
         {
             ShowUnavailable("Properties", "The current object has no available properties.");
             return;
         }
-        ObjectPropertiesDialog dialog = new(_session, workspace) { Owner = this };
+        ObjectPropertiesDialog dialog = new(_session, workspace, properties) { Owner = this };
         _ = ShowModalDialog(dialog);
         _session.RefreshWorkspaceSelection(workspace);
     }
@@ -1923,7 +2007,15 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Delete Project Object", () => _session.DeleteProjectTreeNode(node, confirmed: true));
+        if (node.ObjectId is not MidoraId objectId) return;
+        StartWorkspaceEdit(node.Kind switch
+        {
+            ProjectTreeNodeKind.LogicalTrack => ProjectDomainEditCommands.DeleteLogicalTrack(objectId, true),
+            ProjectTreeNodeKind.EventInstrument => ProjectDomainEditCommands.DeleteEventInstrument(objectId, true),
+            ProjectTreeNodeKind.DamagedEventInstrument => ProjectDomainEditCommands.DeleteDamagedEventInstrument(objectId),
+            ProjectTreeNodeKind.DamagedLogicalTrack => ProjectDomainEditCommands.DeleteDamagedLogicalTrack(objectId),
+            _ => throw new InvalidOperationException("This Project node cannot be deleted.")
+        });
     }
 
     private void OnInstrumentListDoubleClick(object sender, MouseButtonEventArgs e)
@@ -2306,8 +2398,8 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Delete Event Instrument", () => _session.Execute(
-            ProjectDomainEditCommands.DeleteEventInstrument(selected.Id, referencedDeletionConfirmed: true)));
+        StartWorkspaceEdit(ProjectDomainEditCommands.DeleteEventInstrument(
+            selected.Id, referencedDeletionConfirmed: true));
     }
 
     private void OnDuplicateLibraryInstrumentClick(object sender, RoutedEventArgs e)
@@ -2319,8 +2411,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Duplicate Event Instrument", () =>
-            _session.Execute(ProjectDomainEditCommands.DuplicateEventInstrument(selected.Id)));
+        StartWorkspaceEdit(ProjectDomainEditCommands.DuplicateEventInstrument(selected.Id));
     }
 
     private void OnCopyLibraryInstrumentClick(object sender, RoutedEventArgs e) =>
@@ -2341,15 +2432,7 @@ public partial class MainWindow : Window
     private bool CopyEventInstrument(MidoraId instrumentId)
     {
         if (_session.Document is not ProjectDocumentSession document) return false;
-        RunSynchronous("Copy Event Instrument", () =>
-        {
-            ProjectObjectClipboardPayload payload =
-                ProjectObjectClipboard.CopyEventInstrument(document, instrumentId);
-            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
-            _projectClipboard = payload;
-            _clipboardDocument = document;
-            _session.SetStatusMessage($"Copied {payload.PlainTextSummary}.");
-        });
+        StartClipboardTransfer(document, () => ProjectObjectClipboard.CopyEventInstrument(document, instrumentId));
         return true;
     }
 
@@ -2365,12 +2448,9 @@ public partial class MainWindow : Window
         {
             return false;
         }
-        RunSynchronous("Paste Event Instrument", () =>
+        long firstNewStableId = project.NextStableId;
+        StartWorkspaceEdit(ProjectObjectClipboard.CreatePasteEventInstrumentCommand(document, payload), () =>
         {
-            long firstNewStableId = project.NextStableId;
-            _session.Execute(ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
-                document,
-                payload));
             if (_session.ActiveWorkspace is LibraryWorkspaceViewModel library)
             {
                 library.SelectedInstrument = library.Instruments
@@ -2430,8 +2510,8 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Duplicate Event Instrument", () => _session.Execute(
-            ProjectDomainEditCommands.DuplicateEventInstrument(instrumentId)));
+        StartWorkspaceEdit(
+            ProjectDomainEditCommands.DuplicateEventInstrument(instrumentId));
     }
 
     private void OnCutTreeLogicalTrackClick(object sender, RoutedEventArgs e) =>
@@ -2450,8 +2530,8 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Duplicate Logical Track", () => _session.Execute(
-            ProjectDomainEditCommands.DuplicateLogicalTrack(trackId)));
+        StartWorkspaceEdit(
+            ProjectDomainEditCommands.DuplicateLogicalTrack(trackId));
     }
 
     private bool CutOrCopySelectedLogicalTrack(bool cut, bool requireTreeSelection = false)
@@ -2462,30 +2542,9 @@ public partial class MainWindow : Window
         {
             return false;
         }
-        RunSynchronous(cut ? "Cut Logical Track" : "Copy Logical Track", () =>
-        {
-            ProjectObjectClipboardPayload payload;
-            IProjectEditCommand? delete = null;
-            if (cut)
-            {
-                ProjectObjectClipboardCutPreparation preparation =
-                    ProjectObjectClipboard.PrepareCutLogicalTrack(document, track.Id);
-                payload = preparation.Payload;
-                delete = preparation.DeleteAfterSuccessfulClipboardWrite;
-            }
-            else
-            {
-                payload = ProjectObjectClipboard.CopyLogicalTrack(document, track.Id);
-            }
-            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
-            _projectClipboard = payload;
-            _clipboardDocument = document;
-            if (delete is not null)
-            {
-                _session.Execute(delete);
-            }
-            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
-        });
+        MidoraId trackId = track.Id;
+        StartClipboardTransfer(document, () => ProjectObjectClipboard.CopyLogicalTrack(document, trackId),
+            cut ? ProjectDomainEditCommands.DeleteLogicalTrack(trackId, nonEmptyDeletionConfirmed: true) : null);
         return true;
     }
 
@@ -2507,15 +2566,9 @@ public partial class MainWindow : Window
         MidoraId? targetInstrumentId = ResolveLogicalTrackPasteTarget(project);
         if (targetInstrumentId is null) return false;
         int targetIndex = Math.Clamp(insertionIndex, 0, project.ArrangementTracks.Count);
-        RunSynchronous("Paste Logical Track", () =>
-        {
-            _session.Execute(ProjectObjectClipboard.CreatePasteLogicalTrackCommand(
-                document,
-                payload,
-                targetInstrumentId.Value,
-                targetIndex));
-            _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}.");
-        });
+        StartWorkspaceEdit(ProjectObjectClipboard.CreatePasteLogicalTrackCommand(
+            document, payload, targetInstrumentId.Value, targetIndex),
+            () => _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}."));
         return true;
     }
 
@@ -2664,8 +2717,9 @@ public partial class MainWindow : Window
             return;
         }
         InstrumentWorkspaceViewModel workspace = (InstrumentWorkspaceViewModel)_session.ActiveWorkspace;
-        RunSynchronous("Duplicate SubVoice", () => ExecuteAndSelectCreated(
-            ProjectDomainEditCommands.DuplicateSubVoice(instrumentId, subVoiceId), workspace));
+        long firstId = _session.Project!.NextStableId;
+        StartWorkspaceEdit(ProjectDomainEditCommands.DuplicateSubVoice(instrumentId, subVoiceId),
+            () => SelectCreatedWorkspaceObjects(workspace, firstId));
     }
 
     private void OnInstrumentStructureCutClick(object sender, RoutedEventArgs e) =>
@@ -3500,7 +3554,7 @@ public partial class MainWindow : Window
                 instrumentId, parameterId, name, explicitValue)));
     }
 
-    private void OnEditLogicalParameterDefinitionClick(object sender, RoutedEventArgs e)
+    private async void OnEditLogicalParameterDefinitionClick(object sender, RoutedEventArgs e)
     {
         if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
             {
@@ -3519,24 +3573,42 @@ public partial class MainWindow : Window
             ShowUnavailable("Edit Logical Parameter Definition", "The current selection is not a Logical Parameter.");
             return;
         }
-        LogicalParameterLane[] lanes = _session.Project.Tracks
-            .SelectMany(track => track.Segments)
-            .SelectMany(segment => segment.ParameterLanes)
-            .Where(lane => lane.ParameterId == parameterId)
-            .ToArray();
-        LogicalParameterDefinitionDialog dialog = new(parameter, lanes.Length, lanes.Sum(lane => lane.Points.Count))
+        MidoraProject project = _session.Project;
+        ProjectDocumentSession document = _session.Document!;
+        long revision = document.PublicationRevision;
+        int laneCount = 0, pointCount = 0;
+        if (!await RunOperationAsync("Read Logical Parameter References", async token =>
+        {
+            (laneCount, pointCount) = await Task.Run(() =>
+            {
+                int lanes = 0, points = 0;
+                foreach (var track in project.Tracks)
+                    foreach (var segment in track.Segments)
+                        foreach (var lane in segment.ParameterLanes)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (lane.ParameterId != parameterId) continue;
+                            lanes = checked(lanes + 1);
+                            points = checked(points + lane.Points.Count);
+                        }
+                return (lanes, points);
+            }, token);
+            token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_session.Document, document) || document.PublicationRevision != revision)
+                throw new InvalidOperationException("The Project changed while reading parameter references.");
+        }, canCancel: true)) return;
+        LogicalParameterDefinitionDialog dialog = new(parameter, laneCount, pointCount)
         {
             Owner = this
         };
         if (ShowModalDialog(dialog) != true || dialog.DefinitionEdit is null) return;
-        RunSynchronous("Migrate Logical Parameter Definition", () => _session.Execute(
-            ProjectDomainEditCommands.MigrateLogicalParameterDefinition(
+        await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.MigrateLogicalParameterDefinition(
                 instrumentId,
                 parameterId,
                 dialog.DefinitionEdit,
                 dialog.MigrationMode,
                 dialog.EnumSemanticWarningAcknowledged,
-                dialog.ParameterName)));
+                dialog.ParameterName));
     }
 
     private void OnAddMappingFunctionClick(object sender, RoutedEventArgs e)
@@ -4365,17 +4437,7 @@ public partial class MainWindow : Window
                 "Select an Event Instrument object first.");
             return false;
         }
-        ObjectPropertiesViewModel properties = _session.CreateObjectProperties(workspace);
-        if (!ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties))
-        {
-            ShowUnavailable(
-                "Properties",
-                "This object has no available properties.");
-            return false;
-        }
-        ObjectPropertiesDialog dialog = new(_session, workspace) { Owner = this };
-        _ = ShowModalDialog(dialog);
-        _session.RefreshWorkspaceSelection(workspace);
+        _ = OpenWorkspacePropertiesAsync(workspace);
         return true;
     }
 
@@ -4456,8 +4518,7 @@ public partial class MainWindow : Window
     {
         EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
         if (row is null) return;
-        RunSynchronous("Duplicate Event Instrument", () =>
-            _session.Execute(ProjectDomainEditCommands.DuplicateEventInstrumentOnly(row.Id)));
+        StartWorkspaceEdit(ProjectDomainEditCommands.DuplicateEventInstrumentOnly(row.Id));
     }
 
     private void OnEventInstrumentBrowserCopyClick(object sender, RoutedEventArgs e) =>
@@ -4475,27 +4536,9 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous(cut ? "Cut Event Instrument" : "Copy Event Instrument", () =>
-        {
-            ProjectObjectClipboardPayload payload;
-            IProjectEditCommand? delete = null;
-            if (cut)
-            {
-                ProjectObjectClipboardCutPreparation prepared =
-                    ProjectObjectClipboard.PrepareCutEventInstrument(document, row.Id);
-                payload = prepared.Payload;
-                delete = prepared.DeleteAfterSuccessfulClipboardWrite;
-            }
-            else
-            {
-                payload = ProjectObjectClipboard.CopyEventInstrument(document, row.Id);
-            }
-            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
-            _projectClipboard = payload;
-            _clipboardDocument = document;
-            if (delete is not null) _session.Execute(delete);
-            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
-        });
+        MidoraId instrumentId = row.Id;
+        StartClipboardTransfer(document, () => ProjectObjectClipboard.CopyEventInstrument(document, instrumentId),
+            cut ? ProjectDomainEditCommands.DeleteEventInstrument(instrumentId, true) : null);
     }
 
     private void OnEventInstrumentBrowserPasteClick(object sender, RoutedEventArgs e)
@@ -4515,11 +4558,11 @@ public partial class MainWindow : Window
         int insertionIndex = row is null
             ? project.EventInstruments.Count
             : project.EventInstruments.FindIndex(value => value.Id == row.Id) + 1;
-        RunSynchronous("Paste Event Instrument", () => _session.Execute(
+        StartWorkspaceEdit(
             ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
                 document,
                 payload,
-                insertionIndex: insertionIndex)));
+                insertionIndex: insertionIndex));
     }
 
     private void OnEventInstrumentBrowserMoveUpClick(object sender, RoutedEventArgs e) =>
@@ -4578,8 +4621,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Delete Event Instrument", () =>
-            _session.Execute(ProjectDomainEditCommands.DeleteEventInstrument(row.Id, false)));
+        StartWorkspaceEdit(ProjectDomainEditCommands.DeleteEventInstrument(row.Id, false));
     }
 
     private void OnTimelineLaneHeaderDoubleInvoked(object? sender, TimelineLaneHeaderEventArgs e)
@@ -4839,12 +4881,11 @@ public partial class MainWindow : Window
                     && (value.Kind != sourceReference.Kind
                         || ResolveDescriptorSharedGroup(workspace, value.TrackId) != groupId));
             if (targetReference is not ArrangementTrackReference targetValue || targetValue == default) return;
-            RunSynchronous("Move Shared Track Group", () =>
-                _session.Execute(ProjectDomainEditCommands.MoveArrangementSharedGroup(
+            StartDetachedWorkspaceEdit(ProjectDomainEditCommands.MoveArrangementSharedGroup(
                     groupId,
                     sourceReference.Kind,
                     targetValue.TrackId,
-                    target.Kind == ArrangementLaneKind.Conductor ? false : e.InsertsAfterTarget)));
+                    target.Kind == ArrangementLaneKind.Conductor ? false : e.InsertsAfterTarget));
             return;
         }
 
@@ -4866,13 +4907,10 @@ public partial class MainWindow : Window
                     return;
                 }
             }
-            RunSynchronous("Join Shared Track Group", () =>
-                _session.Execute(ProjectDomainEditCommands.MoveArrangementTrackIntoSharedGroup(
+            StartDetachedWorkspaceEdit(ProjectDomainEditCommands.MoveArrangementTrackIntoSharedGroup(
                     sourceTrackId,
-                    groupTargetTrackId)));
-            _logicalTrackShortcutTrackId = source.Kind == ArrangementLaneKind.LogicalTrack
-                ? sourceTrackId
-                : null;
+                    groupTargetTrackId), () => _logicalTrackShortcutTrackId =
+                        source.Kind == ArrangementLaneKind.LogicalTrack ? sourceTrackId : null);
             return;
         }
 
@@ -4898,10 +4936,8 @@ public partial class MainWindow : Window
             || (!source.IsSharedGroup && !e.DetachesFromSourceGroup)
             ? ProjectDomainEditCommands.MoveArrangementTrack(sourceTrackId, finalIndex)
             : ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(sourceTrackId, finalIndex);
-        RunSynchronous("Move Arrangement Track", () => _session.Execute(command));
-        _logicalTrackShortcutTrackId = source.Kind == ArrangementLaneKind.LogicalTrack
-            ? sourceTrackId
-            : null;
+        StartDetachedWorkspaceEdit(command, () => _logicalTrackShortcutTrackId =
+            source.Kind == ArrangementLaneKind.LogicalTrack ? sourceTrackId : null);
     }
 
     private static MidoraId? ResolveDescriptorSharedGroup(
@@ -5267,8 +5303,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Change Shared Event Instrument", () => _session.Execute(
-            ProjectDomainEditCommands.RebindEventInstrumentUsage(usage.Id, eventInstrumentId)));
+        StartDetachedWorkspaceEdit(ProjectDomainEditCommands.RebindEventInstrumentUsage(usage.Id, eventInstrumentId));
     }
 
     private void OnArrangementSharedGroupMoveUpClick(object sender, RoutedEventArgs e) =>
@@ -5298,12 +5333,11 @@ public partial class MainWindow : Window
         int targetIndex = direction < 0 ? first - 1 : last + 1;
         if (first < 0 || (uint)targetIndex >= (uint)project.ArrangementTracks.Count) return;
         ArrangementTrackReference target = project.ArrangementTracks[targetIndex];
-        RunSynchronous("Move Shared Track Group", () => _session.Execute(
-            ProjectDomainEditCommands.MoveArrangementSharedGroup(
+        StartDetachedWorkspaceEdit(ProjectDomainEditCommands.MoveArrangementSharedGroup(
                 groupId,
                 kind,
                 target.TrackId,
-                insertAfter: direction > 0)));
+                insertAfter: direction > 0));
     }
 
     private void OnArrangementSharedGroupMakeIndependentClick(object sender, RoutedEventArgs e)
@@ -5319,8 +5353,7 @@ public partial class MainWindow : Window
             ArrangementLaneKind.PureMidiTrack => ArrangementTrackKind.PureMidiTrack,
             _ => throw new InvalidOperationException("The selected row has no shared Track group.")
         };
-        RunSynchronous("Make Shared Tracks Independent", () => _session.Execute(
-            ProjectDomainEditCommands.MakeArrangementSharedGroupIndependent(groupId, kind)));
+        StartDetachedWorkspaceEdit(ProjectDomainEditCommands.MakeArrangementSharedGroupIndependent(groupId, kind));
     }
 
     private void OnLogicalTrackShareStateClick(object sender, RoutedEventArgs e)
@@ -5359,10 +5392,9 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Share Instrument State", () => _session.Execute(
-            ProjectDomainEditCommands.MoveArrangementTrackIntoSharedGroup(
+        StartDetachedWorkspaceEdit(ProjectDomainEditCommands.MoveArrangementTrackIntoSharedGroup(
                 source.Id,
-                target.Id)));
+                target.Id));
     }
 
     private void OnLogicalTrackMakeIndependentClick(object sender, RoutedEventArgs e)
@@ -5374,8 +5406,8 @@ public partial class MainWindow : Window
             return;
         }
         int index = project.ArrangementTracks.FindIndex(value => value.TrackId == trackId);
-        RunSynchronous("Make Logical Track Independent", () => _session.Execute(
-            ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(trackId, index)));
+        StartDetachedWorkspaceEdit(
+            ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(trackId, index));
     }
 
     private void OnMidiTrackShareChannelClick(object sender, RoutedEventArgs e)
@@ -5415,7 +5447,7 @@ public partial class MainWindow : Window
                 source.Id,
                 targetRoot.Id,
                 project.ArrangementTracks.FindIndex(value => value.TrackId == source.Id));
-        RunSynchronous("Share MIDI Channel", () => _session.Execute(command));
+        StartDetachedWorkspaceEdit(command);
     }
 
     private void OnMidiTrackMakeIndependentClick(object sender, RoutedEventArgs e)
@@ -5427,8 +5459,8 @@ public partial class MainWindow : Window
             return;
         }
         int index = project.ArrangementTracks.FindIndex(value => value.TrackId == trackId);
-        RunSynchronous("Make MIDI Track Independent", () => _session.Execute(
-            ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(trackId, index)));
+        StartDetachedWorkspaceEdit(
+            ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(trackId, index));
     }
 
     private void OnArrangementHeaderCutClick(object sender, RoutedEventArgs e) => CopyArrangementHeader(cut: true);
@@ -5438,41 +5470,13 @@ public partial class MainWindow : Window
     {
         if (_session.Document is not ProjectDocumentSession document
             || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
-            || descriptor.ObjectId is not MidoraId id
-            || cut && !_session.CanEditProject)
-        {
-            return;
-        }
-        RunSynchronous(cut ? "Cut Arrangement Object" : "Copy Arrangement Object", () =>
-        {
-            ProjectObjectClipboardPayload payload;
-            IProjectEditCommand? delete = null;
-            if (cut)
-            {
-                ProjectObjectClipboardCutPreparation prepared = descriptor.Kind switch
-                {
-                    ArrangementLaneKind.LogicalTrack => ProjectObjectClipboard.PrepareCutLogicalTrack(document, id),
-                    ArrangementLaneKind.PureMidiTrack => ProjectObjectClipboard.PrepareCutPureMidiTrack(document, id),
-                    _ => throw new InvalidOperationException("The selected Arrangement row cannot be cut.")
-                };
-                payload = prepared.Payload;
-                delete = prepared.DeleteAfterSuccessfulClipboardWrite;
-            }
-            else
-            {
-                payload = descriptor.Kind switch
-                {
-                    ArrangementLaneKind.LogicalTrack => ProjectObjectClipboard.CopyLogicalTrack(document, id),
-                    ArrangementLaneKind.PureMidiTrack => ProjectObjectClipboard.CopyPureMidiTrack(document, id),
-                    _ => throw new InvalidOperationException("The selected Arrangement row cannot be copied.")
-                };
-            }
-            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
-            _projectClipboard = payload;
-            _clipboardDocument = document;
-            if (delete is not null) _session.Execute(delete);
-            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
-        });
+            || descriptor.ObjectId is not MidoraId id || cut && !_session.CanEditProject) return;
+        if (descriptor.Kind == ArrangementLaneKind.LogicalTrack)
+            StartClipboardTransfer(document, () => ProjectObjectClipboard.CopyLogicalTrack(document, id),
+                cut ? ProjectDomainEditCommands.DeleteLogicalTrack(id, true) : null);
+        else if (descriptor.Kind == ArrangementLaneKind.PureMidiTrack)
+            StartClipboardTransfer(document, () => ProjectObjectClipboard.CopyPureMidiTrack(document, id),
+                cut ? ProjectDomainEditCommands.DeletePureMidiTrack(id, true) : null);
     }
 
     private void OnArrangementHeaderPasteClick(object sender, RoutedEventArgs e)
@@ -5486,7 +5490,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Paste Arrangement Object", () =>
+        try
         {
             IProjectEditCommand command = payload.Kind switch
             {
@@ -5494,9 +5498,9 @@ public partial class MainWindow : Window
                 ProjectObjectClipboardKind.PureMidiTrack => CreatePureMidiTrackHeaderPasteCommand(document, payload, project, descriptor),
                 _ => throw new InvalidOperationException("The clipboard object cannot be pasted at this Arrangement row.")
             };
-            _session.Execute(command);
-            _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}.");
-        });
+            StartWorkspaceEdit(command, () => _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}."));
+        }
+        catch (Exception exception) { _session.SetStatusMessage($"Paste Arrangement Object: {exception.Message}", isError: true); }
     }
 
     private static IProjectEditCommand CreateLogicalTrackHeaderPasteCommand(
@@ -5578,7 +5582,7 @@ public partial class MainWindow : Window
     {
         if (!TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
             || descriptor.ObjectId is not MidoraId id) return;
-        RunSynchronous("Duplicate Arrangement Object", () =>
+        try
         {
             IProjectEditCommand command = descriptor.Kind switch
             {
@@ -5591,8 +5595,9 @@ public partial class MainWindow : Window
                 _ => throw new InvalidOperationException(
                     "The selected Arrangement row cannot be duplicated with the requested state sharing.")
             };
-            _session.Execute(command);
-        });
+            StartWorkspaceEdit(command);
+        }
+        catch (Exception exception) { _session.SetStatusMessage($"Duplicate Arrangement Object: {exception.Message}", isError: true); }
     }
 
     private void OnArrangementHeaderMoveUpClick(object sender, RoutedEventArgs e) => MoveArrangementHeader(-1);
@@ -5614,7 +5619,7 @@ public partial class MainWindow : Window
         IProjectEditCommand command = descriptor.IsSharedGroup && sourceGroup != targetGroup
             ? ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(id, targetIndex)
             : ProjectDomainEditCommands.MoveArrangementTrack(id, targetIndex);
-        RunSynchronous("Move Arrangement Object", () => _session.Execute(command));
+        StartDetachedWorkspaceEdit(command);
     }
 
     private void OnArrangementHeaderDeleteClick(object sender, RoutedEventArgs e)
@@ -5634,7 +5639,7 @@ public partial class MainWindow : Window
         };
         if (message.Length == 0 || MessageDialog.Show(this, message, "Delete Arrangement Object",
                 MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        RunSynchronous("Delete Arrangement Object", () => _session.Execute(descriptor.Kind switch
+        StartWorkspaceEdit(descriptor.Kind switch
         {
             ArrangementLaneKind.LogicalTrack => ProjectDomainEditCommands.DeleteLogicalTrack(id, true),
             ArrangementLaneKind.PureMidiTrack => ProjectDomainEditCommands.DeletePureMidiTrack(id, true),
@@ -5643,7 +5648,7 @@ public partial class MainWindow : Window
             ArrangementLaneKind.DamagedLogicalTrack => ProjectDomainEditCommands.DeleteDamagedLogicalTrack(id),
             ArrangementLaneKind.DamagedPureMidiTrack => ProjectDomainEditCommands.DeleteDamagedPureMidiTrack(id),
             _ => throw new InvalidOperationException("The selected Arrangement row cannot be deleted.")
-        }));
+        });
     }
 
     private void OnArrangementHeaderNewMidiTrackClick(object sender, RoutedEventArgs e)
@@ -5727,39 +5732,17 @@ public partial class MainWindow : Window
     private void OnTrackHeaderDuplicateClick(object sender, RoutedEventArgs e)
     {
         if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
-        RunSynchronous("Duplicate Logical Track", () => _session.Execute(
-            ProjectDomainEditCommands.DuplicateLogicalTrack(track.Id)));
+        StartWorkspaceEdit(
+            ProjectDomainEditCommands.DuplicateLogicalTrack(track.Id));
     }
 
     private void CutOrCopyLogicalTrack(LogicalTrack track, bool cut)
     {
         ArgumentNullException.ThrowIfNull(track);
-        if (_session.Document is not ProjectDocumentSession document
-            || cut && !_session.CanEditProject)
-        {
-            return;
-        }
-        RunSynchronous(cut ? "Cut Logical Track" : "Copy Logical Track", () =>
-        {
-            ProjectObjectClipboardPayload payload;
-            IProjectEditCommand? delete = null;
-            if (cut)
-            {
-                ProjectObjectClipboardCutPreparation preparation =
-                    ProjectObjectClipboard.PrepareCutLogicalTrack(document, track.Id);
-                payload = preparation.Payload;
-                delete = preparation.DeleteAfterSuccessfulClipboardWrite;
-            }
-            else
-            {
-                payload = ProjectObjectClipboard.CopyLogicalTrack(document, track.Id);
-            }
-            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
-            _projectClipboard = payload;
-            _clipboardDocument = document;
-            if (delete is not null) _session.Execute(delete);
-            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
-        });
+        if (_session.Document is not ProjectDocumentSession document || cut && !_session.CanEditProject) return;
+        MidoraId id = track.Id;
+        StartClipboardTransfer(document, () => ProjectObjectClipboard.CopyLogicalTrack(document, id),
+            cut ? ProjectDomainEditCommands.DeleteLogicalTrack(id, true) : null);
     }
 
     private void OnTrackHeaderSelectSegmentsClick(object sender, RoutedEventArgs e) =>
@@ -5824,8 +5807,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Delete Logical Track", () =>
-            _session.Execute(ProjectDomainEditCommands.DeleteLogicalTrack(track.Id, nonEmptyDeletionConfirmed: true)));
+        StartWorkspaceEdit(ProjectDomainEditCommands.DeleteLogicalTrack(track.Id, nonEmptyDeletionConfirmed: true));
     }
 
     private void OnTimelineLanePreviewPressed(object? sender, TimelineLanePreviewEventArgs e)
@@ -5911,33 +5893,34 @@ public partial class MainWindow : Window
             }));
     }
 
-    private void OnTimelineVelocityEditCompleted(object? sender, TimelineVelocityEditEventArgs e)
+    private async void OnTimelineVelocityEditCompleted(object? sender, TimelineVelocityEditEventArgs e)
     {
         if (e.Velocities.Count == 0) return;
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
             {
                 Mode: TimelineWorkspaceMode.Segment,
                 ObjectId: MidoraId segmentId
-            })
+            } timeline)
         {
-            RunSynchronous("Paint Note Velocities", () => _session.Execute(
+            await ExecuteStagedProjectOperationAsync("Paint Note Velocities",
                 _session.Project is not null
                 && TimelineWorkspaceViewModel.FindMidiSegment(_session.Project, segmentId) is not null
                     ? ProjectDomainEditCommands.PaintDirectMidiNoteVelocities(segmentId, e.Velocities)
-                    : ProjectDomainEditCommands.PaintLogicalNoteVelocities(segmentId, e.Velocities)));
+                    : ProjectDomainEditCommands.PaintLogicalNoteVelocities(segmentId, e.Velocities),
+                timeline, sender as TimelineSurface);
             return;
         }
         if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel
             {
                 ObjectId: MidoraId instrumentId,
                 ActiveSubVoiceId: MidoraId subVoiceId
-            })
+            } instrument)
         {
-            RunSynchronous("Paint Template Note Velocities", () =>
-                _session.Execute(ProjectDomainEditCommands.PaintTemplateNoteVelocities(
+            await ExecuteStagedProjectOperationAsync("Paint Template Note Velocities",
+                ProjectDomainEditCommands.PaintTemplateNoteVelocities(
                     instrumentId,
                     subVoiceId,
-                    e.Velocities)));
+                    e.Velocities), instrument, sender as TimelineSurface);
         }
     }
 
@@ -6278,11 +6261,12 @@ public partial class MainWindow : Window
         long splitTick = workspace.EditorSettings.SnapAbsolute(e.Tick);
         bool isMidiSegment = _session.Project!.PureMidiTracks.Any(track =>
             track.Segments.Any(segment => segment.Id == e.Item.Id));
-        RunSynchronous("Split Segment", () => ExecuteAndSelectCreated(
+        long firstId = _session.Project.NextStableId;
+        StartWorkspaceEdit(
             isMidiSegment
                 ? ProjectDomainEditCommands.SplitMidiSegment(e.Item.Id, splitTick)
                 : ProjectDomainEditCommands.SplitSegment(e.Item.Id, splitTick),
-            workspace));
+            () => SelectCreatedWorkspaceObjects(workspace, firstId));
     }
 
     private void OnDeselectAllTimelineObjectsClick(object sender, RoutedEventArgs e)
@@ -6385,10 +6369,11 @@ public partial class MainWindow : Window
     private void OnFlipSelectionHorizontalClick(object sender, RoutedEventArgs e) =>
         ExecuteHorizontalFlip(SegmentSelectionTransformScope.ExposedContentOnly);
 
-    private void ExecuteHorizontalFlip(SegmentSelectionTransformScope segmentScope)
+    private async void ExecuteHorizontalFlip(SegmentSelectionTransformScope segmentScope)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
-        RunSynchronous("Flip Selection Horizontally", () => ExecuteSelectionOperation(context.Kind switch
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
+        await ExecuteStagedProjectOperationAsync("Flip Selection Horizontally", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.FlipSegmentsHorizontal(
                 context.Ids,
@@ -6427,13 +6412,14 @@ public partial class MainWindow : Window
                     context.Ids,
                     context.MidiTarget!.Value),
             _ => throw new ArgumentOutOfRangeException()
-        }));
+        }, workspace, _lastTimelineCommandSurface);
     }
 
-    private void OnFlipSelectionVerticalClick(object sender, RoutedEventArgs e)
+    private async void OnFlipSelectionVerticalClick(object sender, RoutedEventArgs e)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
-        RunSynchronous("Flip Selection Vertically", () => ExecuteSelectionOperation(context.Kind switch
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
+        await ExecuteStagedProjectOperationAsync("Flip Selection Vertically", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments =>
                 ProjectDomainEditCommands.FlipSegmentsVertical(context.Ids),
@@ -6453,17 +6439,26 @@ public partial class MainWindow : Window
                 context.Ids),
             _ => throw new InvalidOperationException(
                 "Vertical flip is unavailable for the current selection type.")
-        }));
+        }, workspace, _lastTimelineCommandSurface);
     }
 
-    private void OnScaleSelectionClick(object sender, RoutedEventArgs e)
+    private async void OnScaleSelectionClick(object sender, RoutedEventArgs e)
     {
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
-            || _session.Project is not MidoraProject project)
+            || _session.Project is not MidoraProject project
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
         {
             return;
         }
-        long currentLength = GetTimelineSelectionSpan(project, context);
+        ProjectDocumentSession document = _session.Document!;
+        long revision = document.PublicationRevision;
+        if (!TryGetSelectionSpan(document, workspace, context, out long currentLength))
+        {
+            var read = await ReadSelectionInputAsync((readProject, token) => GetTimelineSelectionSpan(readProject, context, token));
+            if (!read.Completed) return;
+            currentLength = read.Value;
+            _selectionSpanCache = (new(document), revision, context, currentLength);
+        }
         if (currentLength <= 0)
         {
             ShowUnavailable(
@@ -6480,7 +6475,7 @@ public partial class MainWindow : Window
             Owner = this
         };
         if (ShowModalDialog(dialog) != true) return;
-        RunSynchronous("Scale Selection", () => ExecuteSelectionOperation(context.Kind switch
+        await ExecuteStagedProjectOperationAsync("Scale Selection", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.ScaleSegments(
                 context.Ids,
@@ -6528,15 +6523,16 @@ public partial class MainWindow : Window
                     context.MidiTarget!.Value,
                     dialog.ScaleFactor),
             _ => throw new ArgumentOutOfRangeException()
-        }));
+        }, workspace, _lastTimelineCommandSurface);
     }
 
-    private void OnTransposeSelectionClick(object sender, RoutedEventArgs e)
+    private async void OnTransposeSelectionClick(object sender, RoutedEventArgs e)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
         TransposeSelectionDialog dialog = new() { Owner = this };
         if (ShowModalDialog(dialog) != true) return;
-        RunSynchronous("Transpose Selection", () => ExecuteSelectionOperation(context.Kind switch
+        await ExecuteStagedProjectOperationAsync("Transpose Selection", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments =>
                 ProjectDomainEditCommands.TransposeSegments(context.Ids, dialog.Semitones),
@@ -6561,12 +6557,13 @@ public partial class MainWindow : Window
                 dialog.Semitones),
             _ => throw new InvalidOperationException(
                 "Transpose is unavailable for the current selection type.")
-        }));
+        }, workspace, _lastTimelineCommandSurface);
     }
 
-    private void OnBatchEditSelectionClick(object sender, RoutedEventArgs e)
+    private async void OnBatchEditSelectionClick(object sender, RoutedEventArgs e)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
         bool pointContext = context.Kind is TimelineSelectionObjectKind.LogicalParameterPoints
             or TimelineSelectionObjectKind.DirectMidiEventPoints
             or TimelineSelectionObjectKind.SubVoiceEventPoints;
@@ -6583,7 +6580,7 @@ public partial class MainWindow : Window
         }
         using (program)
         {
-            RunSynchronous("Batch Edit Selection", () => ExecuteSelectionOperation(context.Kind switch
+            await ExecuteStagedProjectOperationAsync("Batch Edit Selection", context.Kind switch
             {
                 TimelineSelectionObjectKind.Segments =>
                     ProjectDomainEditCommands.BatchEditSegmentExposedNotes(context.Ids, program),
@@ -6626,7 +6623,7 @@ public partial class MainWindow : Window
                         context.MidiTarget!.Value,
                         program),
                 _ => throw new ArgumentOutOfRangeException()
-            }));
+            }, workspace, _lastTimelineCommandSurface);
         }
     }
 
@@ -6994,12 +6991,21 @@ public partial class MainWindow : Window
             sourceSurface);
     }
 
-    private async Task ExecuteStagedTimelineSelectionOperationAsync(
+    private Task<bool> ExecuteStagedTimelineSelectionOperationAsync(
         string title,
         ITimelineSelectionResultEditCommand command,
         WorkspaceViewModel workspace,
         TimelineSurface? sourceSurface)
+        => ExecuteStagedProjectOperationAsync(title, command, workspace, sourceSurface);
+
+    private async Task<bool> ExecuteStagedProjectOperationAsync(
+        string title,
+        IProjectEditCommand command,
+        WorkspaceViewModel workspace,
+        TimelineSurface? sourceSurface = null,
+        Action? afterPublication = null)
     {
+        using IDisposable? commandLifetime = command as IDisposable;
         bool completed = await RunOperationAsync(
             title,
             async cancellationToken =>
@@ -7009,7 +7015,7 @@ public partial class MainWindow : Window
                     TimeSpan.FromMilliseconds(100),
                     value => _session.ActiveForegroundTask?.Report(
                         FormatTimelineEditPreparationProgress(value),
-                        value.OverallFraction));
+                        value.IsIndeterminate ? null : value.OverallFraction));
                 using StagedProjectEdit staged = await Task.Run(
                     () => _session.PrepareProjectEdit(
                         command,
@@ -7026,21 +7032,43 @@ public partial class MainWindow : Window
                 _session.ExecutePreparedPreservingWorkspaceSelection(
                     staged,
                     workspace,
-                    command);
+                    command as ITimelineSelectionResultEditCommand);
+                _preparedSelectionWorkspace = staged.PreparedSelection is null ? null : workspace;
+                _preparedSelectionRevision = _session.Document?.PublicationRevision ?? -1;
+                afterPublication?.Invoke();
             },
             canCancel: true);
 
         if (completed)
             _session.RefreshWorkspaceSelection(workspace);
         RestoreModalCommandFocus(workspace, sourceSurface);
+        return completed;
     }
 
-    private static string FormatTimelineEditPreparationProgress(
+    private Task<bool> ExecuteWorkspaceEditAsync(
+        IProjectEditCommand command,
+        Action? afterPublication = null)
+    {
+        WorkspaceViewModel workspace = _session.ActiveWorkspace
+            ?? throw new InvalidOperationException("A Project edit requires an active Workspace.");
+        return ExecuteStagedProjectOperationAsync(
+            command.Name,
+            command,
+            workspace,
+            _lastTimelineCommandSurface,
+            afterPublication);
+    }
+
+    internal static string FormatTimelineEditPreparationProgress(
         TimelineEditPreparationProgress value)
     {
         string phase = value.Phase switch
         {
             TimelineEditPreparationPhase.ResolvingSelection => "Resolving selection",
+            TimelineEditPreparationPhase.PreparingIndex => "Preparing selection index",
+            TimelineEditPreparationPhase.ReadingSelection => "Reading selection",
+            TimelineEditPreparationPhase.Sorting => "Sorting records",
+            TimelineEditPreparationPhase.WritingStorage => "Writing temporary storage",
             TimelineEditPreparationPhase.Planning => "Planning edit",
             TimelineEditPreparationPhase.ResolvingCollisions => "Resolving collisions",
             TimelineEditPreparationPhase.BuildingResult => "Building result",
@@ -7052,89 +7080,100 @@ public partial class MainWindow : Window
             : phase;
     }
 
-    private void ExecuteSelectionOperation(IProjectEditCommand command)
-    {
-        WorkspaceViewModel workspace = _session.ActiveWorkspace
-            ?? throw new InvalidOperationException(
-                "A selection operation requires an active Workspace.");
-        _session.ExecutePreservingWorkspaceSelection(command, workspace);
-    }
-
     private static long GetTimelineSelectionSpan(
         MidoraProject project,
-        TimelineSelectionOperationContext context)
+        TimelineSelectionOperationContext context,
+        CancellationToken token)
     {
-        HashSet<MidoraId> ids = context.Ids.ToHashSet();
+        IReadOnlyCollection<MidoraId> ids = context.Ids;
+        long directoryTotal = context.Kind switch
+        {
+            TimelineSelectionObjectKind.Segments => project.Tracks.Sum(static track => (long)track.Segments.Count),
+            TimelineSelectionObjectKind.MidiSegments => project.PureMidiTracks.Sum(static track => (long)track.Segments.Count),
+            TimelineSelectionObjectKind.MixedSegments => project.Tracks.Sum(static track => (long)track.Segments.Count)
+                + project.PureMidiTracks.Sum(static track => (long)track.Segments.Count),
+            _ => 0
+        };
+        long directoryVisited = 0;
         return context.Kind switch
         {
             TimelineSelectionObjectKind.Segments => RangeSpan(project.Tracks
                 .SelectMany(static track => track.Segments)
-                .Where(segment => ids.Contains(segment.Id))
+                .Where(segment => IsSelected(segment.Id))
                 .Select(static segment => (
                     Start: segment.ProjectStartTick,
                     End: segment.ProjectRange.EndTick))),
             TimelineSelectionObjectKind.MidiSegments => RangeSpan(project.PureMidiTracks
                 .SelectMany(static track => track.Segments)
-                .Where(segment => ids.Contains(segment.Id))
+                .Where(segment => IsSelected(segment.Id))
                 .Select(static segment => (
                     Start: segment.ProjectStartTick,
                     End: segment.ProjectRange.EndTick))),
             TimelineSelectionObjectKind.MixedSegments => RangeSpan(project.Tracks
                 .SelectMany(static track => track.Segments)
-                .Where(segment => ids.Contains(segment.Id))
+                .Where(segment => IsSelected(segment.Id))
                 .Select(static segment => (
                     Start: segment.ProjectStartTick,
                     End: segment.ProjectRange.EndTick))
                 .Concat(project.PureMidiTracks
                     .SelectMany(static track => track.Segments)
-                    .Where(segment => ids.Contains(segment.Id))
+                    .Where(segment => IsSelected(segment.Id))
                     .Select(static segment => (
                         Start: segment.ProjectStartTick,
                         End: segment.ProjectRange.EndTick)))),
             TimelineSelectionObjectKind.LogicalNotes => RangeSpan(
-                TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment.Notes
-                    .ResolveByIdsInCollectionOrder(ids)
+                ReadTimelineSelection(project, TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment.Notes
+                    .CreateQuerySnapshot(), ids, token)
                     .Select(static note => (
                         Start: note.StartTick,
                         End: checked(note.StartTick + note.LengthTicks)))),
             TimelineSelectionObjectKind.DirectMidiNotes => RangeSpan(
-                TimelineWorkspaceViewModel.FindMidiSegment(project, context.OwnerId)!.Value.Segment.Notes
-                    .ResolveByIds(ids)
-                    .Select(static match => (
-                        Start: match.Value.StartTick,
-                        End: checked(match.Value.StartTick + match.Value.LengthTicks)))),
-            TimelineSelectionObjectKind.TemplateNotes => RangeSpan(project.EventInstruments
+                ReadTimelineSelection(project, TimelineWorkspaceViewModel.FindMidiSegment(project, context.OwnerId)!.Value.Segment.Notes
+                    .CreateObjectSource(), ids, token)
+                    .Select(static value => (
+                        Start: value.StartTick,
+                        End: checked(value.StartTick + value.LengthTicks)))),
+            TimelineSelectionObjectKind.TemplateNotes => RangeSpan(ReadTimelineSelection(project, project.EventInstruments
                 .Single(value => value.Id == context.OwnerId)
                 .SubVoices.Single(value => value.Id == context.SecondaryId)
-                .Events.ResolveByIdsInCollectionOrder(ids)
+                .Events.CreateQuerySnapshot(), ids, token)
                 .Where(static value => value.Kind == TemplateEventKind.Note)
                 .Select(static value => (
                     Start: value.Tick,
                     End: checked(value.Tick + value.LengthTicks)))),
             TimelineSelectionObjectKind.LogicalParameterPoints => PointSpan(
-                TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment
+                ReadTimelineSelection(project, TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment
                     .ParameterLanes.Single(value => value.Id == context.SecondaryId)
-                    .Points.ResolveByIdsInCollectionOrder(ids)
+                    .Points.CreateQuerySnapshot(), ids, token)
                     .Select(static value => value.Tick)),
             TimelineSelectionObjectKind.DirectMidiEventPoints => PointSpan(
-                TimelineWorkspaceViewModel.FindMidiSegment(project, context.OwnerId)!.Value.Segment
-                    .ChannelEvents.ResolveByIds(ids)
-                    .Select(static match => match.Value.Tick)),
-            TimelineSelectionObjectKind.SubVoiceEventPoints => PointSpan(project.EventInstruments
+                ReadTimelineSelection(project, TimelineWorkspaceViewModel.FindMidiSegment(project, context.OwnerId)!.Value.Segment
+                    .ChannelEvents.CreateObjectSource(), ids, token)
+                    .Select(static value => value.Tick)),
+            TimelineSelectionObjectKind.SubVoiceEventPoints => PointSpan(ReadTimelineSelection(project, project.EventInstruments
                 .Single(value => value.Id == context.OwnerId)
                 .SubVoices.Single(value => value.Id == context.SecondaryId)
-                .Events.ResolveByIdsInCollectionOrder(ids)
+                .Events.CreateQuerySnapshot(), ids, token)
                 .Select(static value => value.Tick)),
             _ => throw new ArgumentOutOfRangeException()
         };
 
-        static long RangeSpan(IEnumerable<(long Start, long End)> source)
+        bool IsSelected(MidoraId id)
+        {
+            token.ThrowIfCancellationRequested();
+            if ((++directoryVisited & 255) == 0 || directoryVisited == directoryTotal)
+                SelectionReadProgress.Value?.Report(new(TimelineEditPreparationPhase.ReadingSelection, directoryVisited, directoryTotal));
+            return ids is IReadOnlySet<MidoraId> set ? set.Contains(id) : ids.Contains(id);
+        }
+
+        long RangeSpan(IEnumerable<(long Start, long End)> source)
         {
             bool any = false;
             long minimum = long.MaxValue;
             long maximum = long.MinValue;
             foreach ((long start, long end) in source)
             {
+                token.ThrowIfCancellationRequested();
                 any = true;
                 minimum = Math.Min(minimum, start);
                 maximum = Math.Max(maximum, end);
@@ -7142,19 +7181,8 @@ public partial class MainWindow : Window
             return any ? checked(maximum - minimum) : 0;
         }
 
-        static long PointSpan(IEnumerable<long> source)
-        {
-            bool any = false;
-            long minimum = long.MaxValue;
-            long maximum = long.MinValue;
-            foreach (long value in source)
-            {
-                any = true;
-                minimum = Math.Min(minimum, value);
-                maximum = Math.Max(maximum, value);
-            }
-            return any ? checked(maximum - minimum) : 0;
-        }
+        long PointSpan(IEnumerable<long> source)
+            => MeasurePointSelectionSpan(source, token);
     }
 
     private static TimelineSurface? GetTimelineContextSurface(object sender) =>
@@ -7380,10 +7408,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnTimelineItemEditCompleted(object? sender, TimelineItemEditEventArgs e)
+    private async void OnTimelineItemEditCompleted(object? sender, TimelineItemEditEventArgs e)
     {
         if (_session.Project is null || _session.ActiveWorkspace is null) return;
-        RunSynchronous("Edit timeline object", () =>
+        try
         {
             if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline)
             {
@@ -7398,13 +7426,13 @@ public partial class MainWindow : Window
                 long unclampedSnappedDelta = snappedDelta;
                 long snappedTarget = Math.Max(0, checked(e.Item.StartTick + snappedDelta));
                 long nonnegativeSnappedDelta = checked(snappedTarget - e.Item.StartTick);
-                MidoraId[] selected = timeline.Selection.Ids.Count == 0
+                IReadOnlyCollection<MidoraId> selected = timeline.Selection.Ids.Count == 0
                     ? [e.Item.Id]
-                    : timeline.Selection.Ids.ToArray();
+                    : timeline.Selection.SharedIds;
                 switch (timeline.Mode)
                 {
                     case TimelineWorkspaceMode.Arrangement:
-                        EditArrangementItem(
+                        await EditArrangementItem(
                             timeline,
                             e,
                             selected,
@@ -7416,19 +7444,19 @@ public partial class MainWindow : Window
                     case TimelineWorkspaceMode.Segment when timeline.ObjectId is MidoraId segmentId:
                         if (e.Item.Kind == TimelineItemKind.LogicalParameterPoint)
                         {
-                            EditLogicalParameterPoint(segmentId, e, snappedTarget, selected);
+                            await EditLogicalParameterPoint(segmentId, e, snappedTarget, selected);
                         }
                         else if (e.Item.Kind == TimelineItemKind.DirectMidiEvent)
                         {
-                            EditDirectMidiEventPoint(segmentId, e, snappedTarget, selected);
+                            await EditDirectMidiEventPoint(segmentId, e, snappedTarget, selected);
                         }
                         else if (e.Item.Kind == TimelineItemKind.OpaqueMidiEvent)
                         {
-                            EditOpaqueMidiEventPoint(segmentId, e, snappedTarget, selected);
+                            await EditOpaqueMidiEventPoint(segmentId, e, snappedTarget, selected);
                         }
                         else if (e.Item.Kind == TimelineItemKind.DirectMidiNote)
                         {
-                            EditDirectMidiNotes(
+                            await EditDirectMidiNotes(
                                 segmentId,
                                 e,
                                 selected,
@@ -7438,7 +7466,7 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            EditLogicalNotes(
+                            await EditLogicalNotes(
                                 segmentId,
                                 e,
                                 selected,
@@ -7448,19 +7476,31 @@ public partial class MainWindow : Window
                         }
                         break;
                     case TimelineWorkspaceMode.Conductor:
-                        EditConductorEvent(e.Item.Id, snappedTarget);
+                        await EditConductorEvent(e.Item.Id, snappedTarget);
                         break;
                 }
                 return;
             }
             if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel instrument)
             {
-                EditTemplateEvent(instrument, e);
+                await EditTemplateEvent(instrument, e);
             }
-        });
+        }
+        catch (Exception exception)
+        {
+            _session.SetStatusMessage($"Edit timeline object: {exception.Message}", isError: true);
+        }
     }
 
-    private void OnTimelineEventPointEditCompleted(object? sender, TimelineEventPointEditEventArgs e)
+    private sealed class DeferredTimelineEditValues<T>(int count, Func<IEnumerable<T>> values)
+        : IReadOnlyCollection<T>
+    {
+        public int Count => count;
+        public IEnumerator<T> GetEnumerator() => values().GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private async void OnTimelineEventPointEditCompleted(object? sender, TimelineEventPointEditEventArgs e)
     {
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
             {
@@ -7472,20 +7512,18 @@ public partial class MainWindow : Window
             && TimelineWorkspaceViewModel.FindMidiSegment(directProject, directSegmentId) is not null
             && e.Points.Count != 0)
         {
-            DirectMidiEventPointEdit[] directEdits = e.Points
-                .OrderBy(value => value.Key)
-                .Select(value =>
+            var directEdits = new DeferredTimelineEditValues<DirectMidiEventPointEdit>(e.Points.Count,
+                () => e.Points.Select(value =>
                 {
                     (int data1, int data2) = DenormalizeDirectMidiEventValue(directTarget, value.Value);
                     return new DirectMidiEventPointEdit(value.Key, data1, data2);
-                })
-                .ToArray();
-            RunSynchronous("Draw Direct MIDI Event points", () => _session.Execute(
+                }));
+            await ExecuteStagedProjectOperationAsync("Draw Direct MIDI Event points",
                 ProjectDomainEditCommands.UpsertDirectMidiEventPoints(
                     directSegmentId,
                     directTarget.Kind,
                     directTarget.Data1,
-                    directEdits)));
+                    directEdits), directTimeline, sender as TimelineSurface);
             return;
         }
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
@@ -7503,17 +7541,15 @@ public partial class MainWindow : Window
                 is LogicalParameterDefinition definition
             && e.Points.Count != 0)
         {
-            LogicalParameterPointEdit[] pointEdits = e.Points
-                .OrderBy(value => value.Key)
-                .Select(value => new LogicalParameterPointEdit(
+            var pointEdits = new DeferredTimelineEditValues<LogicalParameterPointEdit>(e.Points.Count,
+                () => e.Points.Select(value => new LogicalParameterPointEdit(
                     value.Key,
-                    TimelineWorkspaceViewModel.DenormalizeParameterValue(definition, value.Value)))
-                .ToArray();
-            RunSynchronous("Draw Logical Parameter points", () => _session.Execute(
+                    TimelineWorkspaceViewModel.DenormalizeParameterValue(definition, value.Value))));
+            await ExecuteStagedProjectOperationAsync("Draw Logical Parameter points",
                 ProjectDomainEditCommands.UpsertLogicalParameterPoints(
                     segmentId,
                     laneId,
-                    pointEdits)));
+                    pointEdits), timeline, sender as TimelineSurface);
             return;
         }
 
@@ -7525,211 +7561,192 @@ public partial class MainWindow : Window
         {
             return;
         }
-        TemplateEventPointEdit[] edits = e.Points
-            .OrderBy(value => value.Key)
-            .Select(value => new TemplateEventPointEdit(
+        var edits = new DeferredTimelineEditValues<TemplateEventPointEdit>(e.Points.Count,
+            () => e.Points.Select(value => new TemplateEventPointEdit(
                 value.Key,
-                checked((int)InstrumentWorkspaceViewModel.DenormalizeMidiValue(target, value.Value))))
-            .ToArray();
-        RunSynchronous("Draw Event points", () => _session.Execute(
+                checked((int)InstrumentWorkspaceViewModel.DenormalizeMidiValue(target, value.Value)))));
+        await ExecuteStagedProjectOperationAsync("Draw Event points",
             ProjectDomainEditCommands.UpsertTemplateEventPoints(
                 instrumentId,
                 voiceId,
                 target,
-                edits)));
+                edits), workspace, sender as TimelineSurface);
     }
 
-    private void EditConductorEvent(MidoraId id, long tick)
+    private async Task EditConductorEvent(MidoraId id, long tick)
     {
         if (_session.Project is null) return;
         if (_session.Project.Conductor.Tempos.FirstOrDefault(item => item.Id == id) is TempoChange tempo)
         {
-            _session.Execute(ProjectDomainEditCommands.UpdateTempo(id, tick, tempo.BeatsPerMinute));
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateTempo(id, tick, tempo.BeatsPerMinute))) return;
         }
         else if (_session.Project.Conductor.TimeSignatures.FirstOrDefault(item => item.Id == id) is TimeSignatureChange signature)
         {
-            _session.Execute(ProjectDomainEditCommands.UpdateTimeSignature(
-                id, tick, signature.Numerator, signature.Denominator));
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateTimeSignature(
+                id, tick, signature.Numerator, signature.Denominator))) return;
         }
         else if (_session.Project.Conductor.KeySignatures.FirstOrDefault(item => item.Id == id) is KeySignatureChange key)
         {
-            _session.Execute(ProjectDomainEditCommands.UpdateKeySignature(id, tick, key.SharpsFlats, key.IsMinor));
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateKeySignature(id, tick, key.SharpsFlats, key.IsMinor))) return;
         }
         else if (_session.Project.Conductor.Markers.FirstOrDefault(item => item.Id == id) is ProjectMarker marker)
         {
-            _session.Execute(ProjectDomainEditCommands.UpdateProjectMarker(id, tick, marker.Name));
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateProjectMarker(id, tick, marker.Name))) return;
         }
         else if (_session.Project.Conductor.EndMarker?.Id == id)
         {
-            _session.Execute(ProjectDomainEditCommands.UpdateProjectEndMarker(tick));
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateProjectEndMarker(tick))) return;
         }
     }
 
-    private void EditArrangementItem(
+    private async Task EditArrangementItem(
         TimelineWorkspaceViewModel workspace,
         TimelineItemEditEventArgs edit,
-        MidoraId[] selected,
+        IReadOnlyCollection<MidoraId> selected,
         long snappedTarget,
         long snappedDelta)
     {
-        MidoraProject project = _session.Project!;
-        MidoraId[] logicalSelected = project.Tracks
-            .SelectMany(track => track.Segments)
-            .Where(segment => selected.Contains(segment.Id))
-            .Select(segment => segment.Id)
-            .ToArray();
-        MidoraId[] midiSelected = project.PureMidiTracks
-            .SelectMany(track => track.Segments)
-            .Where(segment => selected.Contains(segment.Id))
-            .Select(segment => segment.Id)
-            .ToArray();
-        if (logicalSelected.Length != 0 && midiSelected.Length != 0)
-        {
-            MidoraId[] mixed = logicalSelected.Concat(midiSelected).ToArray();
-            if (edit.EditKind == TimelineItemEditKind.Move)
-            {
-                if (edit.CopyRequested)
-                {
-                    throw new InvalidOperationException(
-                        "Copy-drag is unavailable for a mixed Logical/MIDI Segment selection. Use Duplicate, then drag the copy.");
-                }
-                long minimumStart = logicalSelected
-                    .Select(id => TimelineWorkspaceViewModel.FindSegment(project, id)!.Value.Segment.ProjectStartTick)
-                    .Concat(midiSelected.Select(id =>
-                        TimelineWorkspaceViewModel.FindMidiSegment(project, id)!.Value.Segment.ProjectStartTick))
-                    .Min();
-                long delta = Math.Max(snappedDelta, -minimumStart);
-                _session.Execute(ProjectDomainEditCommands.MoveArrangementSegmentsHorizontal(
-                    mixed,
-                    delta));
-            }
-            else if (edit.EditKind == TimelineItemEditKind.ResizeStart)
-            {
-                _session.Execute(ProjectDomainEditCommands.AdjustArrangementSegmentEdges(
-                    mixed,
-                    snappedDelta,
-                    0,
-                    workspace.EditorSettings.EffectiveOperationStepTicks));
-            }
-            else
-            {
-                long endDelta = workspace.EditorSettings.SnapDelta(
-                    edit.TickDelta,
-                    checked(edit.Item.EndTick + edit.TickDelta));
-                _session.Execute(ProjectDomainEditCommands.AdjustArrangementSegmentEdges(
-                    mixed,
-                    0,
-                    endDelta,
-                    workspace.EditorSettings.EffectiveOperationStepTicks));
-            }
-            return;
-        }
+        int targetLaneIndex = Math.Clamp(
+            checked(edit.Item.Lane + edit.LaneDelta), 0,
+            Math.Max(0, workspace.Snapshot!.ArrangementLanes.Count - 1));
+        ArrangementLaneDescriptor? targetLane = workspace.GetArrangementLane(targetLaneIndex);
+        long endDelta = workspace.EditorSettings.SnapDelta(
+            edit.TickDelta, checked(edit.Item.EndTick + edit.TickDelta));
+        long firstNewStableId = _session.Project!.NextStableId;
+        var command = new ArrangementGestureEditCommand(selected, edit.Item.Id, edit.Item.StartTick,
+            edit.EditKind, edit.CopyRequested, snappedDelta, endDelta,
+            workspace.EditorSettings.EffectiveOperationStepTicks, targetLane);
+        if (!await ExecuteWorkspaceEditAsync(command)) return;
+        if (command.PreparedCopy)
+            SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+    }
 
-        (LogicalTrack Track, Segment Segment)? location =
-            TimelineWorkspaceViewModel.FindSegment(project, edit.Item.Id);
-        if (location is null)
-        {
-            if (TimelineWorkspaceViewModel.FindMidiSegment(_session.Project!, edit.Item.Id) is not null)
-            {
-                EditMidiArrangementItem(workspace, edit, selected, snappedTarget, snappedDelta);
-            }
-            return;
-        }
-        Segment segment = location.Value.Segment;
-        if (edit.EditKind == TimelineItemEditKind.Move)
-        {
-            Segment[] locatedSelection = _session.Project!.Tracks
-                .SelectMany(track => track.Segments
-                    .Where(item => selected.Contains(item.Id))
-                    .Select(item => item))
-                .ToArray();
-            if (locatedSelection.Length == 0)
-            {
-                locatedSelection = [segment];
-            }
-            MidoraId[] movingSegmentIds = locatedSelection.Select(item => item.Id).ToArray();
-            long minimumStart = locatedSelection.Min(item => item.ProjectStartTick);
-            long clampedDelta = Math.Max(snappedDelta, -minimumStart);
-            int targetLane = Math.Clamp(
-                checked(edit.Item.Lane + edit.LaneDelta),
-                0,
-                Math.Max(0, workspace.Snapshot!.ArrangementLanes.Count - 1));
-            ArrangementLaneDescriptor? target = workspace.GetArrangementLane(targetLane);
-            if (target is not
-                { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId targetTrackId })
-            {
-                return;
-            }
-            snappedTarget = checked(edit.Item.StartTick + clampedDelta);
-            if (edit.CopyRequested)
-            {
-                long firstNewStableId = _session.Project.NextStableId;
-                _session.Execute(ProjectDomainEditCommands.DuplicateSegments(
-                    movingSegmentIds,
-                    edit.Item.Id,
-                    targetTrackId,
-                    snappedTarget));
-                SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
-            }
-            else
-            {
-                _session.Execute(ProjectDomainEditCommands.MoveSegments(
-                    movingSegmentIds,
-                    edit.Item.Id,
-                    targetTrackId,
-                    snappedTarget));
-            }
-            return;
-        }
+    private static IEnumerable<T> ReadTimelineSelection<T>(MidoraProject project, ITimelineObjectSource<T> source,
+        IReadOnlyCollection<MidoraId> ids, CancellationToken token = default) where T : unmanaged =>
+        ProjectTimelineReadPreparation.ReadSelectedValues(project, source, ids, token,
+            SelectionReadProgress.Value, preserveFormalOrder: false);
 
-        Segment[] selectedSegments = _session.Project!.Tracks
-            .SelectMany(track => track.Segments)
-            .Where(item => selected.Contains(item.Id))
-            .ToArray();
-        if (selectedSegments.Length == 0)
+    private static int CountMatchingTimelineIds<T>(MidoraProject project, ITimelineObjectSource<T> source,
+        IReadOnlyCollection<MidoraId> ids, CancellationToken token)
+    {
+        int count = 0;
+        foreach (T _ in ReadMetricValues(project, source, ids, token))
         {
-            selectedSegments = [segment];
+            token.ThrowIfCancellationRequested();
+            count++;
         }
-        MidoraId[] selectedSegmentIds = selectedSegments.Select(item => item.Id).ToArray();
-        if (edit.EditKind == TimelineItemEditKind.ResizeStart)
+        return count;
+    }
+
+    private async Task<(bool Completed, T Value)> ReadSelectionInputAsync<T>(Func<MidoraProject, CancellationToken, T> read)
+    {
+        ProjectDocumentSession document = _session.Document!;
+        long revision = document.PublicationRevision;
+        WorkspaceViewModel workspace = _session.ActiveWorkspace!;
+        T value = default!;
+        bool completed = await RunOperationAsync("Read Selection", async token =>
         {
-            _session.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
-                selectedSegmentIds,
-                startDelta: snappedDelta,
-                endDelta: 0,
-                minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
+            using DispatcherCoalescingProgress<TimelineEditPreparationProgress> progress = new(
+                Dispatcher, TimeSpan.FromMilliseconds(100),
+                update => _session.ActiveForegroundTask?.Report(FormatTimelineEditPreparationProgress(update),
+                    update.IsIndeterminate ? null : update.OverallFraction));
+            value = await Task.Run(() => WithSelectionReadProgress(progress, () => read(document.Project, token)), token);
+            token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_session.Document, document) || document.PublicationRevision != revision)
+                throw new InvalidOperationException("The Project changed while reading the selection.");
+            progress.Report(new(TimelineEditPreparationPhase.Ready, 1, 1));
+            progress.Flush();
+        }, canCancel: true);
+        if (!completed) RestoreModalCommandFocus(workspace, _lastTimelineCommandSurface);
+        return (completed, value);
+    }
+
+    internal readonly record struct SelectionInputMetrics(CompressedMidoraIdSet Ids,
+        long MinimumTick, long MaximumTick, int MinimumPitch, int MaximumPitch,
+        double MinimumValue, double MaximumValue, long MaximumLength);
+
+    internal static SelectionInputMetrics ReadSelectionInputMetrics<T>(MidoraProject sourceProject,
+        ITimelineObjectSource<T> source,
+        IReadOnlyCollection<MidoraId> ids,
+        Func<T, (long Tick, long End, int Pitch, double Value)> project,
+        CancellationToken token, Func<T, bool>? include = null,
+        long maximumBuilderWorkingBytes = PagedEditResourceBudget.DefaultMaximumWorkingBytes)
+    {
+        long minTick = long.MaxValue, maxTick = long.MinValue, maxLength = 0;
+        int minPitch = int.MaxValue, maxPitch = int.MinValue;
+        double minValue = double.PositiveInfinity, maxValue = double.NegativeInfinity;
+        int matchingCount = 0;
+        long inputPages = 0, lastPage = -1;
+        foreach (MidoraId id in ids)
+        {
+            token.ThrowIfCancellationRequested();
+            // CompressedMidoraIdSet's internal storage contract groups sorted
+            // IDs into 4096-ID pages (PageShift = 12). Count actual pages, not
+            // objects, so a dense million-ID selection is not falsely rejected.
+            long page = (id.Value - 1) >> 12;
+            if (ids is not CompressedMidoraIdSet || page != lastPage) inputPages++;
+            lastPage = page;
         }
+        foreach (T value in ReadMetricValues(sourceProject, source, ids, token))
+        {
+            token.ThrowIfCancellationRequested();
+            if (include is not null && !include(value)) continue;
+            matchingCount++;
+            var scalar = project(value);
+            minTick = Math.Min(minTick, scalar.Tick); maxTick = Math.Max(maxTick, scalar.End);
+            maxLength = Math.Max(maxLength, checked(scalar.End - scalar.Tick));
+            minPitch = Math.Min(minPitch, scalar.Pitch); maxPitch = Math.Max(maxPitch, scalar.Pitch);
+            minValue = Math.Min(minValue, scalar.Value); maxValue = Math.Max(maxValue, scalar.Value);
+        }
+        token.ThrowIfCancellationRequested();
+        CompressedMidoraIdSet result;
+        if (matchingCount == 0) result = CompressedMidoraIdSet.Empty;
+        else if (matchingCount == ids.Count && ids is CompressedMidoraIdSet original) result = original;
         else
         {
-            long endDelta = workspace.EditorSettings.SnapDelta(
-                edit.TickDelta,
-                checked(edit.Item.EndTick + edit.TickDelta));
-            _session.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
-                selectedSegmentIds,
-                startDelta: 0,
-                endDelta,
-                minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
+            EnsureSelectionInputBuilderBudget(inputPages, maximumBuilderWorkingBytes);
+            result = CompressedMidoraIdSet.Create(Read(), token);
+        }
+        return new(result, minTick, maxTick, minPitch, maxPitch, minValue, maxValue, maxLength);
+        IEnumerable<MidoraId> Read()
+        {
+            foreach (T value in ReadMetricValues(sourceProject, source, ids, token))
+            {
+                token.ThrowIfCancellationRequested();
+                if (include is not null && !include(value)) continue;
+                yield return MetricValueId(value);
+            }
         }
     }
 
-    private void EditLogicalNotes(
+    private static void EnsureSelectionInputBuilderBudget(long inputPageCount, long maximumWorkingBytes)
+    {
+        // Covers bitmap pages, dictionary resize overlap, sorted entries, and
+        // final sparse/page containers alive together; not an exact CLR size.
+        const long bytesPerPage = 1536;
+        long maximumPages = (maximumWorkingBytes - 4096) / bytesPerPage;
+        if (maximumWorkingBytes < 4096 || inputPageCount < 0 || inputPageCount > maximumPages)
+            throw new InvalidOperationException("The selected-object filter exceeds its temporary working-memory budget. Select fewer objects.");
+    }
+
+    private async Task EditLogicalNotes(
         MidoraId segmentId,
         TimelineItemEditEventArgs edit,
-        MidoraId[] selected,
+        IReadOnlyCollection<MidoraId> selected,
         long snappedDelta)
     {
         Segment segment = TimelineWorkspaceViewModel.FindSegment(_session.Project!, segmentId)?.Segment
             ?? throw new InvalidOperationException("The Segment no longer exists.");
         TimelineWorkspaceViewModel workspace =
             (TimelineWorkspaceViewModel)_session.ActiveWorkspace!;
-        MidoraId[] noteIds = selected;
+        IReadOnlyCollection<MidoraId> noteIds = selected;
         long minimumStart;
         int minimumPitch;
         int maximumPitch;
         if (workspace.SelectionSnapshot.TryGetMetrics(
                 TimelineItemKind.LogicalNote,
                 out TimelineSelectionMetrics metrics)
-            && metrics.Count == selected.Length)
+            && metrics.Count == selected.Count)
         {
             minimumStart = metrics.MinimumStartTick;
             minimumPitch = 127 - metrics.MaximumLane;
@@ -7737,15 +7754,14 @@ public partial class MainWindow : Window
         }
         else
         {
-            HashSet<MidoraId> requested = selected.ToHashSet();
-            LogicalNote[] notes = segment.Notes
-                .ResolveByIdsInCollectionOrder(requested)
-                .ToArray();
-            if (notes.Length == 0) return;
-            noteIds = notes.Select(static item => item.Id).ToArray();
-            minimumStart = notes.Min(static item => item.StartTick);
-            minimumPitch = notes.Min(static item => item.Note);
-            maximumPitch = notes.Max(static item => item.Note);
+            var source = segment.Notes.CreateQuerySnapshot();
+            var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, source, selected,
+                static item => (item.StartTick, checked(item.StartTick + item.LengthTicks), item.Note, (double)item.Velocity), token));
+            if (!read.Completed || read.Value.Ids.Count == 0) return;
+            noteIds = read.Value.Ids;
+            minimumStart = read.Value.MinimumTick;
+            minimumPitch = read.Value.MinimumPitch;
+            maximumPitch = read.Value.MaximumPitch;
         }
         switch (edit.EditKind)
         {
@@ -7761,12 +7777,12 @@ public partial class MainWindow : Window
                 if (edit.CopyRequested)
                 {
                     long firstNewStableId = _session.Project!.NextStableId;
-                    _session.Execute(ProjectDomainEditCommands.DuplicateLogicalNotes(
+                    if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateLogicalNotes(
                         segmentId,
                         noteIds,
                         segmentId,
                         checked(minimumStart + tickDelta),
-                        pitchDelta));
+                        pitchDelta))) return;
                     SelectCreatedWorkspaceObjects(
                         (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
                         firstNewStableId,
@@ -7776,130 +7792,65 @@ public partial class MainWindow : Window
                 }
                 else
                 {
-                    _session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
+                    if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.MoveLogicalNotes(
                         segmentId,
                         noteIds,
                         tickDelta,
-                        pitchDelta));
+                        pitchDelta))) return;
                 }
                 break;
             case TimelineItemEditKind.ResizeStart:
                 long startDelta = Math.Max(
                     snappedDelta,
                     -minimumStart);
-                _session.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
+                if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
                     noteIds,
                     startDelta,
                     endDelta: 0,
-                    minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
+                    minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks))) return;
                 break;
             case TimelineItemEditKind.ResizeEnd:
                 long endDelta = ((TimelineWorkspaceViewModel)_session.ActiveWorkspace!).EditorSettings.SnapDelta(
                     edit.TickDelta,
                     checked(edit.Item.EndTick + edit.TickDelta));
-                _session.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
+                if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
                     noteIds,
                     startDelta: 0,
                     endDelta,
-                    minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
+                    minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks))) return;
                 break;
         }
     }
 
-    private void EditMidiArrangementItem(
-        TimelineWorkspaceViewModel workspace,
-        TimelineItemEditEventArgs edit,
-        MidoraId[] selected,
-        long snappedTarget,
-        long snappedDelta)
-    {
-        MidoraProject project = _session.Project!;
-        (PureMidiTrack Track, MidiSegment Segment)? location =
-            TimelineWorkspaceViewModel.FindMidiSegment(project, edit.Item.Id);
-        if (location is null) return;
-        MidiSegment[] selectedSegments = project.PureMidiTracks
-            .SelectMany(value => value.Segments)
-            .Where(value => selected.Contains(value.Id))
-            .ToArray();
-        if (selectedSegments.Length == 0) selectedSegments = [location.Value.Segment];
-        MidoraId[] selectedIds = selectedSegments.Select(value => value.Id).ToArray();
-        if (edit.EditKind == TimelineItemEditKind.Move)
-        {
-            int targetLaneIndex = Math.Clamp(
-                checked(edit.Item.Lane + edit.LaneDelta),
-                0,
-                Math.Max(0, workspace.Snapshot!.ArrangementLanes.Count - 1));
-            ArrangementLaneDescriptor? targetLane = workspace.GetArrangementLane(targetLaneIndex);
-            if (targetLane is not { Kind: ArrangementLaneKind.PureMidiTrack, ObjectId: MidoraId targetTrackId })
-                return;
-            long minimumStart = selectedSegments.Min(value => value.ProjectStartTick);
-            long clampedDelta = Math.Max(snappedDelta, -minimumStart);
-            snappedTarget = checked(edit.Item.StartTick + clampedDelta);
-            long firstNewStableId = project.NextStableId;
-            _session.Execute(edit.CopyRequested
-                ? ProjectDomainEditCommands.DuplicateMidiSegments(
-                    selectedIds,
-                    edit.Item.Id,
-                    targetTrackId,
-                    snappedTarget)
-                : ProjectDomainEditCommands.MoveMidiSegments(
-                    selectedIds,
-                    edit.Item.Id,
-                    targetTrackId,
-                    snappedTarget));
-            if (edit.CopyRequested) SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
-            return;
-        }
-        if (edit.EditKind == TimelineItemEditKind.ResizeStart)
-        {
-            _session.Execute(ProjectDomainEditCommands.AdjustMidiSegmentEdges(
-                selectedIds,
-                snappedDelta,
-                0,
-                workspace.EditorSettings.EffectiveOperationStepTicks));
-        }
-        else
-        {
-            long endDelta = workspace.EditorSettings.SnapDelta(
-                edit.TickDelta,
-                checked(edit.Item.EndTick + edit.TickDelta));
-            _session.Execute(ProjectDomainEditCommands.AdjustMidiSegmentEdges(
-                selectedIds,
-                0,
-                endDelta,
-                workspace.EditorSettings.EffectiveOperationStepTicks));
-        }
-    }
-
-    private void EditDirectMidiNotes(
+    private async Task EditDirectMidiNotes(
         MidoraId segmentId,
         TimelineItemEditEventArgs edit,
-        MidoraId[] selected,
+        IReadOnlyCollection<MidoraId> selected,
         long snappedDelta)
     {
         MidiSegment segment = TimelineWorkspaceViewModel.FindMidiSegment(_session.Project!, segmentId)?.Segment
             ?? throw new InvalidOperationException("The MIDI Segment no longer exists.");
         TimelineWorkspaceViewModel workspace =
             (TimelineWorkspaceViewModel)_session.ActiveWorkspace!;
-        MidoraId[] noteIds = selected;
+        IReadOnlyCollection<MidoraId> noteIds = selected;
         long minimumStart;
         if (workspace.SelectionSnapshot.TryGetMetrics(
                 TimelineItemKind.DirectMidiNote,
                 out TimelineSelectionMetrics metrics)
-            && metrics.Count == selected.Length)
+            && metrics.Count == selected.Count)
         {
             minimumStart = metrics.MinimumStartTick;
         }
         else
         {
-            DirectMidiNote[] notes = segment.Notes.ResolveByIds(selected)
-                .Select(static match => match.Value)
-                .ToArray();
-            if (notes.Length == 0) return;
-            noteIds = notes.Select(static value => value.Id).ToArray();
-            minimumStart = notes.Min(static value => value.StartTick);
+            var source = segment.Notes.CreateObjectSource();
+            var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, source, selected,
+                static item => (item.StartTick, checked(item.StartTick + item.LengthTicks), item.Key, (double)item.NoteOnVelocity), token));
+            if (!read.Completed || read.Value.Ids.Count == 0) return;
+            noteIds = read.Value.Ids;
+            minimumStart = read.Value.MinimumTick;
         }
         switch (edit.EditKind)
         {
@@ -7909,11 +7860,11 @@ public partial class MainWindow : Window
                 if (edit.CopyRequested)
                 {
                     long firstNewStableId = _session.Project!.NextStableId;
-                    _session.Execute(ProjectDomainEditCommands.DuplicateDirectMidiNotes(
+                    if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateDirectMidiNotes(
                         segmentId,
                         noteIds,
                         tickDelta,
-                        keyDelta));
+                        keyDelta))) return;
                     SelectCreatedWorkspaceObjects(
                         (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
                         firstNewStableId,
@@ -7924,36 +7875,36 @@ public partial class MainWindow : Window
                 }
                 else
                 {
-                    _session.Execute(ProjectDomainEditCommands.MoveDirectMidiNotes(
+                    if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.MoveDirectMidiNotes(
                         segmentId,
                         noteIds,
                         tickDelta,
-                        keyDelta));
+                        keyDelta))) return;
                 }
                 break;
             case TimelineItemEditKind.ResizeStart:
-                _session.Execute(ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
+                if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
                     segmentId,
                     noteIds,
                     Math.Max(snappedDelta, -minimumStart),
                     0,
-                    workspace.EditorSettings.EffectiveOperationStepTicks));
+                    workspace.EditorSettings.EffectiveOperationStepTicks))) return;
                 break;
             case TimelineItemEditKind.ResizeEnd:
                 long endDelta = workspace.EditorSettings.SnapDelta(
                     edit.TickDelta,
                     checked(edit.Item.EndTick + edit.TickDelta));
-                _session.Execute(ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
+                if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
                     segmentId,
                     noteIds,
                     0,
                     endDelta,
-                    workspace.EditorSettings.EffectiveOperationStepTicks));
+                    workspace.EditorSettings.EffectiveOperationStepTicks))) return;
                 break;
         }
     }
 
-    private void EditDirectMidiEventPoint(
+    private async Task EditDirectMidiEventPoint(
         MidoraId segmentId,
         TimelineItemEditEventArgs edit,
         long snappedTarget,
@@ -7968,15 +7919,15 @@ public partial class MainWindow : Window
         {
             return;
         }
-        DirectMidiChannelEvent[] selected = location.Segment.ChannelEvents
-            .ResolveByIds(selectedIds.ToHashSet())
-            .Select(static match => match.Value)
-            .Where(value => TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value)
-                    == TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(point))
-            .ToArray();
-        if (selected.Length == 0) selected = [point];
-        MidoraId[] selectedEventIds = selected.Select(static value => value.Id).ToArray();
-        long minimumTick = selected.Min(static value => value.Tick);
+        var eventSource = location.Segment.ChannelEvents.CreateObjectSource();
+        var frozenIds = CompressedMidoraIdSet.Create(selectedIds).Add(point.Id);
+        DirectMidiEventLaneTarget pointTarget = TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(point);
+        var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, eventSource, frozenIds,
+            static value => (value.Tick, value.Tick, 0, 0d), token,
+            value => TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value) == pointTarget));
+        if (!read.Completed || read.Value.Ids.Count == 0) return;
+        var selectedEventIds = read.Value.Ids;
+        long minimumTick = read.Value.MinimumTick;
         long tickDelta = edit.EditKind == TimelineItemEditKind.Move
             ? Math.Max(checked(snappedTarget - point.Tick), -minimumTick)
             : 0;
@@ -8008,13 +7959,13 @@ public partial class MainWindow : Window
             data2Delta = Math.Clamp(point.Data2 + data2Delta, 0, 127) - point.Data2;
         }
         long firstNewStableId = project.NextStableId;
-        _session.Execute(ProjectDomainEditCommands.AdjustDirectMidiEventPoints(
+        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustDirectMidiEventPoints(
             segmentId,
             selectedEventIds,
             tickDelta,
             data1Delta,
             data2Delta,
-            edit.CopyRequested));
+            edit.CopyRequested))) return;
         if (edit.CopyRequested)
         {
             DirectMidiEventLaneTarget target =
@@ -8055,7 +8006,7 @@ public partial class MainWindow : Window
         };
     }
 
-    private void EditOpaqueMidiEventPoint(
+    private async Task EditOpaqueMidiEventPoint(
         MidoraId segmentId,
         TimelineItemEditEventArgs edit,
         long snappedTarget,
@@ -8070,7 +8021,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        MidoraId[] selectedEventIds;
+        IReadOnlyCollection<MidoraId> selectedEventIds;
         long minimumTick;
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
             && timeline.SelectionSnapshot.TryGetMetrics(
@@ -8078,28 +8029,28 @@ public partial class MainWindow : Window
                 out TimelineSelectionMetrics metrics)
             && metrics.Count == selectedIds.Count)
         {
-            selectedEventIds = selectedIds.ToArray();
+            selectedEventIds = selectedIds;
             minimumTick = metrics.MinimumStartTick;
         }
         else
         {
-            OpaqueMidiEvent[] selected = location.Segment.OpaqueEvents
-                .ResolveByIds(selectedIds.ToHashSet())
-                .Select(static match => match.Value)
-                .ToArray();
-            if (selected.Length == 0) selected = [point];
-            selectedEventIds = selected.Select(static value => value.Id).ToArray();
-            minimumTick = selected.Min(static value => value.Tick);
+            var source = location.Segment.OpaqueEvents.CreateObjectSource();
+            var frozenIds = CompressedMidoraIdSet.Create(selectedIds).Add(point.Id);
+            var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, source, frozenIds,
+                static value => (value.Tick, value.Tick, 0, 0d), token));
+            if (!read.Completed || read.Value.Ids.Count == 0) return;
+            selectedEventIds = read.Value.Ids;
+            minimumTick = read.Value.MinimumTick;
         }
         long tickDelta = Math.Max(
             checked(snappedTarget - point.Tick),
             -minimumTick);
         long firstNewStableId = project.NextStableId;
-        _session.Execute(ProjectDomainEditCommands.AdjustOpaqueMidiEvents(
+        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustOpaqueMidiEvents(
             segmentId,
             selectedEventIds,
             tickDelta,
-            edit.CopyRequested));
+            edit.CopyRequested))) return;
         if (edit.CopyRequested)
         {
             SelectCreatedWorkspaceObjects(
@@ -8132,7 +8083,7 @@ public partial class MainWindow : Window
         };
     }
 
-    private void EditLogicalParameterPoint(
+    private async Task EditLogicalParameterPoint(
         MidoraId segmentId,
         TimelineItemEditEventArgs edit,
         long snappedTarget,
@@ -8164,32 +8115,32 @@ public partial class MainWindow : Window
         double value = TimelineWorkspaceViewModel.DenormalizeParameterValue(
             definition,
             Math.Clamp(normalized + edit.ValueDelta, 0, 1));
-        HashSet<MidoraId> requested = selectedIds.ToHashSet();
-        requested.Add(point.Id);
-        IReadOnlyList<CurvePoint> selectedPoints =
-            lane.Points.ResolveByIdsInCollectionOrder(requested);
-        if (selectedPoints.Count == 0) selectedPoints = [point];
-        MidoraId[] selected = selectedPoints.Select(static value => value.Id).ToArray();
+        var pointSource = lane.Points.CreateQuerySnapshot();
+        var frozenIds = CompressedMidoraIdSet.Create(selectedIds).Add(point.Id);
+        var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, pointSource, frozenIds,
+            static value => (value.Tick, value.Tick, 0, value.Value), token));
+        if (!read.Completed || read.Value.Ids.Count == 0) return;
+        var selected = read.Value.Ids;
         double requestedValueDelta = value - point.Value;
-        double selectedMinimumValue = selectedPoints.Min(static value => value.Value);
-        double selectedMaximumValue = selectedPoints.Max(static value => value.Value);
+        double selectedMinimumValue = read.Value.MinimumValue;
+        double selectedMaximumValue = read.Value.MaximumValue;
         double minimumValueDelta = definition.Minimum - selectedMinimumValue;
         double maximumValueDelta = definition.Maximum - selectedMaximumValue;
         double valueDelta = Math.Clamp(requestedValueDelta, minimumValueDelta, maximumValueDelta);
         long tickDelta = edit.EditKind == TimelineItemEditKind.Move
             ? Math.Max(
                 checked(snappedTarget - point.Tick),
-                -selectedPoints.Min(static value => value.Tick))
+                -read.Value.MinimumTick)
             : 0;
         if (edit.CopyRequested)
         {
             long firstNewStableId = _session.Project.NextStableId;
-            _session.Execute(ProjectDomainEditCommands.DuplicateLogicalParameterPoints(
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateLogicalParameterPoints(
                 segmentId,
                 lane.Id,
                 selected,
                 tickDelta,
-                valueDelta));
+                valueDelta))) return;
             SelectCreatedWorkspaceObjects(
                 (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
                 firstNewStableId,
@@ -8202,12 +8153,12 @@ public partial class MainWindow : Window
         }
         else
         {
-            _session.Execute(ProjectDomainEditCommands.AdjustLogicalParameterPoints(
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustLogicalParameterPoints(
                 segmentId,
                 lane.Id,
                 selected,
                 tickDelta,
-                valueDelta));
+                valueDelta))) return;
         }
     }
 
@@ -8269,7 +8220,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void EditTemplateEvent(
+    private async Task EditTemplateEvent(
         InstrumentWorkspaceViewModel workspace,
         TimelineItemEditEventArgs edit)
     {
@@ -8299,35 +8250,22 @@ public partial class MainWindow : Window
                 : template.Tick) + edit.TickDelta));
         if (template.Kind == TemplateEventKind.Note)
         {
-            HashSet<MidoraId> requested = workspace.Selection.Ids.ToHashSet();
-            requested.Add(template.Id);
-            List<TimelineRenderItem> resolvedNotes = new(requested.Count);
-            workspace.SubVoiceNoteSnapshot?.QueryByIds(requested, resolvedNotes);
-            MidoraId[] selectedIds = resolvedNotes
-                .Select(static item => item.Id)
-                .Distinct()
-                .ToArray();
-            if (selectedIds.Length == 0) selectedIds = [template.Id];
-            TimelineSelectionSnapshot noteSelection = new(
-                revision: 0,
-                selectedIds,
-                selectedIds.Contains(workspace.Selection.Primary ?? default)
-                    ? workspace.Selection.Primary
-                    : template.Id,
-                resolvedNotes.Count == 0
-                    ? [new TimelineRenderItem(
-                        template.Id,
-                        TimelineItemKind.TemplateNote,
-                        template.Tick,
-                        checked(template.Tick + template.LengthTicks),
-                        127 - template.Number,
-                        template.Value / 127d,
-                        1,
-                        TimelineItemState.None)]
-                    : resolvedNotes);
-            _ = noteSelection.TryGetMetrics(
-                TimelineItemKind.TemplateNote,
-                out TimelineSelectionMetrics noteMetrics);
+            IReadOnlyCollection<MidoraId> selectedIds = workspace.Selection.SharedIds;
+            TimelineSelectionMetrics noteMetrics;
+            if (!workspace.SelectionSnapshot.TryGetMetrics(TimelineItemKind.TemplateNote, out noteMetrics)
+                || noteMetrics.Count != selectedIds.Count)
+            {
+                var source = voice.Events.CreateQuerySnapshot();
+                var frozenIds = workspace.Selection.SharedIds.Add(template.Id);
+                var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, source, frozenIds,
+                    static item => (item.Tick, checked(item.Tick + item.LengthTicks), item.Number, item.Value / 127d),
+                    token, static item => item.Kind == TemplateEventKind.Note));
+                if (!read.Completed || read.Value.Ids.Count == 0) return;
+                selectedIds = read.Value.Ids;
+                noteMetrics = new(selectedIds.Count, read.Value.MinimumTick, read.Value.MaximumTick,
+                    127 - read.Value.MaximumPitch, 127 - read.Value.MinimumPitch,
+                    read.Value.MinimumValue, read.Value.MaximumValue, default);
+            }
             switch (edit.EditKind)
             {
                 case TimelineItemEditKind.Move:
@@ -8342,12 +8280,12 @@ public partial class MainWindow : Window
                     if (edit.CopyRequested)
                     {
                         long firstNewStableId = _session.Project.NextStableId;
-                        _session.Execute(ProjectDomainEditCommands.DuplicateTemplateNotes(
+                        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateTemplateNotes(
                             instrumentId,
                             voice.Id,
                             selectedIds,
                             checked(noteMetrics.MinimumStartTick + tickDelta),
-                            pitchDelta));
+                            pitchDelta))) return;
                         SelectCreatedWorkspaceObjects(
                             workspace,
                             firstNewStableId,
@@ -8358,34 +8296,34 @@ public partial class MainWindow : Window
                     }
                     else
                     {
-                        _session.Execute(ProjectDomainEditCommands.MoveTemplateNotes(
+                        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.MoveTemplateNotes(
                             instrumentId,
                             voice.Id,
                             selectedIds,
                             tickDelta,
-                            pitchDelta));
+                            pitchDelta))) return;
                     }
                     return;
                 case TimelineItemEditKind.ResizeStart:
                     long startDelta = Math.Max(
                         snappedDelta,
                         -noteMetrics.MinimumStartTick);
-                    _session.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
+                    if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
                         instrumentId,
                         voice.Id,
                         selectedIds,
                         startDelta,
                         endDelta: 0,
-                        minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
+                        minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks))) return;
                     return;
                 case TimelineItemEditKind.ResizeEnd:
-                    _session.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
+                    if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
                         instrumentId,
                         voice.Id,
                         selectedIds,
                         startDelta: 0,
                         endDelta: snappedDelta,
-                        minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
+                        minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks))) return;
                     return;
             }
         }
@@ -8393,40 +8331,40 @@ public partial class MainWindow : Window
         if (activeTarget is MidiValueTarget target
             && TemplateEventMidiTargets.Enumerate(template).Contains(target))
         {
-            HashSet<MidoraId> requested = workspace.Selection.Ids.ToHashSet();
-            requested.Add(template.Id);
-            TemplateEvent[] selectedEvents = voice.Events
-                .ResolveByIdsInCollectionOrder(requested)
-                .Where(item => item.Kind != TemplateEventKind.Note
-                    && TemplateEventMidiTargets.Enumerate(item).Contains(target))
-                .ToArray();
+            var eventSource = voice.Events.CreateQuerySnapshot();
+            var frozenIds = workspace.Selection.SharedIds.Add(template.Id);
+            var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, eventSource, frozenIds,
+                item => (item.Tick, item.Tick, 0, (double)TemplateEventMidiTargets.GetValue(item, target)), token,
+                item => item.Kind != TemplateEventKind.Note && TemplateEventMidiTargets.Enumerate(item).Contains(target)));
+            if (!read.Completed || read.Value.Ids.Count == 0) return;
+            var eventIds = read.Value.Ids;
             long requestedTickDelta = workspace.EventLaneEditorSettings.SnapDelta(
                 edit.TickDelta,
                 checked(template.Tick + edit.TickDelta));
             long tickDelta = Math.Max(
                 requestedTickDelta,
-                -selectedEvents.Min(item => item.Tick));
+                -read.Value.MinimumTick);
             (double minimum, double maximum) = InstrumentWorkspaceViewModel.MidiValueRange(target);
             int requestedValueDelta = checked((int)Math.Round(
                 edit.ValueDelta * (maximum - minimum),
                 MidpointRounding.AwayFromZero));
             int minimumValueDelta = checked((int)Math.Ceiling(
-                minimum - selectedEvents.Min(item => TemplateEventMidiTargets.GetValue(item, target))));
+                minimum - read.Value.MinimumValue));
             int maximumValueDelta = checked((int)Math.Floor(
-                maximum - selectedEvents.Max(item => TemplateEventMidiTargets.GetValue(item, target))));
+                maximum - read.Value.MaximumValue));
             int valueDelta = Math.Clamp(
                 requestedValueDelta,
                 minimumValueDelta,
                 maximumValueDelta);
             long firstNewStableId = _session.Project.NextStableId;
-            _session.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
+            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
                 instrumentId,
                 voice.Id,
-                selectedEvents.Select(item => item.Id).ToArray(),
+                eventIds,
                 target,
                 tickDelta,
                 valueDelta,
-                edit.CopyRequested));
+                edit.CopyRequested))) return;
             if (edit.CopyRequested)
             {
                 SelectCreatedWorkspaceObjects(
@@ -8467,10 +8405,10 @@ public partial class MainWindow : Window
                 instrumentId, voice.Id, template.Id, tick, template.Value, template.SecondaryValue),
             _ => throw new InvalidOperationException("Unsupported Template Event kind.")
         };
-        _session.Execute(command);
+        if (!await ExecuteWorkspaceEditAsync(command)) return;
     }
 
-    private void EditValueCurvePoint(InstrumentWorkspaceViewModel workspace, TimelineItemEditEventArgs edit)
+    private async Task EditValueCurvePoint(InstrumentWorkspaceViewModel workspace, TimelineItemEditEventArgs edit)
     {
         if (workspace.ObjectId is not MidoraId instrumentId || _session.Project is null) return;
         EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
@@ -8491,27 +8429,27 @@ public partial class MainWindow : Window
             }
             if (curve is null || point is null) continue;
             (double minimum, double maximum) = InstrumentWorkspaceViewModel.MidiValueRange(curve.Target);
-            HashSet<MidoraId> requested = workspace.Selection.Ids.ToHashSet();
-            requested.Add(point.Id);
-            IReadOnlyList<CurvePoint> selectedPoints =
-                curve.Points.ResolveByIdsInCollectionOrder(requested);
-            if (selectedPoints.Count == 0) selectedPoints = [point];
-            MidoraId[] selected = selectedPoints.Select(static value => value.Id).ToArray();
+            var pointSource = curve.Points.CreateQuerySnapshot();
+            var frozenIds = workspace.Selection.SharedIds.Add(point.Id);
+            var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, pointSource, frozenIds,
+                static value => (value.Tick, value.Tick, 0, value.Value), token));
+            if (!read.Completed || read.Value.Ids.Count == 0) return;
+            var selected = read.Value.Ids;
             double requestedValue = Math.Round(
                 Math.Clamp(point.Value + edit.ValueDelta * (maximum - minimum), minimum, maximum),
                 MidpointRounding.AwayFromZero);
             double requestedValueDelta = requestedValue - point.Value;
             double minimumValueDelta = minimum
-                - selectedPoints.Min(static value => value.Value);
+                - read.Value.MinimumValue;
             double maximumValueDelta = maximum
-                - selectedPoints.Max(static value => value.Value);
+                - read.Value.MaximumValue;
             long requestedTickDelta = workspace.EditorSettings.SnapDelta(
                 edit.TickDelta,
                 checked(edit.Item.StartTick + edit.TickDelta));
             long tickDelta = Math.Max(
                 requestedTickDelta,
-                -selectedPoints.Min(static value => value.Tick));
-            _session.Execute(ProjectDomainEditCommands.AdjustValueCurvePoints(
+                -read.Value.MinimumTick);
+            await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustValueCurvePoints(
                 instrumentId,
                 voice.Id,
                 curve.Id,
@@ -8575,7 +8513,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        int pointCount = voice.Events.Count(value =>
+        int pointCount = voice.Events.CreateQuerySnapshot().EnumerateAll().Count(value =>
             TemplateEventMidiTargets.Enumerate(value).Contains(target));
         string label = TemplateEventMidiTargets.Format(target);
         if (MessageDialog.Show(
@@ -8590,15 +8528,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        RunSynchronous("Delete SubVoice Event Lane", () =>
-        {
-            _session.Execute(ProjectDomainEditCommands.DeleteSubVoiceEventLane(
+        StartWorkspaceEdit(ProjectDomainEditCommands.DeleteSubVoiceEventLane(
                 instrumentId,
                 lane.SubVoiceId,
                 target,
-                nonEmptyDeletionConfirmed: pointCount != 0));
-            workspace.Selection.Clear();
-        });
+                nonEmptyDeletionConfirmed: pointCount != 0),
+            () => workspace.Selection.Clear());
     }
 
     private void OnAddParameterMappingClick(object sender, RoutedEventArgs e)
@@ -9863,8 +9798,6 @@ public partial class MainWindow : Window
                 return true;
             }
         }
-        ObjectPropertiesViewModel properties = _session.CreateObjectProperties(workspace);
-        if (!ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties)) return false;
         if (workspace is InstrumentWorkspaceViewModel)
         {
             return OpenInstrumentProperties();
@@ -9945,446 +9878,202 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CutOrCopyProjectSelection(bool cut)
+    private void StartDetachedWorkspaceEdit(IProjectEditCommand command, Action? afterPublication = null) =>
+        StartWorkspaceEdit(new SequentialProjectEditCommand(command.Name, [_ => command]), afterPublication);
+
+    private async void StartWorkspaceEdit(IProjectEditCommand command, Action? afterPublication = null)
     {
-        if (IsArrangementHeaderShortcutContext())
-        {
-            CopyArrangementHeader(cut);
-            return;
-        }
-        if (CutOrCopySelectedLogicalTrack(cut))
-        {
-            return;
-        }
-        if (!cut && TryGetSelectedEventInstrumentId(out _))
-        {
-            _ = CopySelectedEventInstrument();
-            return;
-        }
+        try { await ExecuteWorkspaceEditAsync(command, afterPublication); }
+        catch (Exception exception) { _session.SetStatusMessage($"{command.Name}: {exception.Message}", isError: true); }
+    }
+
+    private void OnClipboardSessionChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_clipboardDocument is null || ReferenceEquals(_clipboardDocument, _session.Document)) return;
+        _projectClipboard?.Dispose();
+        _projectClipboard = null;
+        _clipboardDocument = null;
+    }
+
+    private async void StartClipboardTransfer(ProjectDocumentSession document,
+        Func<ProjectObjectClipboardPayload> copy, IProjectEditCommand? delete = null)
+    {
+        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
+        try { await RunClipboardTransferAsync(document, workspace, copy, delete); }
+        catch (Exception exception) { _session.SetStatusMessage($"Clipboard: {exception.Message}", isError: true); }
+    }
+
+    private async void CutOrCopyProjectSelection(bool cut)
+    {
+        if (IsArrangementHeaderShortcutContext()) { CopyArrangementHeader(cut); return; }
+        if (CutOrCopySelectedLogicalTrack(cut)) return;
+        if (!cut && TryGetSelectedEventInstrumentId(out _)) { _ = CopySelectedEventInstrument(); return; }
         if (_session.Document is not ProjectDocumentSession document
             || _session.Project is not MidoraProject project
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace
-            || workspace.Selection.Ids.Count == 0)
+            || workspace.Selection.Ids.Count == 0 || cut && !_session.CanEditProject) return;
+        try
         {
-            return;
+            ClipboardTransferRequest request = ResolveWorkspaceClipboardRequest(document, project, workspace);
+            await RunClipboardTransferAsync(document, workspace, request.Copy, cut ? request.Delete : null);
         }
-        if (cut && !_session.CanEditProject) return;
-
-        RunSynchronous(cut ? "Cut Project Objects" : "Copy Project Objects", () =>
+        catch (Exception exception)
         {
-            MidoraId[] ids = workspace.Selection.Ids.ToArray();
-            ProjectObjectClipboardPayload payload;
-            IProjectEditCommand? deleteAfterWrite = null;
-
-            switch (workspace)
-            {
-                case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }:
-                    {
-                        MidoraId primary = workspace.Selection.Primary
-                            ?? throw new InvalidOperationException("The Segment selection has no primary object.");
-                        if (TimelineWorkspaceViewModel.FindSegment(project, primary) is not null)
-                        {
-                            if (ids.Any(id => TimelineWorkspaceViewModel.FindSegment(project, id) is null))
-                                throw new InvalidOperationException("Logical and MIDI Segments cannot be copied in one clipboard operation.");
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSegments(
-                                    document, ids, primary);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else payload = ProjectObjectClipboard.CopySegments(document, ids, primary);
-                        }
-                        else if (TimelineWorkspaceViewModel.FindMidiSegment(project, primary) is not null)
-                        {
-                            if (ids.Any(id => TimelineWorkspaceViewModel.FindMidiSegment(project, id) is null))
-                                throw new InvalidOperationException("Logical and MIDI Segments cannot be copied in one clipboard operation.");
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutMidiSegments(
-                                    document, ids, primary);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else payload = ProjectObjectClipboard.CopyMidiSegments(document, ids, primary);
-                        }
-                        else throw new InvalidOperationException("The primary Segment no longer exists.");
-                        break;
-                    }
-                case TimelineWorkspaceViewModel
-                {
-                    Mode: TimelineWorkspaceMode.Segment,
-                    ObjectId: MidoraId segmentId
-                }:
-                    {
-                        (LogicalTrack Track, Segment Segment)? location =
-                            TimelineWorkspaceViewModel.FindSegment(project, segmentId);
-                        IReadOnlySet<MidoraId> selected = workspace.Selection.IdSet;
-                        if (location is null)
-                        {
-                            if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is not { } midi)
-                                throw new InvalidOperationException("The Segment no longer exists.");
-                            MidoraId[] directNotes = midi.Segment.Notes.ResolveByIds(selected)
-                                .Select(static match => match.Value.Id).ToArray();
-                            if (directNotes.Length == ids.Length)
-                            {
-                                if (cut)
-                                {
-                                    ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutDirectMidiNotes(
-                                        document, segmentId, directNotes);
-                                    payload = prepared.Payload;
-                                    deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                                }
-                                else payload = ProjectObjectClipboard.CopyDirectMidiNotes(document, segmentId, directNotes);
-                                break;
-                            }
-                            MidoraId[] directEvents = midi.Segment.ChannelEvents.ResolveByIds(selected)
-                                .Select(static match => match.Value.Id).ToArray();
-                            if (directEvents.Length == ids.Length)
-                            {
-                                if (cut)
-                                {
-                                    ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutDirectMidiEvents(
-                                        document, segmentId, directEvents);
-                                    payload = prepared.Payload;
-                                    deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                                }
-                                else payload = ProjectObjectClipboard.CopyDirectMidiEvents(document, segmentId, directEvents);
-                                break;
-                            }
-                            MidoraId[] opaqueEvents = midi.Segment.OpaqueEvents.ResolveByIds(selected)
-                                .Select(static match => match.Value.Id).ToArray();
-                            if (opaqueEvents.Length == ids.Length)
-                            {
-                                if (cut)
-                                {
-                                    ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutOpaqueMidiEvents(
-                                        document, segmentId, opaqueEvents);
-                                    payload = prepared.Payload;
-                                    deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                                }
-                                else payload = ProjectObjectClipboard.CopyOpaqueMidiEvents(document, segmentId, opaqueEvents);
-                                break;
-                            }
-                            throw new InvalidOperationException(
-                                "Copy or Cut may target Direct MIDI Notes, Direct MIDI Events, or imported MIDI events, not a mixed selection.");
-                        }
-                        if (ids.Length == 1
-                            && location.Value.Segment.ParameterLanes.Any(lane => lane.Id == ids[0]))
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalParameterLane(
-                                    document,
-                                    segmentId,
-                                    ids[0]);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopyLogicalParameterLane(document, segmentId, ids[0]);
-                            }
-                            break;
-                        }
-                        MidoraId[] notes = location.Value.Segment.Notes
-                            .ResolveByIdsInCollectionOrder(selected)
-                            .Select(static item => item.Id)
-                            .ToArray();
-                        if (notes.Length == ids.Length)
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalNotes(
-                                    document, segmentId, notes);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else payload = ProjectObjectClipboard.CopyLogicalNotes(document, segmentId, notes);
-                            break;
-                        }
-                        LogicalParameterLane? selectedLane = null;
-                        IReadOnlyList<CurvePoint>? selectedPoints = null;
-                        foreach (LogicalParameterLane lane in location.Value.Segment.ParameterLanes)
-                        {
-                            IReadOnlyList<CurvePoint> matches =
-                                lane.Points.ResolveByIdsInCollectionOrder(selected);
-                            if (matches.Count == 0) continue;
-                            if (selectedLane is not null)
-                            {
-                                selectedLane = null;
-                                selectedPoints = null;
-                                break;
-                            }
-                            selectedLane = lane;
-                            selectedPoints = matches;
-                        }
-                        if (selectedLane is null || selectedPoints?.Count != ids.Length)
-                        {
-                            throw new InvalidOperationException(
-                                "Copy or Cut may target Logical Notes or points from one Logical Parameter Lane, not a mixed selection.");
-                        }
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalParameterLaneContent(
-                                document, segmentId, selectedLane.Id, ids);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                        }
-                        else payload = ProjectObjectClipboard.CopyLogicalParameterLaneContent(
-                            document, segmentId, selectedLane.Id, ids);
-                        break;
-                    }
-                case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor }:
-                    {
-                        if (project.Conductor.EndMarker is ProjectEndMarker end && ids.Contains(end.Id))
-                        {
-                            throw new InvalidOperationException("The Project End Marker is excluded from Project Clipboard operations.");
-                        }
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutConductorEvents(document, ids);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                        }
-                        else payload = ProjectObjectClipboard.CopyConductorEvents(document, ids);
-                        break;
-                    }
-                case InstrumentWorkspaceViewModel instrumentWorkspace when instrumentWorkspace.ObjectId is MidoraId instrumentId:
-                    {
-                        EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
-                        IReadOnlySet<MidoraId> selected = workspace.Selection.IdSet;
-                        if (ids.Length == 1 && instrument.SubVoices.Any(voice => voice.Id == ids[0]))
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoice(
-                                    document,
-                                    instrumentId,
-                                    ids[0]);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopySubVoice(document, instrumentId, ids[0]);
-                            }
-                            break;
-                        }
-                        if (ids.Length == 1 && instrument.LogicalParameters.Any(value => value.Id == ids[0]))
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared =
-                                    ProjectObjectClipboard.PrepareCutLogicalParameterDefinition(
-                                        document,
-                                        instrumentId,
-                                        ids[0]);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopyLogicalParameterDefinition(
-                                    document,
-                                    instrumentId,
-                                    ids[0]);
-                            }
-                            break;
-                        }
-                        if (ids.Length == 1 && instrument.ParameterMappings.Any(value => value.Id == ids[0]))
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared =
-                                    ProjectObjectClipboard.PrepareCutLogicalParameterMapping(
-                                        document,
-                                        instrumentId,
-                                        ids[0]);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopyLogicalParameterMapping(
-                                    document,
-                                    instrumentId,
-                                    ids[0]);
-                            }
-                            break;
-                        }
-                        if (ids.Length == 1 && instrumentWorkspace.MappingChains.Any(chain => chain.Id == ids[0]))
-                        {
-                            MappingChainListItem selectedChain = instrumentWorkspace.MappingChains
-                                .Single(chain => chain.Id == ids[0]);
-                            if (cut && !selectedChain.CanDelete)
-                            {
-                                throw new InvalidOperationException(
-                                    "The Note Mapping Chain cannot be cut or deleted.");
-                            }
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutMappingChain(
-                                    document,
-                                    instrumentId,
-                                    ids[0]);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopyMappingChain(document, instrumentId, ids[0]);
-                            }
-                            break;
-                        }
-                        if (ids.Length == 1
-                            && instrumentWorkspace.MappingSteps.FirstOrDefault(value => value.Id == ids[0])
-                                is MappingStepListItem selectedStep)
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared =
-                                    ProjectObjectClipboard.PrepareCutMappingStep(
-                                        document,
-                                        instrumentId,
-                                        selectedStep.ChainId,
-                                        selectedStep.Id);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopyMappingStep(
-                                    document,
-                                    instrumentId,
-                                    selectedStep.ChainId,
-                                    selectedStep.Id);
-                            }
-                            break;
-                        }
-                        if (ids.Length == 1 && instrument.Envelopes.Any(value => value.Id == ids[0]))
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared =
-                                    ProjectObjectClipboard.PrepareCutEnvelopePreset(
-                                        document,
-                                        instrumentId,
-                                        ids[0]);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopyEnvelopePreset(
-                                    document,
-                                    instrumentId,
-                                    ids[0]);
-                            }
-                            break;
-                        }
-                        if (ids.Length == 1 && instrument.MappingFunctions.Any(value => value.Id == ids[0]))
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared =
-                                    ProjectObjectClipboard.PrepareCutMappingFunction(
-                                        document,
-                                        instrumentId,
-                                        ids[0]);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else
-                            {
-                                payload = ProjectObjectClipboard.CopyMappingFunction(
-                                    document,
-                                    instrumentId,
-                                    ids[0]);
-                            }
-                            break;
-                        }
-                        SubVoice? selectedVoice = null;
-                        IReadOnlyList<TemplateEvent>? selectedEvents = null;
-                        foreach (SubVoice voice in instrument.SubVoices)
-                        {
-                            IReadOnlyList<TemplateEvent> matches =
-                                voice.Events.ResolveByIdsInCollectionOrder(selected);
-                            if (matches.Count == 0) continue;
-                            if (selectedVoice is not null)
-                            {
-                                selectedVoice = null;
-                                selectedEvents = null;
-                                break;
-                            }
-                            selectedVoice = voice;
-                            selectedEvents = matches;
-                        }
-                        if (selectedVoice is not null && selectedEvents?.Count == ids.Length)
-                        {
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoiceTimelineEvents(
-                                    document, instrumentId, selectedVoice.Id, ids);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else payload = ProjectObjectClipboard.CopySubVoiceTimelineEvents(
-                                document, instrumentId, selectedVoice.Id, ids);
-                            break;
-                        }
-                        foreach (SubVoice voice in instrument.SubVoices)
-                        {
-                            ValueCurve? curve = null;
-                            foreach (ValueCurve candidate in voice.Curves)
-                            {
-                                IReadOnlyList<CurvePoint> matches =
-                                    candidate.Points.ResolveByIdsInCollectionOrder(selected);
-                                if (matches.Count == 0) continue;
-                                if (curve is not null || matches.Count != ids.Length)
-                                {
-                                    curve = null;
-                                    break;
-                                }
-                                curve = candidate;
-                            }
-                            if (curve is null) continue;
-                            if (cut)
-                            {
-                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutValueCurveContent(
-                                    document, instrumentId, voice.Id, curve.Id, ids);
-                                payload = prepared.Payload;
-                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                            }
-                            else payload = ProjectObjectClipboard.CopyValueCurveContent(
-                                document, instrumentId, voice.Id, curve.Id, ids);
-                            goto ClipboardPayloadReady;
-                        }
-                        throw new InvalidOperationException(
-                            "Copy or Cut requires one Event Instrument structure item, Template Events from one SubVoice, or points from one Value Curve.");
-                    }
-                default:
-                    return;
-            }
-
-        ClipboardPayloadReady:
-            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
-            _projectClipboard = payload;
-            _clipboardDocument = document;
-            if (deleteAfterWrite is not null)
-            {
-                _session.Execute(deleteAfterWrite);
-                workspace.Selection.Clear();
-                if (workspace is InstrumentWorkspaceViewModel visualWorkspace)
-                {
-                    ClearInstrumentStructureVisualSelection(visualWorkspace);
-                }
-            }
-            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
-        });
+            _session.SetStatusMessage($"{(cut ? "Cut" : "Copy")} Project Objects: {exception.Message}", isError: true);
+        }
     }
 
-    private void PasteProjectSelection()
+    private sealed record ClipboardTransferRequest(Func<ProjectObjectClipboardPayload> Copy, IProjectEditCommand Delete);
+
+    private static ClipboardTransferRequest ResolveWorkspaceClipboardRequest(
+        ProjectDocumentSession document, MidoraProject project, WorkspaceViewModel workspace)
+    {
+        // Freeze the immutable ID root. All expensive copying belongs to the background
+        // preparation; the Dispatcher only resolves the primary object's owner.
+        IReadOnlyCollection<MidoraId> ids = workspace.Selection.SharedIds;
+        MidoraId primary = workspace.Selection.Primary
+            ?? throw new InvalidOperationException("The selection has no primary object.");
+        if (workspace is TimelineWorkspaceViewModel timeline)
+        {
+            if (timeline.Mode == TimelineWorkspaceMode.Arrangement)
+            {
+                if (TimelineWorkspaceViewModel.FindSegment(project, primary) is not null)
+                    return new(() => ProjectObjectClipboard.CopySegments(document, ids, primary),
+                        ProjectDomainEditCommands.DeleteSegments(ids));
+                return new(() => ProjectObjectClipboard.CopyMidiSegments(document, ids, primary),
+                    ProjectDomainEditCommands.DeleteMidiSegments(ids));
+            }
+            if (timeline.Mode == TimelineWorkspaceMode.Conductor)
+                return new(() => ProjectObjectClipboard.CopyConductorEvents(document, ids),
+                    ProjectDomainEditCommands.DeleteConductorEvents(ids));
+            if (timeline.ObjectId is not MidoraId segmentId)
+                throw new InvalidOperationException("The Segment no longer exists.");
+            if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is { } midi)
+            {
+                if (midi.Segment.Notes.TryGetById(primary, out _))
+                    return new(() => ProjectObjectClipboard.CopyDirectMidiNotes(document, segmentId, ids),
+                        ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, ids));
+                if (midi.Segment.ChannelEvents.TryGetById(primary, out _))
+                    return new(() => ProjectObjectClipboard.CopyDirectMidiEvents(document, segmentId, ids),
+                        ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, ids));
+                return new(() => ProjectObjectClipboard.CopyOpaqueMidiEvents(document, segmentId, ids),
+                    ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, ids));
+            }
+            Segment segment = TimelineWorkspaceViewModel.FindSegment(project, segmentId)?.Segment
+                ?? throw new InvalidOperationException("The Segment no longer exists.");
+            if (segment.Notes.TryGetById(primary, out _))
+                return new(() => ProjectObjectClipboard.CopyLogicalNotes(document, segmentId, ids),
+                    ProjectDomainEditCommands.DeleteLogicalNotes(segmentId, ids));
+            foreach (LogicalParameterLane lane in segment.ParameterLanes)
+            {
+                MidoraId laneId = lane.Id;
+                if (ids.Count == 1 && lane.Id == primary)
+                    return new(() => ProjectObjectClipboard.CopyLogicalParameterLane(document, segmentId, laneId),
+                        ProjectDomainEditCommands.DeleteLogicalParameterLane(segmentId, laneId, deletionConfirmed: true));
+                if (lane.Points.TryGetById(primary, out _))
+                    return new(() => ProjectObjectClipboard.CopyLogicalParameterLaneContent(document, segmentId, laneId, ids),
+                        ProjectDomainEditCommands.DeleteLogicalParameterPoints(segmentId, laneId, ids));
+            }
+        }
+        if (workspace is InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId })
+        {
+            EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
+            if (ids.Count == 1)
+            {
+                if (instrument.SubVoices.Any(item => item.Id == primary))
+                    return new(() => ProjectObjectClipboard.CopySubVoice(document, instrumentId, primary),
+                        ProjectDomainEditCommands.DeleteSubVoice(instrumentId, primary, nonEmptyDeletionConfirmed: true));
+                if (instrument.LogicalParameters.Any(item => item.Id == primary))
+                    return new(() => ProjectObjectClipboard.CopyLogicalParameterDefinition(document, instrumentId, primary),
+                        ProjectDomainEditCommands.DeleteLogicalParameter(instrumentId, primary, referencedDeletionConfirmed: true));
+                if (instrument.ParameterMappings.Any(item => item.Id == primary))
+                    return new(() => ProjectObjectClipboard.CopyLogicalParameterMapping(document, instrumentId, primary),
+                        ProjectDomainEditCommands.DeleteLogicalParameterMapping(instrumentId, primary, deletionConfirmed: true));
+                if (instrument.Envelopes.Any(item => item.Id == primary))
+                    return new(() => ProjectObjectClipboard.CopyEnvelopePreset(document, instrumentId, primary),
+                        ProjectDomainEditCommands.DeleteInstrumentEnvelope(instrumentId, primary, referencedDeletionConfirmed: true));
+                if (instrument.MappingFunctions.Any(item => item.Id == primary))
+                    return new(() => ProjectObjectClipboard.CopyMappingFunction(document, instrumentId, primary),
+                        ProjectDomainEditCommands.DeleteMappingFunction(instrumentId, primary, referencedDeletionConfirmed: true));
+                foreach (MappingChain chain in EnumerateInstrumentMappingChains(instrument))
+                {
+                    MidoraId chainId = chain.Id;
+                    if (chain.Id == primary)
+                        return new(() => ProjectObjectClipboard.CopyMappingChain(document, instrumentId, chainId),
+                            ProjectDomainEditCommands.DeleteMappingChain(instrumentId, chainId, nonEmptyDeletionConfirmed: true));
+                    if (chain.Any(item => item.Id == primary))
+                        return new(() => ProjectObjectClipboard.CopyMappingStep(document, instrumentId, chainId, primary),
+                            ProjectDomainEditCommands.DeleteMappingStep(instrumentId, chainId, primary));
+                }
+            }
+            foreach (SubVoice voice in instrument.SubVoices)
+            {
+                MidoraId voiceId = voice.Id;
+                if (voice.Events.TryGetById(primary, out _))
+                    return new(() => ProjectObjectClipboard.CopySubVoiceTimelineEvents(document, instrumentId, voiceId, ids),
+                        ProjectDomainEditCommands.DeleteTemplateEvents(instrumentId, voiceId, ids));
+                foreach (ValueCurve curve in voice.Curves)
+                {
+                    MidoraId curveId = curve.Id;
+                    if (curve.Points.TryGetById(primary, out _))
+                        return new(() => ProjectObjectClipboard.CopyValueCurveContent(document, instrumentId, voiceId, curveId, ids),
+                            ProjectDomainEditCommands.DeleteValueCurvePoints(instrumentId, voiceId, curveId, ids));
+                }
+            }
+        }
+        throw new InvalidOperationException("The selection cannot be copied in this Workspace.");
+    }
+
+    private async Task<bool> RunClipboardTransferAsync(
+        ProjectDocumentSession document, WorkspaceViewModel workspace,
+        Func<ProjectObjectClipboardPayload> copy, IProjectEditCommand? delete = null)
+    {
+        bool cut = delete is not null;
+        TimelineSurface? sourceSurface = _lastTimelineCommandSurface;
+        bool completed = await RunOperationAsync(cut ? "Cut Project Objects" : "Copy Project Objects",
+            async token =>
+            {
+                using DispatcherCoalescingProgress<TimelineEditPreparationProgress> progress = new(
+                    Dispatcher, TimeSpan.FromMilliseconds(100),
+                    value => _session.ActiveForegroundTask?.Report(
+                        FormatTimelineEditPreparationProgress(value), value.IsIndeterminate ? null : value.OverallFraction));
+                using PreparedProjectClipboardTransfer prepared = await Task.Run(
+                    () => ProjectObjectClipboard.PrepareTransfer(document, copy, delete, token, progress), token);
+                progress.Flush();
+                _session.ActiveForegroundTask!.SealCancellationBeforePublication();
+                prepared.ValidatePublication(_session.Document
+                    ?? throw new InvalidOperationException("The Project was closed while copying."));
+                IDataObject? previousClipboard = Clipboard.GetDataObject();
+                Clipboard.SetDataObject(prepared.Payload.PlainTextSummary, copy: true);
+                try
+                {
+                    if (prepared.Deletion is not null)
+                        _session.ExecutePreparedPreservingWorkspaceSelection(prepared.Deletion, workspace);
+                }
+                catch
+                {
+                    if (previousClipboard is null) Clipboard.Clear();
+                    else Clipboard.SetDataObject(previousClipboard, copy: true);
+                    throw;
+                }
+                ProjectObjectClipboardPayload? previous = _projectClipboard;
+                _projectClipboard = prepared.TakePayload();
+                previous?.Dispose();
+                _clipboardDocument = document;
+                if (cut)
+                {
+                    workspace.Selection.Clear();
+                    if (workspace is InstrumentWorkspaceViewModel instrument)
+                        ClearInstrumentStructureVisualSelection(instrument);
+                    _session.RefreshWorkspaceSelection(workspace);
+                }
+                _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {prepared.Payload.PlainTextSummary}.");
+            }, canCancel: true);
+        RestoreModalCommandFocus(workspace, sourceSurface);
+        return completed;
+    }
+
+    private async void PasteProjectSelection()
     {
         if (IsArrangementHeaderShortcutContext()
             && TryGetArrangementHeaderContext(out ArrangementLaneDescriptor header)
@@ -10414,7 +10103,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        RunSynchronous("Paste Project Objects", () =>
+        try
         {
             long cursor = workspace is TimelineWorkspaceViewModel timeline
                 ? timeline.EditCursorTick ?? 0
@@ -10608,7 +10297,7 @@ public partial class MainWindow : Window
                     $"{payload.Kind} cannot be pasted into the active Workspace selection scope.")
             };
             long firstNewStableId = project.NextStableId;
-            _session.Execute(command);
+            if (!await ExecuteWorkspaceEditAsync(command)) return;
             if (workspace is InstrumentWorkspaceViewModel structureWorkspace
                 && IsInstrumentStructureClipboardKind(payload.Kind))
             {
@@ -10623,7 +10312,11 @@ public partial class MainWindow : Window
                 SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
             }
             _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}.");
-        });
+        }
+        catch (Exception exception)
+        {
+            _session.SetStatusMessage($"Paste Project Objects: {exception.Message}", isError: true);
+        }
     }
 
     private static MidoraId ResolveArrangementTargetTrack(
@@ -10992,7 +10685,7 @@ public partial class MainWindow : Window
         int RangeCount,
         int BaseIntersectionCount);
 
-    private void DuplicateFocusedSelection()
+    private async void DuplicateFocusedSelection()
     {
         if (_session.CanEditProject && IsArrangementHeaderShortcutContext())
         {
@@ -11002,14 +10695,14 @@ public partial class MainWindow : Window
         if (_session.CanEditProject
             && TryGetSelectedLogicalTrack(out LogicalTrack logicalTrack, out _))
         {
-            RunSynchronous("Duplicate Logical Track", () => _session.Execute(
-                ProjectDomainEditCommands.DuplicateLogicalTrack(logicalTrack.Id)));
+            await ExecuteWorkspaceEditAsync(
+                ProjectDomainEditCommands.DuplicateLogicalTrack(logicalTrack.Id));
             return;
         }
         if (_session.CanEditProject && TryGetSelectedEventInstrumentId(out MidoraId eventInstrumentId))
         {
-            RunSynchronous("Duplicate Event Instrument", () => _session.Execute(
-                ProjectDomainEditCommands.DuplicateEventInstrument(eventInstrumentId)));
+            await ExecuteWorkspaceEditAsync(
+                ProjectDomainEditCommands.DuplicateEventInstrument(eventInstrumentId));
             return;
         }
         if (!_session.CanEditProject
@@ -11019,11 +10712,11 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Duplicate Selection", () =>
+        try
         {
             WorkspaceTimelineSelectionSource? timelineSource =
                 workspace.Selection.HomogeneousTimelineSource;
-            MidoraId[] ids = workspace.Selection.Ids.ToArray();
+            IReadOnlyCollection<MidoraId> ids = workspace.Selection.SharedIds;
             long cursor = (workspace as TimelineWorkspaceViewModel)?.EditCursorTick ?? 0;
             long firstNewStableId = project.NextStableId;
             switch (workspace)
@@ -11036,8 +10729,8 @@ public partial class MainWindow : Window
                             long target = cursor == 0
                                 ? checked(located.Segment.ProjectStartTick + located.Segment.LengthTicks)
                                 : cursor;
-                            _session.Execute(ProjectDomainEditCommands.DuplicateSegments(
-                                ids, primary, ResolveArrangementTargetTrack(project, arrangement), target));
+                            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateSegments(
+                                ids, primary, ResolveArrangementTargetTrack(project, arrangement), target))) return;
                         }
                         else if (TimelineWorkspaceViewModel.FindMidiSegment(project, primary) is { } midi)
                         {
@@ -11048,8 +10741,8 @@ public partial class MainWindow : Window
                             { Kind: ArrangementLaneKind.PureMidiTrack, ObjectId: MidoraId activeTrackId }
                                     ? activeTrackId
                                     : midi.Track.Id;
-                            _session.Execute(ProjectDomainEditCommands.DuplicateMidiSegments(
-                                ids, primary, targetTrackId, target));
+                            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateMidiSegments(
+                                ids, primary, targetTrackId, target))) return;
                         }
                         else throw new InvalidOperationException("The primary Segment no longer exists.");
                         break;
@@ -11060,34 +10753,35 @@ public partial class MainWindow : Window
                     ObjectId: MidoraId segmentId
                 }:
                     {
-                        HashSet<MidoraId> selected = ids.ToHashSet();
                         if (TimelineWorkspaceViewModel.FindSegment(project, segmentId) is { } located)
                         {
-                            LogicalNote[] notes = located.Segment.Notes
-                                .ResolveByIdsInCollectionOrder(selected)
-                                .ToArray();
-                            if (notes.Length != ids.Length)
+                            var source = located.Segment.Notes.CreateQuerySnapshot();
+                            var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, source, ids,
+                                static item => (item.StartTick, checked(item.StartTick + item.LengthTicks), item.Note, (double)item.Velocity), token));
+                            if (!read.Completed) return;
+                            if (read.Value.Ids.Count != ids.Count)
                                 throw new InvalidOperationException("Ctrl+D currently duplicates Logical Notes in the Segment note scope.");
                             long target = cursor == 0
-                                ? checked(notes.Min(item => item.StartTick) + Math.Max(1, notes.Max(item => item.LengthTicks)))
+                                ? checked(read.Value.MinimumTick + Math.Max(1, read.Value.MaximumLength))
                                 : cursor;
-                            _session.Execute(ProjectDomainEditCommands.DuplicateLogicalNotes(segmentId, ids, segmentId, target));
+                            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateLogicalNotes(segmentId, ids, segmentId, target))) return;
                         }
                         else if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is { } midi)
                         {
-                            DirectMidiNote[] notes = midi.Segment.Notes.ResolveByIds(selected)
-                                .Select(static match => match.Value)
-                                .ToArray();
-                            if (notes.Length != ids.Length)
+                            var source = midi.Segment.Notes.CreateObjectSource();
+                            var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, source, ids,
+                                static item => (item.StartTick, checked(item.StartTick + item.LengthTicks), item.Key, (double)item.NoteOnVelocity), token));
+                            if (!read.Completed) return;
+                            if (read.Value.Ids.Count != ids.Count)
                                 throw new InvalidOperationException("Ctrl+D currently duplicates Direct MIDI Notes in the piano-roll scope.");
                             long target = cursor == 0
-                                ? checked(notes.Min(item => item.StartTick) + Math.Max(1, notes.Max(item => item.LengthTicks)))
+                                ? checked(read.Value.MinimumTick + Math.Max(1, read.Value.MaximumLength))
                                 : cursor;
-                            _session.Execute(ProjectDomainEditCommands.DuplicateDirectMidiNotes(
+                            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DuplicateDirectMidiNotes(
                                 segmentId,
                                 ids,
-                                checked(target - notes.Min(item => item.StartTick)),
-                                0));
+                                checked(target - read.Value.MinimumTick),
+                                0))) return;
                         }
                         else throw new InvalidOperationException("The Segment no longer exists.");
                         break;
@@ -11103,30 +10797,29 @@ public partial class MainWindow : Window
                                 "Select a SubVoice MIDI Event lane before duplicating event points.");
                         EventInstrument instrument = project.EventInstruments.Single(value => value.Id == instrumentId);
                         SubVoice voice = instrument.SubVoices.Single(value => value.Id == lane.SubVoiceId);
-                        HashSet<MidoraId> requested = ids.ToHashSet();
-                        TemplateEvent[] events = voice.Events
-                            .ResolveByIdsInCollectionOrder(requested)
-                            .ToArray();
-                        if (events.Length != ids.Length
-                            || events.Any(value => value.Kind == TemplateEventKind.Note
-                                || !TemplateEventMidiTargets.Enumerate(value).Contains(target)))
+                        var source = voice.Events.CreateQuerySnapshot();
+                        var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, source, ids,
+                            static value => (value.Tick, value.Tick, 0, 0d), token,
+                            value => value.Kind != TemplateEventKind.Note && TemplateEventMidiTargets.Enumerate(value).Contains(target)));
+                        if (!read.Completed) return;
+                        if (read.Value.Ids.Count != ids.Count)
                         {
                             throw new InvalidOperationException(
                                 "Ctrl+D may duplicate event points from one SubVoice MIDI Event lane only.");
                         }
-                        long earliest = events.Min(value => value.Tick);
+                        long earliest = read.Value.MinimumTick;
                         long destination = instrumentWorkspace.EditCursorTick is > 0
                             ? instrumentWorkspace.EditCursorTick.Value
-                            : checked(events.Max(value => value.Tick)
+                            : checked(read.Value.MaximumTick
                                 + Math.Max(1, instrumentWorkspace.EditorSettings.EffectiveOperationStepTicks));
-                        _session.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
+                        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
                             instrumentId,
                             voice.Id,
                             ids,
                             target,
                             checked(destination - earliest),
                             valueDelta: 0,
-                            duplicate: true));
+                            duplicate: true))) return;
                         break;
                     }
                 default:
@@ -11136,49 +10829,53 @@ public partial class MainWindow : Window
                 workspace,
                 firstNewStableId,
                 timelineSource: timelineSource);
-        });
+        }
+        catch (Exception exception)
+        {
+            _session.SetStatusMessage($"Duplicate Selection: {exception.Message}", isError: true);
+        }
     }
 
-    private void DeleteWorkspaceSelection()
+    private async void DeleteWorkspaceSelection()
     {
         if (_session.Project is null || _session.ActiveWorkspace is not WorkspaceViewModel workspace
             || workspace.Selection.Ids.Count == 0)
         {
             return;
         }
-        MidoraId[] ids = workspace.Selection.Ids.ToArray();
-        RunSynchronous("Delete Selection", () =>
+        IReadOnlyCollection<MidoraId> ids = workspace.Selection.SharedIds;
+        try
         {
             switch (workspace)
             {
                 case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }:
-                    _session.Execute(ProjectDomainEditCommands.DeleteArrangementSegments(ids));
+                    if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteArrangementSegments(ids))) return;
                     break;
                 case TimelineWorkspaceViewModel
                 {
                     Mode: TimelineWorkspaceMode.Segment,
                     ObjectId: MidoraId segmentId
                 }:
-                    DeleteSegmentSelection(segmentId, ids);
+                    if (!await DeleteSegmentSelection(segmentId, ids)) return;
                     break;
                 case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor }:
                     if (_session.Project.Conductor.EndMarker is ProjectEndMarker end
                         && ids.Contains(end.Id))
                     {
-                        if (ids.Length != 1)
+                        if (ids.Count != 1)
                         {
                             throw new InvalidOperationException(
                                 "Delete the Project End Marker separately from ordinary Conductor events.");
                         }
-                        _session.Execute(ProjectDomainEditCommands.DeleteProjectEndMarker());
+                        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteProjectEndMarker())) return;
                     }
                     else
                     {
-                        _session.Execute(ProjectDomainEditCommands.DeleteConductorEvents(ids));
+                        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteConductorEvents(ids))) return;
                     }
                     break;
                 case InstrumentWorkspaceViewModel instrumentWorkspace:
-                    DeleteInstrumentSelection(instrumentWorkspace, ids);
+                    if (!await DeleteInstrumentSelection(instrumentWorkspace, ids)) return;
                     break;
             }
             workspace.Selection.Clear();
@@ -11186,72 +10883,60 @@ public partial class MainWindow : Window
             {
                 ClearInstrumentStructureVisualSelection(visualWorkspace);
             }
-        });
+        }
+        catch (Exception exception)
+        {
+            _session.SetStatusMessage($"Delete Selection: {exception.Message}", isError: true);
+        }
     }
 
-    private void DeleteSegmentSelection(MidoraId segmentId, MidoraId[] ids)
+    private async Task<bool> DeleteSegmentSelection(MidoraId segmentId, IReadOnlyCollection<MidoraId> ids)
     {
         (LogicalTrack Track, Segment Segment)? location =
             TimelineWorkspaceViewModel.FindSegment(_session.Project!, segmentId);
         if (location is null)
         {
             if (TimelineWorkspaceViewModel.FindMidiSegment(_session.Project!, segmentId) is not { } midi)
-                return;
-            HashSet<MidoraId> midiSelected = ids.ToHashSet();
+                return false;
             if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
                 && timeline.SelectionSnapshot.TryGetMetrics(
                     TimelineItemKind.DirectMidiNote,
                     out TimelineSelectionMetrics noteMetrics)
-                && noteMetrics.Count == ids.Length)
+                && noteMetrics.Count == ids.Count)
             {
-                _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, ids));
-                return;
+                return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, ids));
             }
             if (_session.ActiveWorkspace is TimelineWorkspaceViewModel eventTimeline
                 && eventTimeline.SelectionSnapshot.TryGetMetrics(
                     TimelineItemKind.DirectMidiEvent,
                     out TimelineSelectionMetrics eventMetrics)
-                && eventMetrics.Count == ids.Length)
+                && eventMetrics.Count == ids.Count)
             {
-                _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, ids));
-                return;
+                return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, ids));
             }
             if (_session.ActiveWorkspace is TimelineWorkspaceViewModel opaqueTimeline
                 && opaqueTimeline.SelectionSnapshot.TryGetMetrics(
                     TimelineItemKind.OpaqueMidiEvent,
                     out TimelineSelectionMetrics opaqueMetrics)
-                && opaqueMetrics.Count == ids.Length)
+                && opaqueMetrics.Count == ids.Count)
             {
-                _session.Execute(ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, ids));
-                return;
+                return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, ids));
             }
-            MidoraId[] directNotes = midi.Segment.Notes.ResolveByIds(midiSelected)
-                .Select(static match => match.Value.Id).ToArray();
-            if (directNotes.Length == ids.Length)
+            var read = await ReadSelectionInputAsync<IProjectEditCommand>((readProject, token) =>
             {
-                _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, directNotes));
-                return;
-            }
-            MidoraId[] events = midi.Segment.ChannelEvents.ResolveByIds(midiSelected)
-                .Select(static match => match.Value.Id).ToArray();
-            if (events.Length == ids.Length)
-            {
-                _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, events));
-                return;
-            }
-            MidoraId[] opaqueEvents = midi.Segment.OpaqueEvents.ResolveByIds(midiSelected)
-                .Select(static match => match.Value.Id).ToArray();
-            if (opaqueEvents.Length == ids.Length)
-            {
-                _session.Execute(ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, opaqueEvents));
-                return;
-            }
-            throw new InvalidOperationException(
-                "A single delete gesture may target Direct MIDI Notes, Direct MIDI Events, or imported MIDI events, not a mixed selection.");
+                if (CountMatchingTimelineIds(readProject, midi.Segment.Notes.CreateObjectSource(), ids, token) == ids.Count)
+                    return ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, ids);
+                if (CountMatchingTimelineIds(readProject, midi.Segment.ChannelEvents.CreateObjectSource(), ids, token) == ids.Count)
+                    return ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, ids);
+                if (CountMatchingTimelineIds(readProject, midi.Segment.OpaqueEvents.CreateObjectSource(), ids, token) == ids.Count)
+                    return ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, ids);
+                throw new InvalidOperationException(
+                    "A single delete gesture may target Direct MIDI Notes, Direct MIDI Events, or imported MIDI events, not a mixed selection.");
+            });
+            return read.Completed && await ExecuteWorkspaceEditAsync(read.Value);
         }
-        HashSet<MidoraId> selected = ids.ToHashSet();
-        if (ids.Length == 1
-            && location.Value.Segment.ParameterLanes.Any(lane => lane.Id == ids[0]))
+        if (ids.Count == 1
+            && location.Value.Segment.ParameterLanes.Any(lane => lane.Id == ids.First()))
         {
             if (MessageDialog.Show(
                     this,
@@ -11260,57 +10945,43 @@ public partial class MainWindow : Window
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
-                _session.Execute(ProjectDomainEditCommands.DeleteLogicalParameterLane(
+                return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteLogicalParameterLane(
                     segmentId,
-                    ids[0],
+                    ids.First(),
                     deletionConfirmed: true));
             }
-            return;
+            return false;
         }
-        MidoraId[] notes = location.Value.Segment.Notes
-            .ResolveByIdsInCollectionOrder(selected)
-            .Select(static item => item.Id)
-            .ToArray();
-        if (notes.Length == ids.Length)
+        var logicalRead = await ReadSelectionInputAsync<IProjectEditCommand>((readProject, token) =>
         {
-            _session.Execute(ProjectDomainEditCommands.DeleteLogicalNotes(segmentId, notes));
-            return;
-        }
-        LogicalParameterLane? selectedLane = null;
-        IReadOnlyList<CurvePoint>? selectedPoints = null;
-        foreach (LogicalParameterLane lane in location.Value.Segment.ParameterLanes)
-        {
-            IReadOnlyList<CurvePoint> matches =
-                lane.Points.ResolveByIdsInCollectionOrder(selected);
-            if (matches.Count == 0) continue;
-            if (selectedLane is not null)
+            if (CountMatchingTimelineIds(readProject, location.Value.Segment.Notes.CreateQuerySnapshot(), ids, token) == ids.Count)
+                return ProjectDomainEditCommands.DeleteLogicalNotes(segmentId, ids);
+            LogicalParameterLane? selectedLane = null;
+            int selectedPointCount = 0;
+            foreach (LogicalParameterLane lane in location.Value.Segment.ParameterLanes)
             {
-                selectedLane = null;
-                selectedPoints = null;
-                break;
+                token.ThrowIfCancellationRequested();
+                int matches = CountMatchingTimelineIds(readProject, lane.Points.CreateQuerySnapshot(), ids, token);
+                if (matches == 0) continue;
+                if (selectedLane is not null) { selectedLane = null; break; }
+                selectedLane = lane;
+                selectedPointCount = matches;
             }
-            selectedLane = lane;
-            selectedPoints = matches;
-        }
-        if (selectedLane is not null && selectedPoints?.Count == ids.Length)
-        {
-            _session.Execute(ProjectDomainEditCommands.DeleteLogicalParameterPoints(
-                segmentId,
-                selectedLane.Id,
-                ids));
-            return;
-        }
-        throw new InvalidOperationException(
-            "A single delete gesture may target Logical Notes or points from one Logical Parameter Lane, not a mixed selection.");
+            if (selectedLane is not null && selectedPointCount == ids.Count)
+                return ProjectDomainEditCommands.DeleteLogicalParameterPoints(segmentId, selectedLane.Id, ids);
+            throw new InvalidOperationException(
+                "A single delete gesture may target Logical Notes or points from one Logical Parameter Lane, not a mixed selection.");
+        });
+        return logicalRead.Completed && await ExecuteWorkspaceEditAsync(logicalRead.Value);
     }
 
-    private void DeleteInstrumentSelection(InstrumentWorkspaceViewModel workspace, MidoraId[] ids)
+    private async Task<bool> DeleteInstrumentSelection(InstrumentWorkspaceViewModel workspace, IReadOnlyCollection<MidoraId> ids)
     {
-        if (workspace.ObjectId is not MidoraId instrumentId) return;
+        if (workspace.ObjectId is not MidoraId instrumentId) return false;
         EventInstrument instrument = _session.Project!.EventInstruments.Single(item => item.Id == instrumentId);
-        if (ids.Length == 1)
+        if (ids.Count == 1)
         {
-            MidoraId id = ids[0];
+            MidoraId id = ids.First();
             if (instrument.SubVoices.Any(item => item.Id == id))
             {
                 if (MessageDialog.Show(
@@ -11320,9 +10991,9 @@ public partial class MainWindow : Window
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
-                    _session.Execute(ProjectDomainEditCommands.DeleteSubVoice(instrumentId, id, nonEmptyDeletionConfirmed: true));
+                    return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteSubVoice(instrumentId, id, nonEmptyDeletionConfirmed: true));
                 }
-                return;
+                return false;
             }
             if (instrument.LogicalParameters.Any(item => item.Id == id))
             {
@@ -11333,9 +11004,9 @@ public partial class MainWindow : Window
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
-                    _session.Execute(ProjectDomainEditCommands.DeleteLogicalParameter(instrumentId, id, referencedDeletionConfirmed: true));
+                    return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteLogicalParameter(instrumentId, id, referencedDeletionConfirmed: true));
                 }
-                return;
+                return false;
             }
             if (instrument.MappingFunctions.Any(item => item.Id == id))
             {
@@ -11346,9 +11017,9 @@ public partial class MainWindow : Window
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
-                    _session.Execute(ProjectDomainEditCommands.DeleteMappingFunction(instrumentId, id, referencedDeletionConfirmed: true));
+                    return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteMappingFunction(instrumentId, id, referencedDeletionConfirmed: true));
                 }
-                return;
+                return false;
             }
             if (instrument.ParameterMappings.Any(item => item.Id == id))
             {
@@ -11359,10 +11030,10 @@ public partial class MainWindow : Window
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
-                    _session.Execute(ProjectDomainEditCommands.DeleteLogicalParameterMapping(
+                    return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteLogicalParameterMapping(
                         instrumentId, id, deletionConfirmed: true));
                 }
-                return;
+                return false;
             }
             if (instrument.Envelopes.Any(item => item.Id == id))
             {
@@ -11373,16 +11044,16 @@ public partial class MainWindow : Window
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
-                    _session.Execute(ProjectDomainEditCommands.DeleteInstrumentEnvelope(
+                    return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteInstrumentEnvelope(
                         instrumentId, id, referencedDeletionConfirmed: true));
                 }
-                return;
+                return false;
             }
             MappingChainListItem? selectedChain = workspace.MappingChains
                 .FirstOrDefault(item => item.Id == id);
             if (selectedChain is not null)
             {
-                if (!selectedChain.CanDelete) return;
+                if (!selectedChain.CanDelete) return false;
                 bool nonEmpty = selectedChain.StepCount != 0;
                 if (nonEmpty
                     && MessageDialog.Show(
@@ -11392,75 +11063,56 @@ public partial class MainWindow : Window
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 {
-                    return;
+                    return false;
                 }
-                _session.Execute(ProjectDomainEditCommands.DeleteMappingChain(
+                return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteMappingChain(
                     instrumentId,
                     id,
                     nonEmptyDeletionConfirmed: nonEmpty));
-                return;
             }
             foreach (MappingChain chain in EnumerateInstrumentMappingChains(instrument))
             {
                 if (chain.FirstOrDefault(item => item.Id == id) is not ValueMappingStep step) continue;
-                _session.Execute(ProjectDomainEditCommands.DeleteMappingStep(
+                return await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteMappingStep(
                     instrumentId,
                     chain.Id,
                     step.Id));
-                return;
             }
         }
-        HashSet<MidoraId> selected = ids.ToHashSet();
-        foreach (SubVoice candidateVoice in instrument.SubVoices)
+        var read = await ReadSelectionInputAsync<IProjectEditCommand>((readProject, token) =>
         {
-            ValueCurve? curve = null;
-            foreach (ValueCurve candidate in candidateVoice.Curves)
+            foreach (SubVoice candidateVoice in instrument.SubVoices)
             {
-                IReadOnlyList<CurvePoint> matches =
-                    candidate.Points.ResolveByIdsInCollectionOrder(selected);
-                if (matches.Count == 0) continue;
-                if (curve is not null || matches.Count != ids.Length)
+                token.ThrowIfCancellationRequested();
+                ValueCurve? curve = null;
+                foreach (ValueCurve candidate in candidateVoice.Curves)
                 {
-                    curve = null;
-                    break;
+                    token.ThrowIfCancellationRequested();
+                    int matches = CountMatchingTimelineIds(readProject, candidate.Points.CreateQuerySnapshot(), ids, token);
+                    if (matches == 0) continue;
+                    if (curve is not null || matches != ids.Count) { curve = null; break; }
+                    curve = candidate;
                 }
-                curve = candidate;
+                if (curve is not null)
+                    return ProjectDomainEditCommands.DeleteValueCurvePoints(instrumentId, candidateVoice.Id, curve.Id, ids);
             }
-            if (curve is not null)
+            SubVoice? selectedVoice = null;
+            int selectedEventCount = 0;
+            foreach (SubVoice voice in instrument.SubVoices)
             {
-                _session.Execute(ProjectDomainEditCommands.DeleteValueCurvePoints(
-                    instrumentId,
-                    candidateVoice.Id,
-                    curve.Id,
-                    ids));
-                return;
+                token.ThrowIfCancellationRequested();
+                int matches = CountMatchingTimelineIds(readProject, voice.Events.CreateQuerySnapshot(), ids, token);
+                if (matches == 0) continue;
+                if (selectedVoice is not null) { selectedVoice = null; break; }
+                selectedVoice = voice;
+                selectedEventCount = matches;
             }
-        }
-        SubVoice? selectedVoice = null;
-        IReadOnlyList<TemplateEvent>? selectedEvents = null;
-        foreach (SubVoice voice in instrument.SubVoices)
-        {
-            IReadOnlyList<TemplateEvent> matches =
-                voice.Events.ResolveByIdsInCollectionOrder(selected);
-            if (matches.Count == 0) continue;
-            if (selectedVoice is not null)
-            {
-                selectedVoice = null;
-                selectedEvents = null;
-                break;
-            }
-            selectedVoice = voice;
-            selectedEvents = matches;
-        }
-        if (selectedVoice is null || selectedEvents?.Count != ids.Length)
-        {
-            throw new InvalidOperationException(
-                "A single delete gesture may target Template Events from one SubVoice only.");
-        }
-        _session.Execute(ProjectDomainEditCommands.DeleteTemplateEvents(
-            instrumentId,
-            selectedVoice.Id,
-            ids));
+            if (selectedVoice is null || selectedEventCount != ids.Count)
+                throw new InvalidOperationException(
+                    "A single delete gesture may target Template Events from one SubVoice only.");
+            return ProjectDomainEditCommands.DeleteTemplateEvents(instrumentId, selectedVoice.Id, ids);
+        });
+        return read.Completed && await ExecuteWorkspaceEditAsync(read.Value);
     }
 
     private static IEnumerable<MappingChain> EnumerateInstrumentMappingChains(EventInstrument instrument) =>

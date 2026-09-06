@@ -189,11 +189,13 @@ public readonly record struct TimelineRasterColumnProjection
 public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNoteSnapshotValue>
 {
     private readonly PagedTimelineValueSnapshot<LogicalNoteSnapshotValue> _values;
+    internal PagedTimelineValueSnapshot<LogicalNoteSnapshotValue> Values => _values;
 
     internal LogicalNoteQuerySnapshot(PagedTimelineValueSnapshot<LogicalNoteSnapshotValue> values) =>
         _values = values;
 
     public int Count => _values.Count;
+    public bool UsesExternalStorage => _values.UsesExternalStorage;
     public long Generation => _values.Generation;
     public long MaximumEndTick => _values.MaximumEndTick;
     public ulong ContentFingerprint => _values.ContentFingerprint;
@@ -208,6 +210,9 @@ public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNote
         _values.Query(startTick, endTick, minimumNote, maximumNote);
 
     public IEnumerable<LogicalNoteSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+    public LogicalNoteSnapshotValue GetByOrdinal(int ordinal) => _values.GetByOrdinal(ordinal);
+    public void PrepareOrdinalLookup(CancellationToken token = default) => _values.PrepareOrdinalLookup(token);
+    public void PrepareOrdinalLookup(IImmutableTimelineOrdinalIndexBuilder builder, CancellationToken token = default) => _values.PrepareOrdinalLookup(builder, token);
 
     public bool TryGetPageByOrdinal(
         int firstOrdinal,
@@ -234,8 +239,7 @@ public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNote
         TimelineObjectRangeQuery query,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        _ = query;
+        _values.Prefetch(query, cancellationToken);
     }
 
     public IReadOnlyList<LogicalNoteSnapshotValue> ResolveByIds(
@@ -243,6 +247,11 @@ public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNote
 
     internal IReadOnlyList<LogicalNoteSnapshotValue> QueryStartKeys(
         IReadOnlySet<TimelineStartLaneKey> keys) => _values.QueryExactStarts(keys);
+
+    internal IEnumerable<LogicalNoteSnapshotValue> EnumerateExactStart(long tick, int key) =>
+        _values.EnumerateExactStart(tick, key, key);
+    internal IEnumerable<LogicalNoteSnapshotValue> EnumerateRangeValues(long start, long end) =>
+        _values.EnumerateRangeValues(start, end, 0, 127);
 
     public ulong GetRangeFingerprint(
         long startTick,
@@ -278,11 +287,13 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
     private const ulong NoteCategory = 1UL;
     private const ulong EventCategory = 2UL;
     private readonly PagedTimelineValueSnapshot<TemplateEventSnapshotValue> _values;
+    internal PagedTimelineValueSnapshot<TemplateEventSnapshotValue> Values => _values;
 
     internal TemplateEventQuerySnapshot(PagedTimelineValueSnapshot<TemplateEventSnapshotValue> values) =>
         _values = values;
 
     public int Count => _values.Count;
+    public bool UsesExternalStorage => _values.UsesExternalStorage;
     public long Generation => _values.Generation;
     public long MaximumEndTick => _values.MaximumEndTick;
     public ulong ContentFingerprint => _values.ContentFingerprint;
@@ -304,6 +315,9 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
             .Where(static value => value.Kind != TemplateEventKind.Note);
 
     public IEnumerable<TemplateEventSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+    public TemplateEventSnapshotValue GetByOrdinal(int ordinal) => _values.GetByOrdinal(ordinal);
+    public void PrepareOrdinalLookup(CancellationToken token = default) => _values.PrepareOrdinalLookup(token);
+    public void PrepareOrdinalLookup(IImmutableTimelineOrdinalIndexBuilder builder, CancellationToken token = default) => _values.PrepareOrdinalLookup(builder, token);
 
     public bool TryGetPageByOrdinal(
         int firstOrdinal,
@@ -330,8 +344,7 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
         TimelineObjectRangeQuery query,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        _ = query;
+        _values.Prefetch(query, cancellationToken);
     }
 
     public IReadOnlyList<TemplateEventSnapshotValue> ResolveByIds(
@@ -340,6 +353,13 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
     internal IReadOnlyList<TemplateEventSnapshotValue> QueryNoteStartKeys(
         IReadOnlySet<TimelineStartLaneKey> keys) =>
         _values.QueryExactStarts(keys, NoteCategory);
+
+    internal IEnumerable<TemplateEventSnapshotValue> EnumerateNoteExactStart(long tick, int key) =>
+        _values.EnumerateExactStart(tick, key, key, NoteCategory);
+    internal IEnumerable<TemplateEventSnapshotValue> EnumerateEventExactTick(long tick) =>
+        _values.EnumerateExactStart(tick, int.MinValue, int.MaxValue, EventCategory);
+    internal IEnumerable<TemplateEventSnapshotValue> EnumerateNoteRangeValues(long start, long end) =>
+        _values.EnumerateRangeValues(start, end, 0, 127, NoteCategory);
 
     internal IReadOnlyList<TemplateEventSnapshotValue> QueryEventTicks(
         IReadOnlySet<long> ticks) =>
@@ -413,12 +433,21 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
 
 public sealed class CurvePointQuerySnapshot : ITimelineObjectSource<CurvePointSnapshotValue>
 {
+    public CurvePointSnapshotValue GetByOrdinal(int ordinal) => _values.GetByOrdinal(ordinal);
+    public void PrepareOrdinalLookup(CancellationToken token = default) => _values.PrepareOrdinalLookup(token);
+    public void PrepareOrdinalLookup(IImmutableTimelineOrdinalIndexBuilder builder, CancellationToken token = default) => _values.PrepareOrdinalLookup(builder, token);
+    internal IEnumerable<CurvePointSnapshotValue> EnumerateExactTick(long tick) =>
+        _values.EnumerateExactStart(tick, int.MinValue, int.MaxValue);
+    internal IEnumerable<CurvePointSnapshotValue> EnumerateRangeValues(long start, long end) =>
+        _values.EnumerateRangeValues(start, end, int.MinValue, int.MaxValue);
     private readonly PagedTimelineValueSnapshot<CurvePointSnapshotValue> _values;
+    internal PagedTimelineValueSnapshot<CurvePointSnapshotValue> Values => _values;
 
     internal CurvePointQuerySnapshot(PagedTimelineValueSnapshot<CurvePointSnapshotValue> values) =>
         _values = values;
 
     public int Count => _values.Count;
+    public bool UsesExternalStorage => _values.UsesExternalStorage;
     public long Generation => _values.Generation;
     public long MaximumTick => Math.Max(0, _values.MaximumEndTick - 1);
     public ulong ContentFingerprint => _values.ContentFingerprint;
@@ -455,8 +484,7 @@ public sealed class CurvePointQuerySnapshot : ITimelineObjectSource<CurvePointSn
         TimelineObjectRangeQuery query,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        _ = query;
+        _values.Prefetch(query, cancellationToken);
     }
 
     public IReadOnlyList<CurvePointSnapshotValue> ResolveByIds(
@@ -524,8 +552,52 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
     public LogicalNoteQuerySnapshot CreateQuerySnapshot() =>
         new(_store.CreateSnapshot());
 
+    public void AdoptSnapshot(MidoraProject project, LogicalNoteQuerySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _store.AdoptSnapshot(snapshot.Values, value => new LogicalNote(project, value.Id)
+        {
+            StartTick = value.StartTick, LengthTicks = value.LengthTicks,
+            Note = value.Note, Velocity = value.Velocity
+        });
+    }
+
+    public void AdoptSource(MidoraProject project, IImmutableTimelineValueSource<LogicalNoteSnapshotValue> source,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        _store.AdoptSource(source, value => new LogicalNote(project, value.Id)
+        {
+            StartTick = value.StartTick, LengthTicks = value.LengthTicks,
+            Note = value.Note, Velocity = value.Velocity
+        }, cancellationToken);
+    }
+
+    public void AdoptEditedSnapshot(MidoraProject project, LogicalNoteQuerySnapshot snapshot,
+        IImmutableTimelineValueSource<TimelineValueEdit<LogicalNoteSnapshotValue>> changes,
+        IImmutableTimelineValueSource<LogicalNoteSnapshotValue>? appended = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _store.AdoptEditedSnapshot(snapshot.Values, changes, appended, value => new LogicalNote(project, value.Id)
+        {
+            StartTick = value.StartTick, LengthTicks = value.LengthTicks,
+            Note = value.Note, Velocity = value.Velocity
+        }, cancellationToken);
+    }
+
     public bool TryGetById(MidoraId id, out LogicalNote? value) =>
         _store.TryGetById(id, out value);
+
+    public void AdoptSplicedSnapshot(MidoraProject project, LogicalNoteQuerySnapshot snapshot,
+        IImmutableTimelineValueSource<TimelineValueSplice> splices,
+        IIndexedImmutableTimelineValueSource<LogicalNoteSnapshotValue> values, CancellationToken cancellationToken = default)
+    {
+        _store.AdoptSplicedSnapshot(snapshot.Values, splices, values, value => new LogicalNote(project, value.Id)
+        { StartTick = value.StartTick, LengthTicks = value.LengthTicks, Note = value.Note, Velocity = value.Velocity }, cancellationToken);
+    }
 
     public IReadOnlyList<LogicalNote> ResolveByIdsInCollectionOrder(
         IReadOnlyCollection<MidoraId> ids) =>
@@ -558,6 +630,16 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
 public sealed class CurvePointCollection : Collection<CurvePoint>, IReadOnlyList<CurvePoint>
 {
     private readonly PagedTimelineObjectList<CurvePoint, CurvePointSnapshotValue> _store;
+
+    public void AdoptSplicedSnapshot(MidoraProject project, CurvePointQuerySnapshot snapshot,
+        IImmutableTimelineValueSource<TimelineValueSplice> splices,
+        IIndexedImmutableTimelineValueSource<CurvePointSnapshotValue> values, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _store.AdoptSplicedSnapshot(snapshot.Values, splices, values,
+            value => new CurvePoint(project, value.Id, value.Tick, value.Value, value.Interpolation), cancellationToken);
+    }
 
     internal CurvePointCollection()
         : this(CreateStore())
@@ -614,6 +696,33 @@ public sealed class CurvePointCollection : Collection<CurvePoint>, IReadOnlyList
 
     public CurvePointQuerySnapshot CreateQuerySnapshot() => new(_store.CreateSnapshot());
 
+    public void AdoptSnapshot(MidoraProject project, CurvePointQuerySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _store.AdoptSnapshot(snapshot.Values, value => new CurvePoint(
+            project, value.Id, value.Tick, value.Value, value.Interpolation));
+    }
+
+    public void AdoptSource(MidoraProject project, IImmutableTimelineValueSource<CurvePointSnapshotValue> source,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        _store.AdoptSource(source, value => new CurvePoint(
+            project, value.Id, value.Tick, value.Value, value.Interpolation), cancellationToken);
+    }
+
+    public void AdoptEditedSnapshot(MidoraProject project, CurvePointQuerySnapshot snapshot,
+        IImmutableTimelineValueSource<TimelineValueEdit<CurvePointSnapshotValue>> changes,
+        IImmutableTimelineValueSource<CurvePointSnapshotValue>? appended = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _store.AdoptEditedSnapshot(snapshot.Values, changes, appended, value => new CurvePoint(
+            project, value.Id, value.Tick, value.Value, value.Interpolation), cancellationToken);
+    }
+
     public bool TryGetById(MidoraId id, out CurvePoint? value) =>
         _store.TryGetById(id, out value);
 
@@ -637,7 +746,7 @@ public sealed class CurvePointCollection : Collection<CurvePoint>, IReadOnlyList
             getRasterValue: static value => value.Value);
 }
 
-internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
+internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
     where T : class
 {
     internal const int DefaultPageCapacity = 4096;
@@ -667,7 +776,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     private readonly object _snapshotPublicationSync = new();
     private PagedTimelineSpatialBlockIndex<TValue> _spatialIndex =
         PagedTimelineSpatialBlockIndex<TValue>.Empty;
-    private readonly Dictionary<long, int> _discoveryKeyPageCounts = [];
+    private ImmutableDictionary<long, int> _discoveryKeyPageCounts = ImmutableDictionary<long, int>.Empty;
     private int[] _pageStarts = [0];
     private Dictionary<Page, int> _pageIndices = [];
     private bool _pageDirectoryDirty;
@@ -676,17 +785,17 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     private bool _batchChanged;
     private long _generation;
     private PersistentTimelineSequence<TValue>? _publishedSequence;
-    private readonly Dictionary<PersistentTimelineSequence<TValue>.Leaf, PagedTimelineValuePage<TValue>>
-        _publishedLeafPages = [];
-    private FrozenDictionary<MidoraId, TValue>? _publishedBaseById;
+    private ImmutableDictionary<PersistentTimelineSequence<TValue>.Leaf, PagedTimelineValuePage<TValue>>
+        _publishedLeafPages = ImmutableDictionary<PersistentTimelineSequence<TValue>.Leaf, PagedTimelineValuePage<TValue>>.Empty;
+    private IReadOnlyDictionary<MidoraId, TValue>? _publishedBaseById;
     private PersistentTimelineIdDeltaMap<TValue> _publishedIdDelta =
         PersistentTimelineIdDeltaMap<TValue>.Empty;
     private PersistentTimelineIdDeltaMap<TValue> _spatialBaseDelta =
         PersistentTimelineIdDeltaMap<TValue>.Empty;
     private PersistentTimelineIdDeltaMap<TValue> _spatialValueOverlay =
         PersistentTimelineIdDeltaMap<TValue>.Empty;
-    private readonly Dictionary<PersistentTimelineIdDeltaMap<TValue>.Bucket,
-        PagedTimelineValuePage<TValue>> _spatialOverlayPages = [];
+    private ImmutableDictionary<PersistentTimelineIdDeltaMap<TValue>.Bucket,
+        PagedTimelineValuePage<TValue>> _spatialOverlayPages = ImmutableDictionary<PersistentTimelineIdDeltaMap<TValue>.Bucket, PagedTimelineValuePage<TValue>>.Empty;
     private PagedTimelineSpatialBlockIndex<TValue> _spatialOverlayIndex =
         PagedTimelineSpatialBlockIndex<TValue>.Empty;
     private readonly HashSet<MidoraId> _pendingPublishedValueIds = [];
@@ -720,17 +829,19 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     public int Count => _count;
     public bool IsReadOnly => false;
     public long Generation => _generation;
-    public int PageCount => _pages.Count;
+    public int PageCount => _shared is null ? _pages.Count : (_count + DefaultPageCapacity - 1) / DefaultPageCapacity;
 
     public T this[int index]
     {
         get
         {
+            if (_shared is not null) return _shared.Get(index);
             (Page page, int localIndex) = Locate(index, allowEnd: false);
             return page.Items[localIndex];
         }
         set
         {
+            if (_shared is not null) { _shared.Set(index, value); return; }
             ArgumentNullException.ThrowIfNull(value);
             (Page page, int localIndex) = Locate(index, allowEnd: false);
             T old = page.Items[localIndex];
@@ -748,6 +859,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void Add(T item)
     {
+        if (_shared is not null) { _shared.InsertRange(_count, [item]); return; }
         ArgumentNullException.ThrowIfNull(item);
         EnsureInsertable(item);
         PublishPendingValueChanges();
@@ -767,6 +879,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void Clear()
     {
+        if (_shared is not null) { _shared.Clear(); return; }
         if (_count == 0) return;
         PublishPendingValueChanges();
         foreach (Page page in _pages)
@@ -779,7 +892,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         _duplicateReferenceCounts?.Clear();
         _dirtyPages.Clear();
         _spatialIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
-        _discoveryKeyPageCounts.Clear();
+        _discoveryKeyPageCounts = _discoveryKeyPageCounts.Clear();
         _count = 0;
         InvalidatePageDirectory();
         if (_publishedSequence is not null)
@@ -787,9 +900,9 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         Touch();
     }
 
-    public bool Contains(T item) => item is not null
-        && _entries.TryGetValue(_getId(_toValue(item)), out Entry? entry)
-        && ReferenceEquals(entry.Item, item);
+    public bool Contains(T item) => _shared is not null ? _shared.IndexOf(item) >= 0
+        : item is not null && _entries.TryGetValue(_getId(_toValue(item)), out Entry? entry)
+            && ReferenceEquals(entry.Item, item);
 
     public void CopyTo(T[] array, int arrayIndex)
     {
@@ -801,6 +914,11 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public IEnumerator<T> GetEnumerator()
     {
+        if (_shared is not null)
+        {
+            foreach (T item in _shared.Enumerate()) yield return item;
+            yield break;
+        }
         foreach (Page page in _pages)
         {
             foreach (T item in page.Items) yield return item;
@@ -811,6 +929,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public int IndexOf(T item)
     {
+        if (_shared is not null) return _shared.IndexOf(item);
         if (item is null
             || !_entries.TryGetValue(_getId(_toValue(item)), out Entry? entry)
             || !ReferenceEquals(entry.Item, item))
@@ -827,6 +946,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void Insert(int index, T item)
     {
+        if (_shared is not null) { _shared.InsertRange(index, [item]); return; }
         ArgumentNullException.ThrowIfNull(item);
         if ((uint)index > (uint)_count) throw new ArgumentOutOfRangeException(nameof(index));
         if (index == _count)
@@ -849,6 +969,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void InsertRange(int index, IReadOnlyList<T> values)
     {
+        if (_shared is not null) { _shared.InsertRange(index, values); return; }
         ArgumentNullException.ThrowIfNull(values);
         if ((uint)index > (uint)_count) throw new ArgumentOutOfRangeException(nameof(index));
         if (values.Count == 0) return;
@@ -925,6 +1046,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     internal void ValidateInsertRange(IReadOnlyList<T> values)
     {
+        if (_shared is not null) { _shared.ValidateInsertRange(values); return; }
         ArgumentNullException.ThrowIfNull(values);
         Dictionary<MidoraId, T> batchIds = new(values.Count);
         foreach (T value in values)
@@ -944,6 +1066,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public bool Remove(T item)
     {
+        if (_shared is not null) return _shared.RemoveRange([item]) != 0;
         if (item is null
             || !_entries.TryGetValue(_getId(_toValue(item)), out Entry? entry)
             || !ReferenceEquals(entry.Item, item))
@@ -980,6 +1103,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public int RemoveRange(IReadOnlyCollection<T> values)
     {
+        if (_shared is not null) return _shared.RemoveRange(values);
         if (values.Count == 0 || _count == 0) return 0;
         Dictionary<Page, HashSet<T>> requestedByPage = [];
         foreach (T value in values)
@@ -1067,6 +1191,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void ReplaceRange(IReadOnlyList<T> expected, IReadOnlyList<T> replacement)
     {
+        if (_shared is not null) { _shared.ReplaceRange(expected, replacement); return; }
         ArgumentNullException.ThrowIfNull(expected);
         ArgumentNullException.ThrowIfNull(replacement);
         if (expected.Count != replacement.Count)
@@ -1154,6 +1279,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public Action RemoveRangeForExactCollision(IReadOnlyCollection<T> values)
     {
+        if (_shared is not null) return _shared.RemoveRangeWithUndo(values);
         ArgumentNullException.ThrowIfNull(values);
         if (values.Count == 0) return static () => { };
         HashSet<T> distinct = new(values, ReferenceEqualityComparer.Instance);
@@ -1234,6 +1360,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void RemoveAt(int index)
     {
+        if (_shared is not null) { _shared.RemoveRange([_shared.Get(index)]); return; }
         (Page page, int localIndex) = Locate(index, allowEnd: false);
         _ = Remove(page.Items[localIndex]);
     }
@@ -1246,6 +1373,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public bool TryGetById(MidoraId id, out T? value)
     {
+        if (_shared is not null) return _shared.TryGetById(id, out value);
         if (_entries.TryGetValue(id, out Entry? entry))
         {
             value = entry.Item;
@@ -1263,6 +1391,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     public IReadOnlyList<(int Index, T Value)> ResolveByIdsWithIndicesInCollectionOrder(
         IReadOnlyCollection<MidoraId> ids)
     {
+        if (_shared is not null) return _shared.Resolve(ids);
         ArgumentNullException.ThrowIfNull(ids);
         if (ids.Count == 0) return [];
         HashSet<MidoraId> requested = [.. ids];
@@ -1297,6 +1426,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     {
         lock (_snapshotPublicationSync)
         {
+            _shared?.Flush();
             EnsurePublishedState();
             PublishPendingValueChanges();
             if (_publishedSnapshot is not null
@@ -1319,7 +1449,10 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
                 _getLane,
                 _getFingerprint,
                 _getRasterValue,
-                _discoveryKeyPageCounts.Keys.Order().ToArray());
+                _discoveryKeyPageCounts.Keys.Order().ToArray())
+            {
+                EditableRoot = CaptureEditableRoot()
+            };
             _publishedSnapshotGeneration = _generation;
             return _publishedSnapshot;
         }
@@ -1333,13 +1466,13 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             PersistentTimelineSequence<TValue>.Create(
                 this.Select(_toValue),
                 _getFingerprint);
-        _publishedLeafPages.Clear();
-        _discoveryKeyPageCounts.Clear();
+        _publishedLeafPages = _publishedLeafPages.Clear();
+        _discoveryKeyPageCounts = _discoveryKeyPageCounts.Clear();
         List<PagedTimelineValuePage<TValue>> pages = [];
         foreach (PersistentTimelineSequence<TValue>.Leaf leaf in sequence.EnumerateLeaves())
         {
             PagedTimelineValuePage<TValue> page = CreatePublishedPage(leaf);
-            _publishedLeafPages.Add(leaf, page);
+            _publishedLeafPages = _publishedLeafPages.Add(leaf, page);
             pages.Add(page);
             AddDiscoveryKeys(page);
         }
@@ -1349,7 +1482,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         _publishedIdDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
         _spatialBaseDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
         _spatialValueOverlay = PersistentTimelineIdDeltaMap<TValue>.Empty;
-        _spatialOverlayPages.Clear();
+        _spatialOverlayPages = _spatialOverlayPages.Clear();
         _spatialOverlayIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
         _pendingPublishedValueIds.Clear();
         _dirtyPages.Clear();
@@ -1360,6 +1493,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     {
         lock (_snapshotPublicationSync)
         {
+            _shared?.Flush();
             if (_publishedSequence is null || _pendingPublishedValueIds.Count == 0) return;
             EnsurePageDirectory();
             PersistentTimelineSequence<TValue>.IndexedReplacement[] replacements =
@@ -1416,9 +1550,9 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             {
                 PersistentTimelineSequence<TValue>.Leaf removed = mutation.RemovedLeaves[index];
                 PersistentTimelineSequence<TValue>.Leaf added = mutation.AddedLeaves[index];
-                if (!_publishedLeafPages.Remove(removed, out PagedTimelineValuePage<TValue>? basePage))
+                if (!_publishedLeafPages.TryGetValue(removed, out PagedTimelineValuePage<TValue>? basePage))
                     throw new InvalidOperationException("A published timeline leaf is not indexed.");
-                _publishedLeafPages.Add(added, basePage);
+                _publishedLeafPages = _publishedLeafPages.Remove(removed).Add(added, basePage);
             }
         }
         else
@@ -1426,8 +1560,9 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             List<PagedTimelineValuePage<TValue>> removedPages = new(mutation.RemovedLeaves.Count);
             foreach (PersistentTimelineSequence<TValue>.Leaf leaf in mutation.RemovedLeaves)
             {
-                if (!_publishedLeafPages.Remove(leaf, out PagedTimelineValuePage<TValue>? page))
+                if (!_publishedLeafPages.TryGetValue(leaf, out PagedTimelineValuePage<TValue>? page))
                     throw new InvalidOperationException("A published timeline leaf is not indexed.");
+                _publishedLeafPages = _publishedLeafPages.Remove(leaf);
                 removedPages.Add(page);
                 RemoveDiscoveryKeys(page);
             }
@@ -1435,7 +1570,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             foreach (PersistentTimelineSequence<TValue>.Leaf leaf in mutation.AddedLeaves)
             {
                 PagedTimelineValuePage<TValue> page = CreatePublishedPage(leaf);
-                _publishedLeafPages.Add(leaf, page);
+                _publishedLeafPages = _publishedLeafPages.Add(leaf, page);
                 addedPages.Add(page);
                 AddDiscoveryKeys(page);
             }
@@ -1460,6 +1595,8 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             _publishedSnapshot = null;
             return;
         }
+
+        _sharedOrdinalDirectory = null;
 
         HashSet<MidoraId> affectedIds = [];
         Dictionary<MidoraId, TValue> finalValues = [];
@@ -1672,8 +1809,11 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         List<PagedTimelineValuePage<TValue>> removedPages = [];
         foreach (PersistentTimelineIdDeltaMap<TValue>.Bucket bucket in mutation.RemovedBuckets)
         {
-            if (_spatialOverlayPages.Remove(bucket, out PagedTimelineValuePage<TValue>? page))
+            if (_spatialOverlayPages.TryGetValue(bucket, out PagedTimelineValuePage<TValue>? page))
+            {
                 removedPages.Add(page);
+                _spatialOverlayPages = _spatialOverlayPages.Remove(bucket);
+            }
         }
         List<PagedTimelineValuePage<TValue>> addedPages = [];
         foreach (PersistentTimelineIdDeltaMap<TValue>.Bucket bucket in mutation.AddedBuckets)
@@ -1681,7 +1821,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             TValue[] values = bucket.CopyExistingValues();
             if (values.Length == 0) continue;
             PagedTimelineValuePage<TValue> page = CreatePublishedPage(values);
-            _spatialOverlayPages.Add(bucket, page);
+            _spatialOverlayPages = _spatialOverlayPages.Add(bucket, page);
             addedPages.Add(page);
         }
         _spatialOverlayIndex = _spatialOverlayIndex.ReplacePages(removedPages, addedPages);
@@ -1690,7 +1830,10 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
     private PagedTimelineValuePage<TValue> CreatePublishedPage(
         PersistentTimelineSequence<TValue>.Leaf leaf) =>
-        CreatePublishedPage(leaf.Values);
+        new(leaf.Replacements.Count == 0 ? leaf.BaseValues
+                : new TimelineValueBuffer<TValue>(new LeafValueSource(leaf), 0, leaf.Count),
+            _getStart, _getEnd, _getLane, _getFingerprint, _getCategoryMask,
+            _getRasterValue, _getDiscoveryKeys);
 
     private PagedTimelineValuePage<TValue> CreatePublishedPage(TValue[] values) =>
         new(
@@ -1708,14 +1851,14 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         lock (_snapshotPublicationSync)
         {
             _publishedSequence = PersistentTimelineSequence<TValue>.Empty(_getFingerprint);
-            _publishedLeafPages.Clear();
+            _publishedLeafPages = _publishedLeafPages.Clear();
             _spatialIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
-            _discoveryKeyPageCounts.Clear();
+            _discoveryKeyPageCounts = _discoveryKeyPageCounts.Clear();
             _publishedBaseById = FrozenDictionary<MidoraId, TValue>.Empty;
             _publishedIdDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
             _spatialBaseDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
             _spatialValueOverlay = PersistentTimelineIdDeltaMap<TValue>.Empty;
-            _spatialOverlayPages.Clear();
+            _spatialOverlayPages = _spatialOverlayPages.Clear();
             _spatialOverlayIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
             _pendingPublishedValueIds.Clear();
             _publishedSnapshot = null;
@@ -1977,9 +2120,8 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     {
         foreach (long key in page.DiscoveryKeys)
         {
-            _discoveryKeyPageCounts[key] = _discoveryKeyPageCounts.TryGetValue(key, out int count)
-                ? checked(count + 1)
-                : 1;
+            _discoveryKeyPageCounts = _discoveryKeyPageCounts.SetItem(key,
+                _discoveryKeyPageCounts.TryGetValue(key, out int count) ? checked(count + 1) : 1);
         }
     }
 
@@ -1989,8 +2131,9 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         foreach (long key in page.DiscoveryKeys)
         {
             int count = _discoveryKeyPageCounts[key];
-            if (count == 1) _discoveryKeyPageCounts.Remove(key);
-            else _discoveryKeyPageCounts[key] = count - 1;
+            _discoveryKeyPageCounts = count == 1
+                ? _discoveryKeyPageCounts.Remove(key)
+                : _discoveryKeyPageCounts.SetItem(key, count - 1);
         }
     }
 
@@ -2051,9 +2194,24 @@ internal sealed class PagedTimelineValuePage<TValue>
         Func<TValue, ulong>? getCategoryMask,
         Func<TValue, double>? getRasterValue,
         Func<TValue, IEnumerable<long>>? getDiscoveryKeys)
+        : this(new TimelineValueBuffer<TValue>(values), getStart, getEnd, getLane,
+            getFingerprint, getCategoryMask, getRasterValue, getDiscoveryKeys)
+    {
+    }
+
+    public PagedTimelineValuePage(
+        TimelineValueBuffer<TValue> buffer,
+        Func<TValue, long> getStart,
+        Func<TValue, long> getEnd,
+        Func<TValue, int> getLane,
+        Func<TValue, ulong> getFingerprint,
+        Func<TValue, ulong>? getCategoryMask,
+        Func<TValue, double>? getRasterValue,
+        Func<TValue, IEnumerable<long>>? getDiscoveryKeys)
     {
         SpatialIdentity = Interlocked.Increment(ref s_nextSpatialIdentity);
-        Values = values;
+        Values = buffer;
+        TValue[] values = buffer.ToArray();
         _getStart = getStart;
         _getEnd = getEnd;
         _getLane = getLane;
@@ -2109,7 +2267,7 @@ internal sealed class PagedTimelineValuePage<TValue>
             : values.SelectMany(getDiscoveryKeys).Distinct().Order().ToArray();
     }
 
-    public TValue[] Values { get; }
+    public TimelineValueBuffer<TValue> Values { get; }
     public long SpatialIdentity { get; }
     public long MinimumStartTick { get; }
     public long MaximumEndTick { get; }
@@ -2947,11 +3105,25 @@ internal sealed class PersistentTimelineIdDeltaMap<TValue>
 
 internal sealed class PagedTimelineValueSnapshot<TValue>
 {
+    internal object? EditableRoot { get; init; }
+    public bool UsesExternalStorage => _sequence.UsesExternalStorage;
+
+    public void Prefetch(TimelineObjectRangeQuery query, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int count = 0;
+        foreach (TValue value in EnumerateRangeValues(query.StartTick, query.EndTick,
+                     query.MinimumLane, query.MaximumLane, query.CategoryMask))
+        {
+            _ = value;
+            if ((++count & 127) == 0) cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
     private readonly PersistentTimelineSequence<TValue> _sequence;
     private readonly PagedTimelineSpatialBlockIndex<TValue> _spatialIndex;
     private readonly PagedTimelineSpatialBlockIndex<TValue> _spatialOverlayIndex;
     private readonly PersistentTimelineIdDeltaMap<TValue> _spatialValueOverlay;
-    private readonly FrozenDictionary<MidoraId, TValue> _baseById;
+    private readonly IReadOnlyDictionary<MidoraId, TValue> _baseById;
     private readonly PersistentTimelineIdDeltaMap<TValue> _idDelta;
     private readonly Func<TValue, MidoraId> _getId;
     private readonly Func<TValue, long> _getStart;
@@ -2965,7 +3137,7 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
         PagedTimelineSpatialBlockIndex<TValue> spatialIndex,
         PagedTimelineSpatialBlockIndex<TValue> spatialOverlayIndex,
         PersistentTimelineIdDeltaMap<TValue> spatialValueOverlay,
-        FrozenDictionary<MidoraId, TValue> baseById,
+        IReadOnlyDictionary<MidoraId, TValue> baseById,
         PersistentTimelineIdDeltaMap<TValue> idDelta,
         int count,
         long generation,
@@ -3085,6 +3257,19 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
     public IEnumerable<TValue> EnumerateAll()
         => _sequence.Enumerate();
 
+    public TValue GetByOrdinal(int ordinal) => _sequence[ordinal];
+    public void PrepareOrdinalLookup(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        if (EditableRoot is ITimelineOrdinalLookup lookup) lookup.Prepare(token);
+    }
+    public void PrepareOrdinalLookup(IImmutableTimelineOrdinalIndexBuilder builder, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        token.ThrowIfCancellationRequested();
+        if (EditableRoot is ITimelineOrdinalLookup lookup) lookup.Prepare(builder, token);
+    }
+
     public bool TryGetPageByOrdinal(
         int firstOrdinal,
         int count,
@@ -3118,7 +3303,9 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
             ordinal = -1;
             return false;
         }
-        ordinal = _sequence.FindIndex(value => _getId(value) == id);
+        ordinal = EditableRoot is ITimelineOrdinalLookup index
+            ? index.Find(id)
+            : _sequence.FindIndex(value => _getId(value) == id);
         return ordinal >= 0;
     }
 
@@ -3197,6 +3384,46 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
                 excludeOverlayValues: false);
         }
         return result;
+    }
+
+    internal IEnumerable<TValue> EnumerateRangeValues(long start, long end, int minimumLane, int maximumLane,
+        ulong requiredCategoryMask = ulong.MaxValue)
+    {
+        List<PagedTimelineOrderedValue<TValue>> buffer = [];
+        foreach (TValue value in Enumerate(_spatialIndex, true)) yield return value;
+        foreach (TValue value in Enumerate(_spatialOverlayIndex, false)) yield return value;
+        IEnumerable<TValue> Enumerate(PagedTimelineSpatialBlockIndex<TValue> index, bool exclude)
+        {
+            foreach (var candidate in index.Query(start, end, minimumLane, maximumLane, requiredCategoryMask))
+            {
+                buffer.Clear();
+                candidate.Page.AppendSpatialRangeValues(buffer, 0, candidate.Block, start, end,
+                    minimumLane, maximumLane, requiredCategoryMask);
+                foreach (var entry in buffer)
+                    if (!exclude || !_spatialValueOverlay.TryGetValue(_getId(entry.Value), out _)) yield return entry.Value;
+            }
+        }
+    }
+
+    internal IEnumerable<TValue> EnumerateExactStart(long tick, int minimumLane, int maximumLane,
+        ulong requiredCategoryMask = ulong.MaxValue)
+    {
+        // A spatial block has a bounded number of records. Do not gather a
+        // million coincident imported notes into a temporary result array.
+        List<TValue> buffer = [];
+        foreach (TValue value in Enumerate(_spatialIndex, true)) yield return value;
+        foreach (TValue value in Enumerate(_spatialOverlayIndex, false)) yield return value;
+        IEnumerable<TValue> Enumerate(PagedTimelineSpatialBlockIndex<TValue> index, bool exclude)
+        {
+            foreach (var candidate in index.QueryStarts(tick, minimumLane, maximumLane, requiredCategoryMask))
+            {
+                buffer.Clear();
+                candidate.Page.AppendExactStartValues(buffer, candidate.Block, tick,
+                    minimumLane, maximumLane, requiredCategoryMask);
+                foreach (TValue value in buffer)
+                    if (!exclude || !_spatialValueOverlay.TryGetValue(_getId(value), out _)) yield return value;
+            }
+        }
     }
 
     private void AppendExactStartValues(

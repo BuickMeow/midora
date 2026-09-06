@@ -192,6 +192,8 @@ public static partial class ProjectDomainEditCommands
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (voice.Events.Count >= BoundedPointThreshold)
+                return PrepareBoundedTemplateUpdate(project, instrument, voice, templateEventId, expectedKind, update);
             TemplateEvent templateEvent = FindTemplateEvent(voice, templateEventId);
             if (templateEvent.Kind != expectedKind)
             {
@@ -264,7 +266,11 @@ public static partial class ProjectDomainEditCommands
 
     private static void ValidateTemplateEventEdit(
         TemplateEvent templateEvent,
-        TemplateEventValue value)
+        TemplateEventValue value) => ValidateTemplateEventValue(new(
+            templateEvent.Id, value.Kind, value.Tick, value.LengthTicks, value.Number, value.Value,
+            value.SecondaryValue, value.HasBankMsb, value.HasBankLsb, value.FollowPitchDelta));
+
+    internal static void ValidateTemplateEventValue(TemplateEventSnapshotValue value)
     {
         if (!Enum.IsDefined(value.Kind))
         {

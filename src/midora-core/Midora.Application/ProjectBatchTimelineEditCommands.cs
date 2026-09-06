@@ -25,6 +25,14 @@ public static partial class ProjectDomainEditCommands
         Command("Move logical notes", project =>
         {
             SegmentLocation segment = FindSegment(project, segmentId);
+            if (logicalNoteIds.Count >= BoundedNoteThreshold || segment.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalNotes(project, segment, logicalNoteIds, _ => value =>
+                {
+                    int pitch = checked(value.Note + pitchDelta);
+                    long tick = checked(value.StartTick + tickDelta);
+                    ValidateLogicalNote(tick, value.LengthTicks, pitch is < 0 or > 127 ? 0 : pitch, value.Velocity);
+                    return pitch is < 0 or > 127 ? null : value with { StartTick = tick, Note = pitch };
+                }, collisions: tickDelta != 0 || pitchDelta != 0);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
                 logicalNoteIds);
@@ -100,6 +108,17 @@ public static partial class ProjectDomainEditCommands
             if (minimumLengthTicks < 1)
                 throw new ArgumentOutOfRangeException(nameof(minimumLengthTicks));
             SegmentLocation segment = FindSegment(project, segmentId);
+            if (logicalNoteIds.Count >= BoundedNoteThreshold || segment.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalNotes(project, segment, logicalNoteIds, selected =>
+                {
+                    long delta = startDelta < 0 ? Math.Max(startDelta, -selected.Min(v => v.Value.StartTick)) : startDelta;
+                    return value =>
+                    {
+                        var changed = AdjustLogicalNoteEdgesSaturated(new(value.StartTick, value.LengthTicks, value.Note, value.Velocity),
+                            delta, endDelta, minimumLengthTicks);
+                        return value with { StartTick = changed.StartTick, LengthTicks = changed.LengthTicks };
+                    };
+                }, collisions: startDelta != 0);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
                 logicalNoteIds);
@@ -143,6 +162,11 @@ public static partial class ProjectDomainEditCommands
                 throw new ArgumentOutOfRangeException(nameof(mode));
             }
             SegmentLocation segment = FindSegment(project, segmentId);
+            if (logicalNoteIds.Count >= BoundedNoteThreshold || segment.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalNotes(project, segment, logicalNoteIds, _ => item => item with
+                {
+                    Velocity = mode == ProjectBatchValueEditMode.ExactSet ? value : checked(item.Velocity + value)
+                }, collisions: false);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
                 logicalNoteIds);
@@ -218,18 +242,6 @@ public static partial class ProjectDomainEditCommands
                     replacement.ProjectStartTick,
                     replacement.LengthTicks,
                     replacement.ContentOffsetTick);
-                if (adjustment.ContentShift != 0)
-                {
-                    foreach (LogicalNote note in value.Location.Segment.Notes)
-                    {
-                        _ = checked(note.StartTick + adjustment.ContentShift);
-                    }
-                    foreach (CurvePoint point in value.Location.Segment.ParameterLanes
-                        .SelectMany(lane => lane.Points))
-                    {
-                        _ = checked(point.Tick + adjustment.ContentShift);
-                    }
-                }
                 return new SegmentEdgeEdit(
                     value.Location,
                     value.Old,
@@ -274,6 +286,18 @@ public static partial class ProjectDomainEditCommands
                 }
             }
 
+            if (RequiresBoundedSegmentEdgeShift(edits))
+                return PrepareBoundedSegmentEdgeShift(project, edits);
+
+            foreach (SegmentEdgeEdit edit in edits.Where(value => value.ContentShift != 0))
+            {
+                foreach (var note in edit.Location.Segment.Notes.CreateQuerySnapshot().EnumerateAll())
+                    _ = checked(note.StartTick + edit.ContentShift);
+                foreach (var lane in edit.Location.Segment.ParameterLanes)
+                    foreach (var point in lane.Points.CreateQuerySnapshot().EnumerateAll())
+                        _ = checked(point.Tick + edit.ContentShift);
+            }
+
             return Prepared(
                 edits.Any(value => value.Old != value.Replacement),
                 TrackChange(edits.Select(value => value.Location.Track.Id).Distinct().ToArray()),
@@ -314,6 +338,12 @@ public static partial class ProjectDomainEditCommands
                     nameof(startTick));
             }
             SegmentLocation segment = FindSegment(project, segmentId);
+            if (logicalNoteIds.Count >= BoundedNoteThreshold || segment.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalNotes(project, segment, logicalNoteIds, _ => item => item with
+                {
+                    StartTick = startTick ?? item.StartTick, LengthTicks = lengthTicks ?? item.LengthTicks,
+                    Note = note ?? item.Note, Velocity = velocity ?? item.Velocity
+                }, collisions: startTick is not null || note is not null);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
                 logicalNoteIds);
@@ -352,6 +382,19 @@ public static partial class ProjectDomainEditCommands
                 throw new ArgumentOutOfRangeException(nameof(alignment));
             }
             SegmentLocation segment = FindSegment(project, segmentId);
+            if (logicalNoteIds.Count >= BoundedNoteThreshold || segment.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalNotes(project, segment, logicalNoteIds, selected =>
+                {
+                    var primaryValue = selected.FirstOrDefault(v => v.Value.Id == primaryLogicalNoteId).Value;
+                    if (primaryValue.Id == default) throw new ArgumentException("The primary Logical Note must belong to the batch selection.", nameof(primaryLogicalNoteId));
+                    long end = checked(primaryValue.StartTick + primaryValue.LengthTicks);
+                    return value => alignment switch
+                    {
+                        LogicalNoteAlignment.Start => value with { StartTick = primaryValue.StartTick },
+                        LogicalNoteAlignment.End => value with { StartTick = checked(end - value.LengthTicks) },
+                        _ => value with { LengthTicks = primaryValue.LengthTicks }
+                    };
+                }, collisions: alignment != LogicalNoteAlignment.Length);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
                 logicalNoteIds);
@@ -402,6 +445,8 @@ public static partial class ProjectDomainEditCommands
         Command("Delete logical notes", project =>
         {
             SegmentLocation segment = FindSegment(project, segmentId);
+            if (logicalNoteIds.Count >= BoundedNoteThreshold || segment.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalNotes(project, segment, logicalNoteIds, _ => _ => null, collisions: false);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
                 logicalNoteIds);
@@ -448,6 +493,9 @@ public static partial class ProjectDomainEditCommands
             }
             SegmentLocation source = FindSegment(project, sourceSegmentId);
             SegmentLocation target = FindSegment(project, targetSegmentId);
+            if (logicalNoteIds.Count >= BoundedNoteThreshold
+                || source.Segment.Notes.Count >= BoundedNoteThreshold || target.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalDuplicate(project, source, target, logicalNoteIds, newEarliestStartTick, pitchDelta);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 source.Segment,
                 logicalNoteIds);
@@ -580,6 +628,8 @@ public static partial class ProjectDomainEditCommands
                 targetPrimaryTrackId,
                 newPrimaryStartTick,
                 isCopy: true);
+            if (RequiresBoundedSegmentCopies(placements))
+                return PrepareBoundedSegmentCopies(project, placements);
             ProjectChangeSet changes = TrackChange(placements
                 .Select(value => value.TargetTrack.Id)
                 .Distinct()

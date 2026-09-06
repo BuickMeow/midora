@@ -383,23 +383,8 @@ internal static partial class ProjectCompilationSnapshot
         foreach (CapturedMidiSegment segment in capture.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            IPureMidiSegmentContentSource? source = segment.Notes.Source
-                ?? segment.ChannelEvents.Source
-                ?? segment.OpaqueEvents.Source;
-            if (source is not null)
-            {
-                if (segment.Notes.Source is not null
-                    && !ReferenceEquals(segment.Notes.Source, source)
-                    || segment.ChannelEvents.Source is not null
-                    && !ReferenceEquals(segment.ChannelEvents.Source, source)
-                    || segment.OpaqueEvents.Source is not null
-                    && !ReferenceEquals(segment.OpaqueEvents.Source, source))
-                {
-                    throw new InvalidOperationException(
-                        "A captured Pure MIDI Segment contains inconsistent immutable sources.");
-                }
-                segment.Shell.AttachPagedContent(source);
-            }
+            // A sparse edit can replace one collection without rewriting its
+            // siblings. Each formal collection carries its own immutable source.
             segment.Shell.Notes.RestoreFormalSequenceForCompilation(segment.Notes);
             segment.Shell.ChannelEvents.RestoreFormalSequenceForCompilation(
                 segment.ChannelEvents);
@@ -462,37 +447,12 @@ internal static partial class ProjectCompilationSnapshot
     {
         foreach (CapturedLogicalSegment segment in capture.Segments)
         {
-            int noteIndex = 0;
-            using (segment.Shell.Notes.BeginBatchChange())
-            {
-                foreach (LogicalNoteSnapshotValue value in segment.Notes.EnumerateAll())
-                {
-                    if ((noteIndex++ & 0xff) == 0)
-                        cancellationToken.ThrowIfCancellationRequested();
-                    segment.Shell.Notes.Add(new LogicalNote(target, value.Id)
-                    {
-                        StartTick = value.StartTick,
-                        LengthTicks = value.LengthTicks,
-                        Note = value.Note,
-                        Velocity = value.Velocity
-                    });
-                }
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            segment.Shell.Notes.AdoptSnapshot(target, segment.Notes);
             foreach (CapturedLogicalParameterLane lane in segment.ParameterLanes)
             {
-                int pointIndex = 0;
-                using IDisposable batch = lane.Shell.Points.BeginBatchChange();
-                foreach (CurvePointSnapshotValue value in lane.Points.EnumerateAll())
-                {
-                    if ((pointIndex++ & 0xff) == 0)
-                        cancellationToken.ThrowIfCancellationRequested();
-                    lane.Shell.Points.Add(new CurvePoint(
-                        target,
-                        value.Id,
-                        value.Tick,
-                        value.Value,
-                        value.Interpolation));
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                lane.Shell.Points.AdoptSnapshot(target, lane.Points);
             }
         }
         return capture.Shell;
@@ -652,44 +612,12 @@ internal static partial class ProjectCompilationSnapshot
     {
         foreach (CapturedSubVoice voice in capture.SubVoices)
         {
-            int eventIndex = 0;
-            using (voice.Shell.Events.BeginBatchChange())
-            {
-                foreach (TemplateEventSnapshotValue value in voice.Events.EnumerateAll())
-                {
-                    if ((eventIndex++ & 0xff) == 0)
-                        cancellationToken.ThrowIfCancellationRequested();
-                    voice.Shell.Events.AddWithoutOptionalMappingCreation(new TemplateEvent(
-                        target,
-                        value.Id)
-                    {
-                        Kind = value.Kind,
-                        Tick = value.Tick,
-                        LengthTicks = value.LengthTicks,
-                        Number = value.Number,
-                        Value = value.Value,
-                        SecondaryValue = value.SecondaryValue,
-                        HasBankMsb = value.HasBankMsb,
-                        HasBankLsb = value.HasBankLsb,
-                        FollowPitchDelta = value.FollowPitchDelta
-                    });
-                }
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            voice.Shell.Events.AdoptSnapshot(target, voice.Events);
             foreach (CapturedValueCurve curve in voice.Curves)
             {
-                int pointIndex = 0;
-                using IDisposable batch = curve.Shell.Points.BeginBatchChange();
-                foreach (CurvePointSnapshotValue value in curve.Points.EnumerateAll())
-                {
-                    if ((pointIndex++ & 0xff) == 0)
-                        cancellationToken.ThrowIfCancellationRequested();
-                    curve.Shell.Points.Add(new CurvePoint(
-                        target,
-                        value.Id,
-                        value.Tick,
-                        value.Value,
-                        value.Interpolation));
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                curve.Shell.Points.AdoptSnapshot(target, curve.Points);
             }
         }
         return capture.Shell;

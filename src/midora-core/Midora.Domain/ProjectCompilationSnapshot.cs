@@ -222,42 +222,33 @@ internal static partial class ProjectCompilationSnapshot
         foreach (TempoChange value in source.Tempos)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            tempos.Add(new TempoChange(value.Id, value.Tick, value.BeatsPerMinute));
+            tempos.Add(value);
         }
         foreach (TimeSignatureChange value in source.TimeSignatures)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            timeSignatures.Add(new TimeSignatureChange(
-                value.Id,
-                value.Tick,
-                value.Numerator,
-                value.Denominator));
+            timeSignatures.Add(value);
         }
         foreach (KeySignatureChange value in source.KeySignatures)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            keySignatures.Add(new KeySignatureChange(
-                value.Id,
-                value.Tick,
-                value.SharpsFlats,
-                value.IsMinor));
+            keySignatures.Add(value);
         }
         foreach (ProjectMarker marker in source.Markers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            markers.Add(new ProjectMarker(marker.Id, marker.Tick, marker.Name));
+            markers.Add(marker);
         }
         ProjectEndMarker? endMarker = source.EndMarker is null
             ? null
             : new ProjectEndMarker(source.EndMarker.Id, source.EndMarker.Tick);
-        target.Tempos.Clear();
-        target.Tempos.AddRange(tempos);
-        target.TimeSignatures.Clear();
-        target.TimeSignatures.AddRange(timeSignatures);
-        target.KeySignatures.Clear();
-        target.KeySignatures.AddRange(keySignatures);
-        target.Markers.Clear();
-        target.Markers.AddRange(markers);
+        // These four record types contain only init-only scalar/immutable text
+        // fields. Share the records, not their mutable list directories. Prepare
+        // all directories before publication so cancellation keeps target intact.
+        target.Tempos = tempos;
+        target.TimeSignatures = timeSignatures;
+        target.KeySignatures = keySignatures;
+        target.Markers = markers;
         target.EndMarker = endMarker;
     }
 
@@ -282,7 +273,7 @@ internal static partial class ProjectCompilationSnapshot
                 LengthTicks = segment.LengthTicks,
                 ContentOffsetTick = segment.ContentOffsetTick
             };
-            segmentCopy.Notes.AddRange(CloneLogicalNotes());
+            segmentCopy.Notes.AdoptSnapshot(project, segment.Notes.CreateQuerySnapshot());
             foreach (LogicalParameterLane lane in segment.ParameterLanes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -290,30 +281,11 @@ internal static partial class ProjectCompilationSnapshot
                 {
                     ParameterId = lane.ParameterId
                 };
-                laneCopy.Points.AddRange(CloneCurvePoints(
-                    lane.Points,
-                    project,
-                    cancellationToken));
+                laneCopy.Points.AdoptSnapshot(project, lane.Points.CreateQuerySnapshot());
                 segmentCopy.ParameterLanes.Add(laneCopy);
             }
             result.Segments.Add(segmentCopy);
 
-            IEnumerable<LogicalNote> CloneLogicalNotes()
-            {
-                int index = 0;
-                foreach (LogicalNote note in segment.Notes)
-                {
-                    if ((index++ & 0xff) == 0)
-                        cancellationToken.ThrowIfCancellationRequested();
-                    yield return new LogicalNote(project, note.Id)
-                    {
-                        StartTick = note.StartTick,
-                        LengthTicks = note.LengthTicks,
-                        Note = note.Note,
-                        Velocity = note.Velocity
-                    };
-                }
-            }
         }
         return result;
     }
@@ -366,7 +338,7 @@ internal static partial class ProjectCompilationSnapshot
         return result;
     }
 
-    private static EventInstrument CloneInstrument(
+    internal static EventInstrument CloneInstrument(
         MidoraProject project,
         EventInstrument source,
         CancellationToken cancellationToken)
@@ -490,41 +462,17 @@ internal static partial class ProjectCompilationSnapshot
             CopyChain(project, mapping.Steps, mappingCopy.Steps, cancellationToken);
             result.EventMappings.Add(mappingCopy);
         }
-        result.Events.AddRange(CloneTemplateEvents());
+        result.Events.AdoptSnapshot(project, source.Events.CreateQuerySnapshot());
         foreach (ValueCurve curve in source.Curves)
         {
             cancellationToken.ThrowIfCancellationRequested();
             ValueCurve curveCopy = new(project, curve.Id) { Target = curve.Target };
             CopyTargetSettings(curve.TargetSettings, curveCopy.TargetSettings);
-            curveCopy.Points.AddRange(CloneCurvePoints(
-                curve.Points,
-                project,
-                cancellationToken));
+            curveCopy.Points.AdoptSnapshot(project, curve.Points.CreateQuerySnapshot());
             result.Curves.Add(curveCopy);
         }
         return result;
 
-        IEnumerable<TemplateEvent> CloneTemplateEvents()
-        {
-            int index = 0;
-            foreach (TemplateEvent value in source.Events)
-            {
-                if ((index++ & 0xff) == 0)
-                    cancellationToken.ThrowIfCancellationRequested();
-                yield return new TemplateEvent(project, value.Id)
-                {
-                    Kind = value.Kind,
-                    Tick = value.Tick,
-                    LengthTicks = value.LengthTicks,
-                    Number = value.Number,
-                    Value = value.Value,
-                    SecondaryValue = value.SecondaryValue,
-                    HasBankMsb = value.HasBankMsb,
-                    HasBankLsb = value.HasBankLsb,
-                    FollowPitchDelta = value.FollowPitchDelta
-                };
-            }
-        }
     }
 
     private static IEnumerable<CurvePoint> CloneCurvePoints(

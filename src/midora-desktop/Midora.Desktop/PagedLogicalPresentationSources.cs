@@ -11,6 +11,7 @@ internal static class TimelinePresentationPaging
         ITimelineRenderItemSource? source)
     {
         if (source is null) return ([], null);
+        if (source is IPreparedPagedTimelineItemSource { HasExternalValueStorage: true }) return ([], source);
         return source.Count <= MaterializedItemThreshold
             ? (source.EnumerateAll().ToArray(), null)
             : ([], source);
@@ -24,7 +25,7 @@ internal enum LogicalNoteTimelineProjection
 }
 
 internal sealed class PagedLogicalNoteTimelineItemSource :
-    ITimelineRenderItemSource,
+    IPreparedPagedTimelineItemSource,
     INonBlockingTimelineFingerprintSource,
     ITimelineRasterAggregateSource
 {
@@ -53,6 +54,16 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
     private static IReadOnlySet<MidoraId> EmptySelection { get; } = new HashSet<MidoraId>();
 
     public long Count => _snapshot.Count;
+    public bool HasExternalValueStorage => _snapshot.UsesExternalStorage;
+    public bool CanComputeRangeFingerprintWithoutBlocking => !_snapshot.UsesExternalStorage;
+    public void PrefetchRange(long startTick, long endTick, int firstLane, int lastLaneExclusive,
+        CancellationToken cancellationToken)
+    {
+        if (endTick <= startTick || lastLaneExclusive <= firstLane) return;
+        int minimum = _projection == LogicalNoteTimelineProjection.Notes ? Math.Clamp(128 - lastLaneExclusive, 0, 127) : 0;
+        int maximum = _projection == LogicalNoteTimelineProjection.Notes ? Math.Clamp(127 - firstLane, 0, 127) : 127;
+        if (maximum >= minimum) _snapshot.Prefetch(new(startTick, endTick, minimum, maximum), cancellationToken);
+    }
     public long MaximumEndTick => _snapshot.MaximumEndTick;
     public ulong ContentFingerprint => PureMidiPresentationFingerprint.Create(
         null,
@@ -125,8 +136,9 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
 
     public bool TryGetById(MidoraId id, out TimelineRenderItem item)
     {
-        if (_notes.TryGetById(id, out LogicalNote? value) && value is not null)
+        if (_snapshot.TryFindOrdinalById(id, out int ordinal))
         {
+            LogicalNoteSnapshotValue value = _snapshot.GetByOrdinal(ordinal);
             item = _projection == LogicalNoteTimelineProjection.Notes
                 ? ToNoteItem(value)
                 : ToVelocityItem(value);
@@ -490,7 +502,7 @@ internal sealed class LogicalSegmentPreviewSource : ITimelineSegmentPreviewSourc
 }
 
 internal sealed class PagedLogicalParameterTimelineItemSource :
-    ITimelineRenderItemSource,
+    IPreparedPagedTimelineItemSource,
     INonBlockingTimelineFingerprintSource,
     ITimelineRasterAggregateSource
 {
@@ -529,6 +541,14 @@ internal sealed class PagedLogicalParameterTimelineItemSource :
     private static IReadOnlySet<MidoraId> EmptySelection { get; } = new HashSet<MidoraId>();
 
     public long Count => _snapshot.Count;
+    public bool HasExternalValueStorage => _snapshot.UsesExternalStorage;
+    public bool CanComputeRangeFingerprintWithoutBlocking => !_snapshot.UsesExternalStorage;
+    public void PrefetchRange(long startTick, long endTick, int firstLane, int lastLaneExclusive,
+        CancellationToken cancellationToken)
+    {
+        if (endTick > startTick && firstLane <= 0 && lastLaneExclusive > 0)
+            _snapshot.Prefetch(new(startTick, endTick, 0, 0), cancellationToken);
+    }
     public long MaximumEndTick => _snapshot.MaximumTick == long.MaxValue
         ? long.MaxValue
         : _snapshot.MaximumTick + 1;
@@ -561,8 +581,9 @@ internal sealed class PagedLogicalParameterTimelineItemSource :
 
     public bool TryGetById(MidoraId id, out TimelineRenderItem item)
     {
-        if (_lane.Points.TryGetById(id, out CurvePoint? point) && point is not null)
+        if (_snapshot.TryFindOrdinalById(id, out int ordinal))
         {
+            CurvePointSnapshotValue point = _snapshot.GetByOrdinal(ordinal);
             item = ToItem(point.Id, point.Tick, point.Value);
             return true;
         }
@@ -679,7 +700,7 @@ internal enum TemplateNoteTimelineProjection
 }
 
 internal sealed class PagedTemplateNoteTimelineItemSource :
-    ITimelineRenderItemSource,
+    IPreparedPagedTimelineItemSource,
     INonBlockingTimelineFingerprintSource,
     ITimelineRasterAggregateSource
 {
@@ -708,6 +729,16 @@ internal sealed class PagedTemplateNoteTimelineItemSource :
     // The immutable snapshot deliberately stores Note and non-Note template
     // events together. Count is an upper bound used only for capacity hints.
     public long Count => _snapshot.Count;
+    public bool HasExternalValueStorage => _snapshot.UsesExternalStorage;
+    public bool CanComputeRangeFingerprintWithoutBlocking => !_snapshot.UsesExternalStorage;
+    public void PrefetchRange(long startTick, long endTick, int firstLane, int lastLaneExclusive,
+        CancellationToken cancellationToken)
+    {
+        if (endTick <= startTick || lastLaneExclusive <= firstLane) return;
+        int minimum = _projection == TemplateNoteTimelineProjection.Notes ? Math.Clamp(128 - lastLaneExclusive, 0, 127) : 0;
+        int maximum = _projection == TemplateNoteTimelineProjection.Notes ? Math.Clamp(127 - firstLane, 0, 127) : 127;
+        if (maximum >= minimum) _snapshot.Prefetch(new(startTick, endTick, minimum, maximum, 1UL), cancellationToken);
+    }
     public long MaximumEndTick => _snapshot.MaximumEndTick;
     public ulong ContentFingerprint => PureMidiPresentationFingerprint.Create(
         null,
@@ -779,8 +810,8 @@ internal sealed class PagedTemplateNoteTimelineItemSource :
 
     public bool TryGetById(MidoraId id, out TimelineRenderItem item)
     {
-        if (_voice.Events.TryGetById(id, out TemplateEvent? value)
-            && value is { Kind: TemplateEventKind.Note })
+        if (_snapshot.TryFindOrdinalById(id, out int ordinal)
+            && _snapshot.GetByOrdinal(ordinal) is { Kind: TemplateEventKind.Note } value)
         {
             item = _projection == TemplateNoteTimelineProjection.Notes
                 ? ToNoteItem(value)
@@ -915,7 +946,7 @@ internal sealed class PagedTemplateNoteTimelineItemSource :
 }
 
 internal sealed class PagedTemplateEventLaneTimelineItemSource :
-    ITimelineRenderItemSource,
+    IPreparedPagedTimelineItemSource,
     ITimelineRasterAggregateSource
 {
     private const ulong FingerprintOffset = 14695981039346656037UL;
@@ -949,6 +980,13 @@ internal sealed class PagedTemplateEventLaneTimelineItemSource :
     // This upper bound intentionally keeps a large mixed source on the paged
     // path without counting/materializing the active lane on the UI thread.
     public long Count => _targetIndex?.Count ?? _snapshot.Count;
+    public bool HasExternalValueStorage => _snapshot.UsesExternalStorage;
+    public void PrefetchRange(long startTick, long endTick, int firstLane, int lastLaneExclusive,
+        CancellationToken cancellationToken)
+    {
+        if (endTick > startTick && firstLane <= 0 && lastLaneExclusive > 0)
+            _snapshot.Prefetch(new(startTick, endTick, categoryMask: 2UL), cancellationToken);
+    }
     public long MaximumEndTick => _targetIndex?.MaximumEndTick ?? _snapshot.MaximumEndTick;
     public ulong ContentFingerprint => PureMidiPresentationFingerprint.Create(
         null,
@@ -1021,8 +1059,8 @@ internal sealed class PagedTemplateEventLaneTimelineItemSource :
 
     public bool TryGetById(MidoraId id, out TimelineRenderItem item)
     {
-        TemplateEventSnapshotValue value = _snapshot.ResolveByIds([id]).FirstOrDefault();
-        if (value.Id != default
+        if (_snapshot.TryFindOrdinalById(id, out int ordinal)
+            && _snapshot.GetByOrdinal(ordinal) is var value
             && TryGetTargetValue(value, _target, out int targetValue))
         {
             item = ToItem(value.Id, value.Tick, targetValue);
@@ -1038,10 +1076,9 @@ internal sealed class PagedTemplateEventLaneTimelineItemSource :
     {
         ArgumentNullException.ThrowIfNull(ids);
         ArgumentNullException.ThrowIfNull(destination);
-        foreach (TemplateEventSnapshotValue value in _snapshot.ResolveByIds(ids))
+        foreach (MidoraId id in ids)
         {
-            if (TryGetTargetValue(value, _target, out int targetValue))
-                destination.Add(ToItem(value.Id, value.Tick, targetValue));
+            if (TryGetById(id, out TimelineRenderItem item)) destination.Add(item);
         }
     }
 

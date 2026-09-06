@@ -64,28 +64,28 @@ public sealed record ProjectTimelineSourceChange(
     MidoraId? LaneOrCurveId,
     long PreviousRevision,
     long CurrentRevision,
-    ImmutableArray<TimelineOrdinalRange> OrdinalRanges,
+    IReadOnlyList<TimelineOrdinalRange> OrdinalRanges,
     ImmutableArray<int> PageIndices,
-    ImmutableArray<ProjectTimelineContentChangeRange> ContentRanges)
+    IReadOnlyList<ProjectTimelineContentChangeRange> ContentRanges)
 {
     /// <summary>
     /// Exact footprint in <see cref="PreviousRevision"/>.  This is kept
     /// separately from the invalidation union so a consumer does not need to
     /// infer the old extent by reopening or rescanning the owner.
     /// </summary>
-    public ImmutableArray<ProjectTimelineContentChangeRange> PreviousContentRanges { get; init; } = [];
+    public IReadOnlyList<ProjectTimelineContentChangeRange> PreviousContentRanges { get; init; } = [];
 
     /// <summary>
     /// Exact footprint in <see cref="CurrentRevision"/>.
     /// </summary>
-    public ImmutableArray<ProjectTimelineContentChangeRange> CurrentContentRanges { get; init; } = [];
+    public IReadOnlyList<ProjectTimelineContentChangeRange> CurrentContentRanges { get; init; } = [];
 
     /// <summary>
     /// Ordinal trace of surviving/created values in the current revision.
     /// <see cref="OrdinalRanges"/> remains the source trace for the previous
     /// revision.  Both are revision-local and must never be persisted.
     /// </summary>
-    public ImmutableArray<TimelineOrdinalRange> CurrentOrdinalRanges { get; init; } = [];
+    public IReadOnlyList<TimelineOrdinalRange> CurrentOrdinalRanges { get; init; } = [];
 
     /// <summary>
     /// Physical immutable pages in the current revision when the source can

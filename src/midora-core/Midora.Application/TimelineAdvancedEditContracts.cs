@@ -37,6 +37,7 @@ public sealed class PreparedTimelineSelection
 /// </summary>
 internal interface IPreparedTimelineSelectionEdit : IPreparedProjectEdit
 {
+    bool HasPreparedSelection => true;
     PreparedTimelineSelection PreparedSelection { get; }
 }
 
@@ -93,7 +94,11 @@ public enum TimelineEditPreparationPhase
     Planning,
     ResolvingCollisions,
     BuildingResult,
-    Ready
+    Ready,
+    PreparingIndex,
+    ReadingSelection,
+    Sorting,
+    WritingStorage
 }
 
 /// <summary>
@@ -104,6 +109,33 @@ public enum TimelineEditPreparationPhase
 /// </summary>
 public readonly record struct TimelineEditPreparationProgress
 {
+    private readonly double? _overallFractionOverride;
+    private TimelineEditPreparationProgress(TimelineEditPreparationProgress value, double overallFraction)
+    {
+        Phase = value.Phase; Completed = value.Completed; Total = value.Total;
+        _overallFractionOverride = Math.Clamp(overallFraction, 0, 1);
+    }
+    public TimelineEditPreparationProgress InRange(double start, double length)
+    {
+        ValidateRange(start, length);
+        return new(this, start + length * OverallFraction);
+    }
+
+    /// <summary>Maps this phase's actual record count, not the legacy edit
+    /// phase bands, into a caller-owned portion of a larger task.</summary>
+    public TimelineEditPreparationProgress InWorkRange(double start, double length)
+    {
+        ValidateRange(start, length);
+        return new(this, start + length * (Total == 0 ? 0 : (double)Completed / Total));
+    }
+
+    private static void ValidateRange(double start, double length)
+    {
+        if (!double.IsFinite(start) || start < 0 || start > 1)
+            throw new ArgumentOutOfRangeException(nameof(start));
+        if (!double.IsFinite(length) || length < 0 || start + length > 1 + 1e-12)
+            throw new ArgumentOutOfRangeException(nameof(length));
+    }
     public TimelineEditPreparationProgress(
         TimelineEditPreparationPhase phase,
         long completed,
@@ -122,11 +154,13 @@ public readonly record struct TimelineEditPreparationProgress
     public TimelineEditPreparationPhase Phase { get; }
     public long Completed { get; }
     public long Total { get; }
+    public bool IsIndeterminate => Total == 0 && Phase != TimelineEditPreparationPhase.Ready;
 
     public double OverallFraction
     {
         get
         {
+            if (_overallFractionOverride is double overall) return overall;
             (double start, double length) = Phase switch
             {
                 TimelineEditPreparationPhase.ResolvingSelection => (0.00, 0.15),
@@ -134,11 +168,15 @@ public readonly record struct TimelineEditPreparationProgress
                 TimelineEditPreparationPhase.ResolvingCollisions => (0.55, 0.20),
                 TimelineEditPreparationPhase.BuildingResult => (0.75, 0.24),
                 TimelineEditPreparationPhase.Ready => (1.00, 0.00),
+                TimelineEditPreparationPhase.PreparingIndex => (0.00, 0.15),
+                TimelineEditPreparationPhase.ReadingSelection => (0.00, 1.00),
+                TimelineEditPreparationPhase.Sorting => (0.55, 0.20),
+                TimelineEditPreparationPhase.WritingStorage => (0.95, 0.04),
                 _ => throw new ArgumentOutOfRangeException(nameof(Phase))
             };
             if (length == 0) return start;
             double phaseFraction = Total == 0
-                ? 1
+                ? 0
                 : Math.Clamp((double)Completed / Total, 0, 1);
             return start + (length * phaseFraction);
         }

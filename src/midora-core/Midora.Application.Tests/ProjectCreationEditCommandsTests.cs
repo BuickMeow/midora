@@ -393,9 +393,10 @@ public sealed class ProjectCreationEditCommandsTests
 
         document.Execute(ProjectDomainEditCommands.SplitMidiSegment(original.Id, 500));
 
-        Assert.Equal(2, track.Segments.Count);
-        MidiSegment left = track.Segments[0];
-        MidiSegment right = track.Segments[1];
+        PureMidiTrack current = project.PureMidiTracks.Single(value => value.Id == track.Id);
+        Assert.Equal(2, current.Segments.Count);
+        MidiSegment left = current.Segments[0];
+        MidiSegment right = current.Segments[1];
         Assert.Equal((100L, 400L, 20L),
             (left.ProjectStartTick, left.LengthTicks, left.ContentOffsetTick));
         Assert.Equal((500L, 400L, 420L),
@@ -414,14 +415,15 @@ public sealed class ProjectCreationEditCommandsTests
 
         document.Undo();
 
-        Assert.Same(original, Assert.Single(track.Segments));
+        Assert.Same(original, Assert.Single(project.PureMidiTracks.Single(value => value.Id == track.Id).Segments));
         Assert.Same(crossing, original.Notes[0]);
         Assert.Same(opaque, Assert.Single(original.OpaqueEvents));
 
         document.Redo();
 
-        Assert.Same(rightAfterFirstApply, track.Segments[1]);
-        Assert.Equal(opaque.Id, Assert.Single(track.Segments[1].OpaqueEvents).Id);
+        current = project.PureMidiTracks.Single(value => value.Id == track.Id);
+        Assert.Same(rightAfterFirstApply, current.Segments[1]);
+        Assert.Equal(opaque.Id, Assert.Single(current.Segments[1].OpaqueEvents).Id);
     }
 
     [Fact]

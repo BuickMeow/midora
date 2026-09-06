@@ -229,24 +229,24 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
         Stopwatch coldApply = Stopwatch.StartNew();
         edit.Apply(project);
         coldApply.Stop();
-        Assert.Equal(1, notes[0].StartTick);
-        Assert.Equal(1, notes[^1].StartTick - ((count - 1) * 4L));
+        Assert.Equal(1, track.Segments[0].Notes[0].StartTick);
+        Assert.Equal(1, track.Segments[0].Notes[^1].StartTick - ((count - 1) * 4L));
 
         Stopwatch coldUndo = Stopwatch.StartNew();
         edit.Undo(project);
         coldUndo.Stop();
-        Assert.Equal(0, notes[0].StartTick);
+        Assert.Equal(0, track.Segments[0].Notes[0].StartTick);
 
         Stopwatch warmRedo = Stopwatch.StartNew();
         edit.Apply(project);
         warmRedo.Stop();
-        Assert.Equal(1, notes[0].StartTick);
+        Assert.Equal(1, track.Segments[0].Notes[0].StartTick);
 
         Stopwatch warmUndo = Stopwatch.StartNew();
         edit.Undo(project);
         warmUndo.Stop();
-        Assert.Equal(0, notes[0].StartTick);
-        Assert.Equal(count, segment.Notes.Count);
+        Assert.Equal(0, track.Segments[0].Notes[0].StartTick);
+        Assert.Equal(count, track.Segments[0].Notes.Count);
 
         output.WriteLine(
             $"count={count}; prepare={prepare.Elapsed}; coldApply={coldApply.Elapsed}; "
@@ -350,8 +350,8 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
                 logical.Select(static value => value.Id).ToArray(),
                 startDelta: 0,
                 endDelta: 1),
-            () => segment.Notes.CreateQuerySnapshot().GetRangeFingerprint(0, 1_000_000),
-            () => logical[0].LengthTicks,
+            () => CurrentSegment().Notes.CreateQuerySnapshot().GetRangeFingerprint(0, 1_000_000),
+            () => CurrentSegment().Notes.CreateQuerySnapshot().GetByOrdinal(0).LengthTicks,
             expectedApplied: 3,
             expectedUndone: 2);
         TimeSpan templateElapsed = Exercise(
@@ -361,8 +361,8 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
                 template.Select(static value => value.Id).ToArray(),
                 startDelta: 0,
                 endDelta: 1),
-            () => voice.Events.CreateQuerySnapshot().GetNoteRangeFingerprint(0, 1_000_000),
-            () => template[0].LengthTicks,
+            () => CurrentVoice().Events.CreateQuerySnapshot().GetNoteRangeFingerprint(0, 1_000_000),
+            () => CurrentVoice().Events.CreateQuerySnapshot().GetByOrdinal(0).LengthTicks,
             expectedApplied: 3,
             expectedUndone: 2);
 
@@ -374,6 +374,9 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
             $"count={count}; logicalResizeSnapshotCycle={logicalElapsed}; "
             + $"subVoiceResizeSnapshotCycle={templateElapsed}; "
             + $"managedMiB={GC.GetTotalMemory(false) / 1048576d:F1}");
+
+        Segment CurrentSegment() => track.Segments.Single(value => value.Id == segment.Id);
+        SubVoice CurrentVoice() => instrument.SubVoices.Single(value => value.Id == voice.Id);
 
         TimeSpan Exercise(
             IProjectEditCommand command,
@@ -447,10 +450,10 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
                 duplicate: false)
             .Prepare(project);
         channelEdit.Apply(project);
-        DirectMidiChannelEventQuerySnapshot channelSnapshot = segment.ChannelEvents.CreateQuerySnapshot();
+        DirectMidiChannelEventQuerySnapshot channelSnapshot = track.Segments[0].ChannelEvents.CreateQuerySnapshot();
         Assert.Single(channelSnapshot.QueryValues(1, 2));
         channelEdit.Undo(project);
-        _ = segment.ChannelEvents.CreateQuerySnapshot();
+        _ = track.Segments[0].ChannelEvents.CreateQuerySnapshot();
         channelTime.Stop();
 
         Stopwatch opaqueTime = Stopwatch.StartNew();
@@ -461,10 +464,10 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
                 duplicate: false)
             .Prepare(project);
         opaqueEdit.Apply(project);
-        OpaqueMidiEventQuerySnapshot opaqueSnapshot = segment.OpaqueEvents.CreateQuerySnapshot();
+        OpaqueMidiEventQuerySnapshot opaqueSnapshot = track.Segments[0].OpaqueEvents.CreateQuerySnapshot();
         Assert.Single(opaqueSnapshot.QueryValues(1, 2));
         opaqueEdit.Undo(project);
-        _ = segment.OpaqueEvents.CreateQuerySnapshot();
+        _ = track.Segments[0].OpaqueEvents.CreateQuerySnapshot();
         opaqueTime.Stop();
 
         Assert.Equal(0, channel[0].Tick);
@@ -526,15 +529,15 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
                     endDelta: 1)
                 .Prepare(project);
             edit.Apply(project);
-            DirectMidiNoteQuerySnapshot applied = segment.Notes.CreateQuerySnapshot();
+            DirectMidiNoteQuerySnapshot applied = track.Segments[0].Notes.CreateQuerySnapshot();
             Assert.Equal(3, Assert.Single(applied.QueryValues(0, 1, 0, 0)).LengthTicks);
             edit.Undo(project);
-            DirectMidiNoteQuerySnapshot undone = segment.Notes.CreateQuerySnapshot();
+            DirectMidiNoteQuerySnapshot undone = track.Segments[0].Notes.CreateQuerySnapshot();
             Assert.Equal(2, Assert.Single(undone.QueryValues(0, 1, 0, 0)).LengthTicks);
             edit.Apply(project);
-            _ = segment.Notes.CreateQuerySnapshot();
+            _ = track.Segments[0].Notes.CreateQuerySnapshot();
             edit.Undo(project);
-            _ = segment.Notes.CreateQuerySnapshot();
+            _ = track.Segments[0].Notes.CreateQuerySnapshot();
             elapsed.Stop();
 
             Assert.Equal(count, segment.Notes.Count);
@@ -634,21 +637,21 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
             ProjectDomainEditCommands.DeleteDirectMidiNotes(
                 midiSegment.Id,
                 removedDirectNotes.Select(static value => value.Id).ToArray()),
-            () => midiSegment.Notes.ToArray(),
+            () => project.PureMidiTracks.Single(value => value.Id == midiTrack.Id).Segments.Single(value => value.Id == midiSegment.Id).Notes.ToArray(),
             directNotes,
             removedDirectNotes);
         VerifyCycle(
             ProjectDomainEditCommands.DeleteDirectMidiEvents(
                 midiSegment.Id,
                 removedDirectEvents.Select(static value => value.Id).ToArray()),
-            () => midiSegment.ChannelEvents.ToArray(),
+            () => project.PureMidiTracks.Single(value => value.Id == midiTrack.Id).Segments.Single(value => value.Id == midiSegment.Id).ChannelEvents.ToArray(),
             directEvents,
             removedDirectEvents);
         VerifyCycle(
             ProjectDomainEditCommands.DeleteLogicalNotes(
                 logicalSegment.Id,
                 removedLogicalNotes.Select(static value => value.Id).ToArray()),
-            () => logicalSegment.Notes.ToArray(),
+            () => project.Tracks.Single(value => value.Id == logicalTrack.Id).Segments.Single(value => value.Id == logicalSegment.Id).Notes.ToArray(),
             logicalNotes,
             removedLogicalNotes);
         VerifyCycle(
@@ -656,7 +659,7 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
                 instrument.Id,
                 voice.Id,
                 removedTemplateEvents.Select(static value => value.Id).ToArray()),
-            () => voice.Events.ToArray(),
+            () => project.EventInstruments.Single(value => value.Id == instrument.Id).SubVoices.Single(value => value.Id == voice.Id).Events.ToArray(),
             templateEvents,
             removedTemplateEvents);
 
@@ -673,11 +676,21 @@ public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
                 edit.Apply(project);
                 HashSet<T> removedSet = new(removed, ReferenceEqualityComparer.Instance);
                 Assert.Equal(
-                    original.Where(value => !removedSet.Contains(value)),
-                    read());
+                    original.Where(value => !removedSet.Contains(value)).Select(Scalar),
+                    read().Select(Scalar));
                 edit.Undo(project);
-                Assert.Equal(original, read());
+                Assert.Equal(original.Select(Scalar), read().Select(Scalar));
             }
         }
+        static object Scalar(object value) => value switch
+        {
+            DirectMidiNote note => new DirectMidiNoteValue(note.Id, note.StartTick, note.LengthTicks, note.Key,
+                note.NoteOnVelocity, note.NoteOffVelocity, note.NoteOnOrder, note.NoteOffOrder),
+            DirectMidiChannelEvent point => new DirectMidiChannelEventValue(point.Id, point.Tick, point.Kind, point.Data1, point.Data2, point.Order),
+            LogicalNote note => new LogicalNoteSnapshotValue(note.Id, note.StartTick, note.LengthTicks, note.Note, note.Velocity),
+            TemplateEvent item => new TemplateEventSnapshotValue(item.Id, item.Kind, item.Tick, item.LengthTicks,
+                item.Number, item.Value, item.SecondaryValue, item.HasBankMsb, item.HasBankLsb, item.FollowPitchDelta),
+            _ => throw new InvalidOperationException("Unexpected timeline object type.")
+        };
     }
 }

@@ -17,9 +17,13 @@ public static partial class ProjectDomainEditCommands
         DetachedStableIdAllocator? sharedAllocator) =>
         ResultCommand("Split logical notes", (project, publishResult, cancellationToken, progress) =>
         {
+            ArgumentNullException.ThrowIfNull(options);
             cancellationToken.ThrowIfCancellationRequested();
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             SegmentLocation location = FindSegment(project, segmentId);
+            if (noteIds.Count >= BoundedNoteThreshold || location.Segment.Notes.Count >= BoundedNoteThreshold
+                || options.MaximumResultObjects >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalSplit(project, location, noteIds, options, publishResult, cancellationToken, progress, sharedAllocator);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedLogicalNote[] selected = SelectAdvancedLogicalNotes(location.Segment, noteIds);
@@ -67,9 +71,13 @@ public static partial class ProjectDomainEditCommands
         DetachedStableIdAllocator? sharedAllocator) =>
         ResultCommand("Split Direct MIDI notes", (project, publishResult, cancellationToken, progress) =>
         {
+            ArgumentNullException.ThrowIfNull(options);
             cancellationToken.ThrowIfCancellationRequested();
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
+            if (noteIds.Count >= BoundedNoteThreshold || location.Segment.Notes.Count >= BoundedNoteThreshold
+                || options.MaximumResultObjects >= BoundedNoteThreshold)
+                return PrepareBoundedDirectSplit(project, location, noteIds, options, publishResult, cancellationToken, progress, sharedAllocator);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedDirectNote[] selected = SelectAdvancedDirectNotes(location.Segment, noteIds);
@@ -130,10 +138,14 @@ public static partial class ProjectDomainEditCommands
         DetachedStableIdAllocator? sharedAllocator) =>
         ResultCommand("Split SubVoice notes", (project, publishResult, cancellationToken, progress) =>
         {
+            ArgumentNullException.ThrowIfNull(options);
             cancellationToken.ThrowIfCancellationRequested();
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold
+                || options.MaximumResultObjects >= BoundedNoteThreshold)
+                return PrepareBoundedTemplateSplit(project, instrument, voice, noteIds, options, publishResult, cancellationToken, progress, sharedAllocator);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(instrument, voice);
             AdvancedTemplateNote[] selected = SelectAdvancedTemplateNotes(voice, noteIds);
@@ -178,6 +190,8 @@ public static partial class ProjectDomainEditCommands
             cancellationToken.ThrowIfCancellationRequested();
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             SegmentLocation location = FindSegment(project, segmentId);
+            if (noteIds.Count >= BoundedNoteThreshold || location.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalJoin(project, location, noteIds, options, publishResult, cancellationToken, progress);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedLogicalNote[] selected = SelectAdvancedLogicalNotes(location.Segment, noteIds);
@@ -220,6 +234,8 @@ public static partial class ProjectDomainEditCommands
             cancellationToken.ThrowIfCancellationRequested();
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
+            if (noteIds.Count >= BoundedNoteThreshold || location.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedDirectJoin(project, location, noteIds, options, publishResult, cancellationToken, progress);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedDirectNote[] selected = SelectAdvancedDirectNotes(location.Segment, noteIds);
@@ -272,6 +288,8 @@ public static partial class ProjectDomainEditCommands
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold)
+                return PrepareBoundedTemplateJoin(project, instrument, voice, noteIds, options, publishResult, cancellationToken, progress);
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(instrument, voice);
             AdvancedTemplateNote[] selected = SelectAdvancedTemplateNotes(voice, noteIds);
@@ -317,6 +335,21 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(options);
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             SegmentLocation location = FindSegment(project, segmentId);
+            if (noteIds.Count >= BoundedNoteThreshold || location.Segment.Notes.Count >= BoundedNoteThreshold)
+            {
+                using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+                ulong frozenSeed = ResolveHumanizeSeed(options);
+                var frozen = location.Segment.Notes.CreateQuerySnapshot();
+                return PrepareBoundedLogicalNotes(project, location, noteIds, _ => value =>
+                {
+                    if (!frozen.TryFindOrdinalById(value.Id, out int ordinal)) throw new InvalidOperationException("The frozen note disappeared.");
+                    var result = HumanizeNote(new(value.StartTick, value.LengthTicks, value.Note, value.Velocity),
+                        segmentId, AdvancedFormalOrder.FromCollectionOrdinal(ordinal), options, frozenSeed, 0, null);
+                    if (result.StartTick < 0) return null;
+                    result = NormalizeHumanizedGate(result, null);
+                    return value with { StartTick = result.StartTick, LengthTicks = result.LengthTicks, Note = result.Key, Velocity = result.Velocity };
+                }, publishResult: publishResult, formalCollisions: true);
+            }
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedLogicalNote[] selected = SelectAdvancedLogicalNotes(location.Segment, noteIds);
@@ -369,6 +402,20 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(options);
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
+            if (noteIds.Count > 4096 || location.Segment.Notes.Count > 4096)
+            {
+                using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+                ulong frozenSeed = ResolveHumanizeSeed(options);
+                return PrepareBoundedDirectMidiNoteTransform(project, segmentId, noteIds, _ => value =>
+                {
+                    var humanized = HumanizeNote(new(value.StartTick, value.LengthTicks, value.Key, value.NoteOnVelocity),
+                        segmentId, new(value.NoteOnOrder, value.Id), options, frozenSeed, 0, null);
+                    if (humanized.StartTick < 0) return null;
+                    humanized = NormalizeHumanizedGate(humanized, null);
+                    return value with { StartTick = humanized.StartTick, LengthTicks = humanized.LengthTicks,
+                        Key = humanized.Key, NoteOnVelocity = humanized.Velocity };
+                }, formalCollisions: true, publishResult: publishResult);
+            }
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             AdvancedDirectNote[] selected = SelectAdvancedDirectNotes(location.Segment, noteIds);
@@ -423,6 +470,21 @@ public static partial class ProjectDomainEditCommands
             ReportPreparationProgress(progress, TimelineEditPreparationPhase.ResolvingSelection, 0, noteIds.Count);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold)
+            {
+                using var scope = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+                ulong frozenSeed = ResolveHumanizeSeed(options);
+                var frozen = voice.Events.CreateQuerySnapshot();
+                return PrepareBoundedTemplateNotes(project, instrument, voice, noteIds, _ => value =>
+                {
+                    if (!frozen.TryFindOrdinalById(value.Id, out int ordinal)) throw new InvalidOperationException("The frozen note disappeared.");
+                    var result = HumanizeNote(new(value.Tick, value.LengthTicks, value.Number, value.Value),
+                        subVoiceId, AdvancedFormalOrder.FromCollectionOrdinal(ordinal), options, frozenSeed, 0, instrument.TemplateLengthTicks);
+                    if (result.StartTick < 0 || result.StartTick >= instrument.TemplateLengthTicks) return null;
+                    result = NormalizeHumanizedGate(result, instrument.TemplateLengthTicks);
+                    return value with { Tick = result.StartTick, LengthTicks = result.LengthTicks, Number = result.Key, Value = result.Velocity };
+                }, publishResult: publishResult, formalCollisions: true);
+            }
             ProjectTimelineOwnerSourceStamp sourceStamp =
                 ProjectTimelineOwnerSourceStamp.Capture(instrument, voice);
             AdvancedTemplateNote[] selected = SelectAdvancedTemplateNotes(voice, noteIds);

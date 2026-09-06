@@ -70,8 +70,8 @@ public sealed class ExtremeTimelineEditCoverageTests(ITestOutputHelper output)
                 logical.Select(static value => value.Id).ToArray(),
                 startDelta: 0,
                 endDelta: 1),
-            () => logicalSegment.Notes.CreateQuerySnapshot().GetRangeFingerprint(0, extent),
-            () => logical[0].LengthTicks);
+            () => CurrentLogical().Notes.CreateQuerySnapshot().GetRangeFingerprint(0, extent),
+            () => CurrentLogical().Notes.CreateQuerySnapshot().GetByOrdinal(0).LengthTicks);
         Exercise(
             "SubVoice",
             ProjectDomainEditCommands.AdjustTemplateNoteEdges(
@@ -80,8 +80,8 @@ public sealed class ExtremeTimelineEditCoverageTests(ITestOutputHelper output)
                 template.Select(static value => value.Id).ToArray(),
                 startDelta: 0,
                 endDelta: 1),
-            () => voice.Events.CreateQuerySnapshot().GetNoteRangeFingerprint(0, extent),
-            () => template[0].LengthTicks);
+            () => CurrentVoice().Events.CreateQuerySnapshot().GetNoteRangeFingerprint(0, extent),
+            () => CurrentVoice().Events.CreateQuerySnapshot().GetByOrdinal(0).LengthTicks);
         Exercise(
             "Direct MIDI",
             ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
@@ -89,8 +89,12 @@ public sealed class ExtremeTimelineEditCoverageTests(ITestOutputHelper output)
                 direct.Select(static value => value.Id).ToArray(),
                 startDelta: 0,
                 endDelta: 1),
-            () => midiSegment.Notes.CreateQuerySnapshot().GetRangeFingerprint(0, extent, 0, 127),
-            () => direct[0].LengthTicks);
+            () => CurrentMidi().Notes.CreateQuerySnapshot().GetRangeFingerprint(0, extent, 0, 127),
+            () => CurrentMidi().Notes.CreateObjectSource().GetByOrdinal(0).LengthTicks);
+
+        Segment CurrentLogical() => project.Tracks.Single(value => value.Id == logicalTrack.Id).Segments.Single(value => value.Id == logicalSegment.Id);
+        SubVoice CurrentVoice() => project.EventInstruments.Single(value => value.Id == instrument.Id).SubVoices.Single(value => value.Id == voice.Id);
+        MidiSegment CurrentMidi() => project.PureMidiTracks.SelectMany(static value => value.Segments).Single(value => value.Id == midiSegment.Id);
 
         void Exercise(
             string label,
@@ -184,10 +188,10 @@ public sealed class ExtremeTimelineEditCoverageTests(ITestOutputHelper output)
                 logical.Select(static value => value.Id).ToArray(),
                 tickDelta: 1,
                 valueDelta: 1),
-            () => lane.Points.CreateQuerySnapshot().GetRangeFingerprint(0, extent),
+            () => CurrentLane().Points.CreateQuerySnapshot().GetRangeFingerprint(0, extent),
             () =>
             {
-                Assert.True(lane.Points.TryGetById(logical[0].Id, out CurvePoint? current));
+                Assert.True(CurrentLane().Points.TryGetById(logical[0].Id, out CurvePoint? current));
                 Assert.NotNull(current);
                 return (current.Tick, current.Value);
             });
@@ -201,8 +205,17 @@ public sealed class ExtremeTimelineEditCoverageTests(ITestOutputHelper output)
                 tickDelta: 1,
                 valueDelta: 1,
                 duplicate: false),
-            () => voice.Events.CreateQuerySnapshot().GetEventRangeFingerprint(0, extent),
-            () => (template[0].Tick, (double)template[0].Value));
+            () => CurrentVoice().Events.CreateQuerySnapshot().GetEventRangeFingerprint(0, extent),
+            () =>
+            {
+                Assert.True(CurrentVoice().Events.TryGetById(template[0].Id, out TemplateEvent? current));
+                Assert.NotNull(current);
+                return (current.Tick, (double)current.Value);
+            });
+
+        LogicalParameterLane CurrentLane() => track.Segments.Single(s => s.Id == segment.Id)
+            .ParameterLanes.Single(p => p.Id == lane.Id);
+        SubVoice CurrentVoice() => instrument.SubVoices.Single(s => s.Id == voice.Id);
 
         void Exercise(
             string label,
@@ -480,24 +493,25 @@ public sealed class ExtremeTimelineEditCoverageTests(ITestOutputHelper output)
         Stopwatch apply = Stopwatch.StartNew();
         edit.Apply(project);
         apply.Stop();
-        DirectMidiChannelEventQuerySnapshot applied = segment.ChannelEvents.CreateQuerySnapshot();
+        DirectMidiChannelEventQuerySnapshot applied = Current().ChannelEvents.CreateQuerySnapshot();
         Assert.Equal(before.Generation + 1, applied.Generation);
         Assert.NotEqual(beforeFingerprint, applied.GetRangeFingerprint(0, segment.LengthTicks));
-        Assert.Equal(0, events[0].Tick);
-        Assert.Equal((count - 1) * 8L, events[^1].Tick);
+        Assert.Equal(0, Current().ChannelEvents.CreateObjectSource().GetByOrdinal(0).Tick);
+        Assert.Equal((count - 1) * 8L, Current().ChannelEvents.CreateObjectSource().GetByOrdinal(count - 1).Tick);
 
         Stopwatch undo = Stopwatch.StartNew();
         edit.Undo(project);
         undo.Stop();
-        DirectMidiChannelEventQuerySnapshot undone = segment.ChannelEvents.CreateQuerySnapshot();
-        Assert.Equal(applied.Generation + 1, undone.Generation);
+        DirectMidiChannelEventQuerySnapshot undone = Current().ChannelEvents.CreateQuerySnapshot();
+        // Undo restores the immutable owner root, including its exact local generation.
+        Assert.Equal(before.Generation, undone.Generation);
         Assert.Equal(beforeFingerprint, undone.GetRangeFingerprint(0, segment.LengthTicks));
-        Assert.Equal((count - 1) * 4L, events[^1].Tick);
+        Assert.Equal((count - 1) * 4L, Current().ChannelEvents.CreateObjectSource().GetByOrdinal(count - 1).Tick);
 
         edit.Apply(project);
-        Assert.Equal((count - 1) * 8L, events[^1].Tick);
+        Assert.Equal((count - 1) * 8L, Current().ChannelEvents.CreateObjectSource().GetByOrdinal(count - 1).Tick);
         edit.Undo(project);
-        Assert.Equal(beforeFingerprint, segment.ChannelEvents
+        Assert.Equal(beforeFingerprint, Current().ChannelEvents
             .CreateQuerySnapshot()
             .GetRangeFingerprint(0, segment.LengthTicks));
 
@@ -506,6 +520,7 @@ public sealed class ExtremeTimelineEditCoverageTests(ITestOutputHelper output)
         Assert.True(undo.Elapsed < TimeSpan.FromSeconds(10),
             $"60,000-point Direct MIDI transform undo took {undo.Elapsed}.");
         output.WriteLine($"directEvents={count}; apply={apply.Elapsed}; undo={undo.Elapsed}");
+        MidiSegment Current() => project.PureMidiTracks.SelectMany(static value => value.Segments).Single(value => value.Id == segment.Id);
     }
 
     [Fact]

@@ -585,6 +585,7 @@ public interface IPreparedTimelineRenderItemSource : ITimelineRenderItemSource
 /// </summary>
 public interface INonBlockingTimelineFingerprintSource : ITimelineRenderItemSource
 {
+    bool CanComputeRangeFingerprintWithoutBlocking => true;
 }
 
 public enum TimelineRasterAggregateKind
@@ -1906,7 +1907,8 @@ public sealed class TimelineRenderSnapshot
 
     internal bool HasExternalItemSource => _itemSource is not null;
     internal bool CanComputeTileFingerprintSynchronously =>
-        _itemSource is null or INonBlockingTimelineFingerprintSource;
+        _itemSource is null
+        || _itemSource is INonBlockingTimelineFingerprintSource { CanComputeRangeFingerprintWithoutBlocking: true };
     internal ulong ExternalItemSourceFingerprint => _itemSource?.ContentFingerprint ?? 0;
 
     internal bool TryAccumulateRasterColumns(

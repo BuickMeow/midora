@@ -67,6 +67,7 @@ public static partial class ProjectDomainEditCommands
         bool enumSemanticWarningAcknowledged) =>
         Command("Rebind logical parameter lane", project =>
         {
+            using var preparation = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default, project: project);
             if (!Enum.IsDefined(mode))
             {
                 throw new ArgumentOutOfRangeException(nameof(mode));
@@ -81,6 +82,7 @@ public static partial class ProjectDomainEditCommands
             LogicalParameterDefinition definition = instrument.LogicalParameters
                 .SingleOrDefault(value => value.Id == parameterId)
                 ?? throw new ArgumentOutOfRangeException(nameof(parameterId));
+            using var enumMetadata = preparation.Resources.ReserveWorking(checked((long)definition.EnumItems.Count * 2048));
             if (segment.Segment.ParameterLanes.Any(
                 value => !ReferenceEquals(value, lane) && value.ParameterId == parameterId))
             {
@@ -95,6 +97,8 @@ public static partial class ProjectDomainEditCommands
                 throw new InvalidOperationException(
                     "Rebinding to an Enum requires acknowledging that integer compatibility does not preserve semantic meaning.");
             }
+            if (lane.Points.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalParameterLaneRebind(project, segment, lane, parameterId, target, mode);
             CurvePoint[] oldPoints = lane.Points.ToArray();
             CurvePoint[] replacementPoints = oldPoints
                 .Select(point => ConvertPoint(project, point, target, mode))
@@ -378,9 +382,18 @@ public static partial class ProjectDomainEditCommands
         LogicalParameterTarget target,
         LogicalParameterLaneRebindMode mode)
     {
+        double? value = ConvertLogicalParameterValue(source.Value, target, mode);
+        if (value is not double converted) return null;
+        const CurveInterpolation interpolation = CurveInterpolation.Step;
+        if (converted == source.Value && interpolation == source.Interpolation) return source;
+        return new(project, source.Id, source.Tick, converted, interpolation);
+    }
+
+    private static double? ConvertLogicalParameterValue(double value, LogicalParameterTarget target, LogicalParameterLaneRebindMode mode)
+    {
         double converted = target.Type == LogicalParameterType.Double
-            ? source.Value
-            : Math.Round(source.Value, MidpointRounding.AwayFromZero);
+            ? value
+            : Math.Round(value, MidpointRounding.AwayFromZero);
         if (!double.IsFinite(converted))
         {
             return mode == LogicalParameterLaneRebindMode.DiscardInvalidValues
@@ -394,7 +407,7 @@ public static partial class ProjectDomainEditCommands
             if (converted < target.Minimum || converted > target.Maximum
                 || target.Type == LogicalParameterType.Enum
                 && (converted < int.MinValue || converted > int.MaxValue
-                    || !target.EnumValues!.Contains((int)converted)))
+                    || Array.BinarySearch(target.EnumValues!, (int)converted) < 0))
             {
                 return null;
             }
@@ -404,17 +417,19 @@ public static partial class ProjectDomainEditCommands
             converted = Math.Clamp(converted, target.Minimum, target.Maximum);
             if (target.Type == LogicalParameterType.Enum)
             {
-                converted = target.EnumValues!
-                    .MinBy(candidate => (Distance: Math.Abs((double)candidate - converted), candidate));
+                int[] candidates = target.EnumValues!;
+                int low = 0, high = candidates.Length;
+                while (low < high)
+                {
+                    int middle = low + (high - low) / 2;
+                    if (candidates[middle] < converted) low = middle + 1; else high = middle;
+                }
+                converted = low == 0 ? candidates[0] : low == candidates.Length ? candidates[^1]
+                    : converted - candidates[low - 1] <= candidates[low] - converted
+                        ? candidates[low - 1] : candidates[low];
             }
         }
-
-        const CurveInterpolation interpolation = CurveInterpolation.Step;
-        if (converted == source.Value && interpolation == source.Interpolation)
-        {
-            return source;
-        }
-        return new(project, source.Id, source.Tick, converted, interpolation);
+        return converted;
     }
 
     private static void SetLogicalNote(LogicalNote note, LogicalNoteValue value)

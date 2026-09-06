@@ -9,54 +9,40 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand FlipDirectMidiNotesHorizontal(
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> noteIds) =>
-        ChangeDirectMidiNotes(
+        ChangeBoundedDirectMidiNotes(
             "Flip Direct MIDI Notes horizontally",
             segmentId,
             noteIds,
-            values =>
+            bounds => value => value with
             {
-                long left = values.Min(value => value.StartTick);
-                long right = values.Max(value => checked(value.StartTick + value.LengthTicks));
-                return values.Select(value => value with
-                {
-                    StartTick = checked(left + right - checked(value.StartTick + value.LengthTicks))
-                }).ToArray();
+                StartTick = checked(bounds.MinimumTick + bounds.MaximumEndTick - checked(value.StartTick + value.LengthTicks))
             });
 
     public static IProjectEditCommand FlipDirectMidiNotesVertical(
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> noteIds) =>
-        ChangeDirectMidiNotes(
+        ChangeBoundedDirectMidiNotes(
             "Flip Direct MIDI Notes vertically",
             segmentId,
             noteIds,
-            values =>
-            {
-                int minimum = values.Min(value => value.Key);
-                int maximum = values.Max(value => value.Key);
-                return values.Select(value => value with
-                {
-                    Key = checked(minimum + maximum - value.Key)
-                }).ToArray();
-            });
+            bounds => value => value with { Key = checked(bounds.MinimumKey + bounds.MaximumKey - value.Key) });
 
     public static IProjectEditCommand ScaleDirectMidiNotes(
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> noteIds,
         double factor) =>
-        ChangeDirectMidiNotes(
+        ChangeBoundedDirectMidiNotes(
             "Scale Direct MIDI Notes",
             segmentId,
             noteIds,
-            values =>
+            bounds =>
             {
                 ValidateScaleFactor(factor);
-                long origin = values.Min(value => value.StartTick);
-                return values.Select(value => value with
+                return value => value with
                 {
-                    StartTick = ScaleTick(origin, value.StartTick, factor),
+                    StartTick = ScaleTick(bounds.MinimumTick, value.StartTick, factor),
                     LengthTicks = ScaleLength(value.LengthTicks, factor)
-                }).ToArray();
+                };
             });
 
     public static IProjectEditCommand TransposeDirectMidiNotes(
@@ -68,37 +54,38 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand FlipDirectMidiEventPointsHorizontal(
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> eventIds) =>
-        TransformDirectMidiEventPoints(
-            "Flip Direct MIDI Event points horizontally",
-            segmentId,
-            eventIds,
-            values =>
+        Command("Flip Direct MIDI Event points horizontally", project =>
+        {
+            if (FindMidiSegment(project, segmentId).Segment.ChannelEvents.Count <= 4096)
+                return TransformDirectMidiEventPoints("Flip Direct MIDI Event points horizontally", segmentId, eventIds,
+                    values => { long left = values.Min(static x => x.Tick), right = values.Max(static x => x.Tick);
+                        return values.Select(value => value with { Tick = checked(left + right - value.Tick) }).ToArray(); }).Prepare(project);
+            return PrepareBoundedDirectMidiEventTransform(project, segmentId, eventIds, values =>
             {
-                long left = values.Min(value => value.Tick);
-                long right = values.Max(value => value.Tick);
-                return values.Select(value => value with
-                {
-                    Tick = checked(left + right - value.Tick)
-                }).ToArray();
-            });
+                ValidateBoundedDirectEventLane(values);
+                long minimum = values.Min(static value => value.Value.Tick), maximum = values.Max(static value => value.Value.Tick);
+                return value => value with { Tick = checked(minimum + maximum - value.Tick) };
+            }, BoundedEventCollisionMode.Overwrite);
+        });
 
     public static IProjectEditCommand ScaleDirectMidiEventPoints(
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> eventIds,
         double factor) =>
-        TransformDirectMidiEventPoints(
-            "Scale Direct MIDI Event points",
-            segmentId,
-            eventIds,
-            values =>
+        Command("Scale Direct MIDI Event points", project =>
+        {
+            if (FindMidiSegment(project, segmentId).Segment.ChannelEvents.Count <= 4096)
+                return TransformDirectMidiEventPoints("Scale Direct MIDI Event points", segmentId, eventIds,
+                    values => { ValidateScaleFactor(factor); long start = values.Min(static x => x.Tick);
+                        return values.Select(value => value with { Tick = ScaleTick(start, value.Tick, factor) }).ToArray(); }).Prepare(project);
+            return PrepareBoundedDirectMidiEventTransform(project, segmentId, eventIds, values =>
             {
+                ValidateBoundedDirectEventLane(values);
                 ValidateScaleFactor(factor);
-                long origin = values.Min(value => value.Tick);
-                return values.Select(value => value with
-                {
-                    Tick = ScaleTick(origin, value.Tick, factor)
-                }).ToArray();
-            });
+                long minimum = values.Min(static value => value.Value.Tick);
+                return value => value with { Tick = ScaleTick(minimum, value.Tick, factor) };
+            }, BoundedEventCollisionMode.Overwrite);
+        });
 
     public static IProjectEditCommand BatchEditDirectMidiNotes(
         MidoraId segmentId,
@@ -108,6 +95,27 @@ public static partial class ProjectDomainEditCommands
         {
             ArgumentNullException.ThrowIfNull(program);
             ValidateNoteBatchProgram(program);
+            if (noteIds.Count > 4096 || FindMidiSegment(project, segmentId).Segment.Notes.Count > 4096)
+                return ChangeBoundedDirectMidiNotes("Batch edit Direct MIDI Notes", segmentId, noteIds, bounds =>
+                {
+                    Stopwatch clock = Stopwatch.StartNew();
+                    return value =>
+                    {
+                        BatchEditValues calculated = program.Evaluate(new(
+                            Velocity: value.NoteOnVelocity, PointValue: 0, KeyNumber: value.Key,
+                            Gate: value.LengthTicks, Tick: value.StartTick,
+                            RelativeTick: checked(value.StartTick - bounds.MinimumTick)), clock, BatchExpressionTimeout);
+                        long? tick = RoundTickOrDiscard(calculated.Tick);
+                        double key = Math.Round(calculated.KeyNumber, MidpointRounding.AwayFromZero);
+                        if (tick is null || key is < 0 or > 127) return null;
+                        return value with
+                        {
+                            StartTick = tick.Value, Key = checked((int)key),
+                            LengthTicks = RoundAndClamp(calculated.Gate, 1, long.MaxValue),
+                            NoteOnVelocity = checked((int)RoundAndClamp(calculated.Velocity, 1, 127))
+                        };
+                    };
+                }).Prepare(project);
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             DirectNoteSelection[] selected = SelectDirectNotes(location.Segment, noteIds);
             DirectNoteValue[] old = selected.Select(value => SnapshotDirectNote(value.Note)).ToArray();
@@ -216,6 +224,25 @@ public static partial class ProjectDomainEditCommands
         {
             ArgumentNullException.ThrowIfNull(program);
             ValidatePointBatchProgram(program);
+            if (eventIds.Count > 4096 || FindMidiSegment(project, segmentId).Segment.ChannelEvents.Count > 4096)
+                return PrepareBoundedDirectMidiEventTransform(project, segmentId, eventIds, values =>
+                {
+                    int maximum = ValidateBoundedDirectEventLane(values);
+                    ValidateDirectRange(program, BatchEditField.PointValue, 0, maximum);
+                    long origin = values.Min(static value => value.Value.Tick);
+                    var clock = Stopwatch.StartNew();
+                    return value =>
+                    {
+                        DirectMidiEventValue old = new(value.Tick, value.Kind, value.Data1, value.Data2, value.Order);
+                        var calculated = program.Evaluate(new(0, DirectMidiEventPointValue(old), 0, 0,
+                            value.Tick, checked(value.Tick - origin)), clock, BatchExpressionTimeout);
+                        long? tick = RoundTickOrDiscard(calculated.Tick);
+                        if (!tick.HasValue) return null;
+                        var result = WithDirectMidiEventPointValue(old with { Tick = tick.Value },
+                            checked((int)RoundAndClamp(calculated.PointValue, 0, maximum)));
+                        return value with { Tick = result.Tick, Data1 = result.Data1, Data2 = result.Data2 };
+                    };
+                });
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             DirectEventSelection[] selected = SelectDirectEvents(location.Segment, eventIds);
             EnsureSameDirectMidiEventLane(selected);
@@ -341,6 +368,10 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(program);
             ValidateNoteBatchProgram(program);
             MidiSegmentSelection[] segments = SelectMidiSegments(project, segmentIds);
+            if (RequiresBoundedMidiContent(segments))
+                return PrepareBoundedMidiSegmentTransform(project, "Batch edit exposed MIDI Segment Notes", segments,
+                    SegmentSelectionTransformScope.ExposedContentOnly, MidiSegmentContentTransformKind.FlipVertical,
+                    1, 0, program);
             List<MidiSegmentDirectNoteSelection> selected = [];
             foreach (MidiSegmentSelection segment in segments)
             {
@@ -419,6 +450,8 @@ public static partial class ProjectDomainEditCommands
             if (!Enum.IsDefined(scope)) throw new ArgumentOutOfRangeException(nameof(scope));
             if (kind == MidiSegmentContentTransformKind.Scale) ValidateScaleFactor(factor);
             MidiSegmentSelection[] segments = SelectMidiSegments(project, segmentIds);
+            if (RequiresBoundedMidiContent(segments))
+                return PrepareBoundedMidiSegmentTransform(project, name, segments, scope, kind, factor, semitones);
             long selectionLeft = segments.Min(value => value.Segment.ProjectStartTick);
             long selectionRight = segments.Max(value => value.Segment.ProjectRange.EndTick);
             List<MidiSegmentWindowTransform> windows = [];

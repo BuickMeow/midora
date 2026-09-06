@@ -1836,6 +1836,7 @@ public sealed class PureMidiContentPack : IDisposable
         {
             ArgumentNullException.ThrowIfNull(excludedIds);
             ArgumentNullException.ThrowIfNull(destination);
+            int initialCount = destination.Count;
             PageDescriptor[] pages = NoteRangePages(
                     startTick,
                     endTick,
@@ -1850,9 +1851,16 @@ public sealed class PureMidiContentPack : IDisposable
                 DirectMidiNoteValue[] values = (DirectMidiNoteValue[])decoded[pageIndex];
                 IPureMidiOrdinalRangeSet? ordinalExclusions =
                     excludedIds as IPureMidiOrdinalRangeSet;
-                ArraySegment<int> pageOrdinals = ordinalExclusions?.GetOrdinalsInRange(
-                    page.FirstOrdinal,
-                    page.RecordCount) ?? default;
+                ArraySegment<int> pageOrdinals;
+                if (ordinalExclusions is IPureMidiCachedOrdinalRangeSet cachedOrdinals)
+                {
+                    if (!cachedOrdinals.TryGetOrdinalsInRange(page.FirstOrdinal, page.RecordCount, out pageOrdinals))
+                    {
+                        destination.RemoveRange(initialCount, destination.Count - initialCount);
+                        return false;
+                    }
+                }
+                else pageOrdinals = ordinalExclusions?.GetOrdinalsInRange(page.FirstOrdinal, page.RecordCount) ?? default;
                 int ordinalCursor = pageOrdinals.Offset;
                 for (int localIndex = 0; localIndex < values.Length; localIndex++)
                 {
@@ -2710,7 +2718,7 @@ public sealed class PureMidiContentPack : IDisposable
 
             // IDs without a resolved source ordinal are uncommon, but they must
             // still be checked exactly rather than being dropped from the view.
-            return ordinalExclusions.HasUnknownOrdinals && excludedIds.Contains(id);
+            return ordinalExclusions.ContainsUnknownOrdinalId(id);
         }
 
         private static bool MayContainRequestedId(

@@ -19,6 +19,18 @@ public sealed record ProjectEditExecution(
     bool Changed,
     CanonicalCompiledResult CompilationResult);
 
+public sealed class PreparedProjectHistoryTransition
+{
+    internal PreparedProjectHistoryTransition(ProjectDocumentSession document, long revision,
+        bool redo, string name, long targetStateId)
+    { Document = document; Revision = revision; IsRedo = redo; Name = name; TargetStateId = targetStateId; }
+    internal ProjectDocumentSession Document { get; }
+    internal long Revision { get; }
+    public bool IsRedo { get; }
+    public string Name { get; }
+    public long TargetStateId { get; }
+}
+
 public sealed class ProjectContentChangedEventArgs : EventArgs
 {
     public ProjectContentChangedEventArgs(ProjectChangeSet changes)
@@ -361,14 +373,17 @@ public sealed class ProjectDocumentSession : IDisposable
         {
             ThrowIfNotifying();
             string commandName = ValidateCommandName(command.Name, nameof(command));
-            IPreparedProjectEdit sourcePrepared = command.Prepare(Project)
-                ?? throw new InvalidOperationException(
-                    "A Project edit command returned no prepared edit.");
+            using BulkEditPreparationContext preparationContext = BulkEditPreparationContext.Enter(
+                BulkEditPreparationContext.Current?.Token ?? default, project: Project);
+            using BoundedEditResourceLease resourceLease = preparationContext.Resources.BeginResourceLease();
+            IPreparedProjectEdit? sourcePrepared = null;
             FrozenPreparedProjectEdit? prepared = null;
             try
             {
+                sourcePrepared = PrepareSourceEdit(command, Project, preparationContext.Token, null);
                 prepared = FreezePreparedEdit(Project, sourcePrepared);
-                sourcePrepared = null!;
+                sourcePrepared = null;
+                prepared.AttachResources(resourceLease.Complete(preparationContext.Token));
                 ProjectEditExecution result = CommitPrepared(commandName, prepared);
                 if (result.Changed) prepared = null;
                 return result;
@@ -406,22 +421,32 @@ public sealed class ProjectDocumentSession : IDisposable
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        var preparationProgress = progress is null ? null : new BulkEditProgressRange(progress, 0, 0.95);
+        using BulkEditPreparationContext preparationContext =
+            BulkEditPreparationContext.Enter(cancellationToken, preparationProgress, project: project);
+        using BoundedEditResourceLease resourceLease = preparationContext.Resources.BeginResourceLease();
         IPreparedProjectEdit? sourcePrepared = null;
+        FrozenPreparedProjectEdit? frozen = null;
         try
         {
-            sourcePrepared = command switch
-            {
-                IProgressReportingProjectEditCommand reporting =>
-                    reporting.Prepare(project, cancellationToken, progress),
-                ICancellableProjectEditCommand cancellable =>
-                    cancellable.Prepare(project, cancellationToken),
-                _ => command.Prepare(project)
-            };
-            if (sourcePrepared is null)
-            {
+            sourcePrepared = PrepareSourceEdit(command, project, cancellationToken, preparationProgress);
+            PreparedTimelineSelection? preparedSelection =
+                sourcePrepared is IPreparedTimelineSelectionEdit { HasPreparedSelection: true } selectionEdit
+                    ? selectionEdit.PreparedSelection : null;
+            if (command is ITimelineSelectionResultEditCommand && preparedSelection is null)
                 throw new InvalidOperationException(
-                    "A Project edit command returned no prepared edit.");
-            }
+                    "A Timeline selection command did not expose its frozen selection result.");
+            frozen = FreezePreparedEdit(project, sourcePrepared);
+            sourcePrepared = null;
+            // Spill retained result/history pages before taking the publication
+            // gate lock. Slow storage cannot block UI state reads, and Cancel
+            // still leaves Project, allocator, selection and history untouched.
+            frozen.AttachResources(resourceLease.Complete(cancellationToken,
+                progress is null ? null : new BulkEditWorkProgressRange(progress, 0.95, 0.04)));
+
+            // Ready refers to a fully built and flushed detached plan, never
+            // merely to the end of the selected-value transformation loop.
+            progress?.Report(new(TimelineEditPreparationPhase.Ready, 1, 1));
             cancellationToken.ThrowIfCancellationRequested();
 
             lock (_sync)
@@ -434,14 +459,8 @@ public sealed class ProjectDocumentSession : IDisposable
                     throw new InvalidOperationException(
                         "The Project changed while the edit was being prepared. No changes were applied.");
                 }
-                PreparedTimelineSelection? preparedSelection = command
-                    is ITimelineSelectionResultEditCommand
-                    ? (sourcePrepared as IPreparedTimelineSelectionEdit)?.PreparedSelection
-                        ?? throw new InvalidOperationException(
-                            "A Timeline selection command did not expose its frozen selection result.")
-                    : null;
-                FrozenPreparedProjectEdit prepared = FreezePreparedEdit(Project, sourcePrepared);
-                sourcePrepared = null;
+                FrozenPreparedProjectEdit prepared = frozen;
+                frozen = null;
                 return new(
                     _stagedEditOwner,
                     commandName,
@@ -453,8 +472,26 @@ public sealed class ProjectDocumentSession : IDisposable
         }
         finally
         {
+            frozen?.Dispose();
             DisposePrepared(sourcePrepared);
         }
+    }
+
+    private static IPreparedProjectEdit PrepareSourceEdit(IProjectEditCommand command,
+        MidoraProject project, CancellationToken cancellationToken,
+        IProgress<TimelineEditPreparationProgress>? progress)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        IPreparedProjectEdit prepared = command switch
+        {
+            IProgressReportingProjectEditCommand reporting => reporting.Prepare(project, cancellationToken, progress),
+            ICancellableProjectEditCommand cancellable => cancellable.Prepare(project, cancellationToken),
+            _ => command.Prepare(project)
+        } ?? throw new InvalidOperationException("A Project edit command returned no prepared edit.");
+        if (!cancellationToken.IsCancellationRequested) return prepared;
+        DisposePrepared(prepared);
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException("Unreachable cancellation state.");
     }
 
     public ProjectEditExecution ExecutePrepared(StagedProjectEdit staged)
@@ -538,6 +575,34 @@ public sealed class ProjectDocumentSession : IDisposable
     private static void DisposePrepared(IPreparedProjectEdit? prepared)
     {
         if (prepared is IDisposable disposable) disposable.Dispose();
+    }
+
+    public PreparedProjectHistoryTransition PrepareHistoryTransition(bool redo,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            int index = redo ? _cursor : _cursor - 1;
+            if ((uint)index >= (uint)_entries.Count)
+                throw new InvalidOperationException(redo ? "There is no Project edit to redo." : "There is no Project edit to undo.");
+            HistoryEntry entry = _entries[index];
+            cancellationToken.ThrowIfCancellationRequested();
+            return new(this, _publicationRevision, redo, entry.Name,
+                redo ? entry.AfterStateId : entry.BeforeStateId);
+        }
+    }
+
+    public CanonicalCompiledResult PublishHistoryTransition(PreparedProjectHistoryTransition transition)
+    {
+        ArgumentNullException.ThrowIfNull(transition);
+        lock (_sync)
+        {
+            if (!ReferenceEquals(transition.Document, this) || transition.Revision != _publicationRevision)
+                throw new InvalidOperationException("Project history changed while preparing Undo or Redo.");
+            return transition.IsRedo ? Redo() : Undo();
+        }
     }
 
     public CanonicalCompiledResult Undo()
@@ -708,16 +773,23 @@ public sealed class ProjectDocumentSession : IDisposable
         ProjectChangeSet changes) : IPreparedProjectEdit, IDisposable
     {
         private IPreparedProjectEdit? _source = source;
+        private BoundedEditPublicationResources? _resources;
 
         public bool HasChanges { get; } = source.HasChanges;
         public ProjectChangeSet Changes { get; } = changes;
-        public void Apply(MidoraProject project) => Current.Apply(project);
+        public void Apply(MidoraProject project)
+        {
+            Current.Apply(project);
+            _resources?.MarkPublished();
+        }
         public void Undo(MidoraProject project) => Current.Undo(project);
+        public void AttachResources(BoundedEditPublicationResources resources) => _resources = resources;
 
         public void Dispose()
         {
             IPreparedProjectEdit? current = Interlocked.Exchange(ref _source, null);
-            if (current is IDisposable disposable) disposable.Dispose();
+            try { if (current is IDisposable disposable) disposable.Dispose(); }
+            finally { Interlocked.Exchange(ref _resources, null)?.Dispose(); }
         }
 
         private IPreparedProjectEdit Current => _source

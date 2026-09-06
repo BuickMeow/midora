@@ -24,6 +24,71 @@ namespace Midora.Desktop.Tests;
 [Collection(DesktopSharedPresentationStateCollection.Name)]
 public sealed class WpfInteractionRegressionTests
 {
+    private static void AssertSharedTaskProgressStyleResolvesInPropertiesBamlAndRealMainWindowOverlayMarkup(
+        System.Windows.Application application)
+    {
+        // Reuse the theme test's one Application on its owning STA. WPF does
+        // not permit constructing a second Application after Shutdown.
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        XDocument appXaml = XDocument.Load(Path.Combine(FindRepositoryRoot(),
+            "src", "midora-desktop", "Midora.Desktop", "App.xaml"));
+        XElement applicationDictionary = appXaml.Root!
+            .Element(presentation + "Application.Resources")!
+            .Element(presentation + "ResourceDictionary")!;
+        XElement localEntries = new(presentation + "ResourceDictionary",
+            applicationDictionary.Elements()
+                .Where(element => element.Name != presentation + "ResourceDictionary.MergedDictionaries")
+                .Select(element => new XElement(element)));
+        localEntries.SetAttributeValue(XNamespace.Xmlns + "x", x.NamespaceName);
+        // Palette/icons/Controls are already installed in their actual order;
+        // parse only App.xaml's own entries against those application resources.
+        ResourceDictionary localResources = (ResourceDictionary)System.Windows.Markup.XamlReader.Parse(localEntries.ToString());
+        foreach (System.Collections.DictionaryEntry entry in localResources)
+            application.Resources[entry.Key] = entry.Value;
+        Style shared = Assert.IsType<Style>(application.Resources["TaskProgressBar"]);
+        ObjectPropertiesDialog properties = new(new ObjectPropertiesViewModel(), _ => true);
+        try
+        {
+            AssertProgressTemplate(Assert.IsType<Border>(properties.FindName("PropertyTaskOverlay")), shared);
+            XDocument mainXaml = XDocument.Load(Path.Combine(FindRepositoryRoot(),
+                "src", "midora-desktop", "Midora.Desktop", "MainWindow.xaml"));
+            XElement taskMarkup = new(mainXaml.Descendants(presentation + "Border")
+                .Single(element => (string?)element.Attribute(x + "Name") == "TaskLockOverlay"));
+            taskMarkup.SetAttributeValue(XNamespace.Xmlns + "x", x.NamespaceName);
+            // Event handlers require MainWindow's code-behind connector;
+            // this isolated template test verifies resources and controls.
+            foreach (XAttribute handler in taskMarkup.DescendantsAndSelf().Attributes("Click").ToArray())
+                handler.Remove();
+            Border taskOverlay = (Border)System.Windows.Markup.XamlReader.Parse(taskMarkup.ToString());
+            AssertProgressTemplate(taskOverlay, shared);
+        }
+        finally
+        {
+            properties.Close();
+            DrainDispatcher();
+        }
+
+        static void AssertProgressTemplate(Border overlay, Style shared)
+        {
+            ProgressBar progress = Assert.Single(LogicalDescendants(overlay).OfType<ProgressBar>());
+            Assert.Same(shared, progress.Style.BasedOn);
+            progress.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Visible);
+            Assert.True(progress.ApplyTemplate());
+            Assert.IsType<Border>(progress.Template.FindName("PART_Track", progress));
+            Assert.IsType<Border>(progress.Template.FindName("PART_Indicator", progress));
+        }
+        static IEnumerable<DependencyObject> LogicalDescendants(DependencyObject root)
+        {
+            foreach (object child in LogicalTreeHelper.GetChildren(root))
+            {
+                if (child is not DependencyObject value) continue;
+                yield return value;
+                foreach (var descendant in LogicalDescendants(value)) yield return descendant;
+            }
+        }
+    }
+
     [Fact]
     public void SingleLineCodeEditorPasteRemainsSafeInsideAnOpenUndoGroup()
     {
@@ -427,7 +492,7 @@ public sealed class WpfInteractionRegressionTests
                 new Uri("/Midora.Desktop.Presentation;component/Themes/WindowControlIcons.xaml", UriKind.Relative));
             ResourceDictionary palette = (ResourceDictionary)System.Windows.Application.LoadComponent(
                 new Uri("/Midora.Desktop.Presentation;component/Themes/Palette.xaml", UriKind.Relative));
-            System.Windows.Application application = new();
+            System.Windows.Application application = new() { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             application.Resources.MergedDictionaries.Add(palette);
             application.Resources.MergedDictionaries.Add(icons);
             application.Resources.MergedDictionaries.Add(windowControlIcons);
@@ -623,6 +688,7 @@ public sealed class WpfInteractionRegressionTests
                     Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment.PianoNote"]).Color);
                 Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.White"]);
                 Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.Black"]);
+                AssertSharedTaskProgressStyleResolvesInPropertiesBamlAndRealMainWindowOverlayMarkup(application);
             }
             finally
             {

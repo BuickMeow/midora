@@ -1,5 +1,7 @@
 using Midora.Application;
+using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
+using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
 using Xunit;
 
@@ -8,6 +10,323 @@ namespace Midora.Desktop.Tests;
 [Collection(DesktopSharedPresentationStateCollection.Name)]
 public sealed class Stage4DesktopSelectionIntegrationTests
 {
+    [Fact]
+    public void ColdSelectionFilteringCountsActualCompressedPagesBeforeBuilding()
+    {
+        using MidoraProject project = new(480);
+        var dense = new MetricsSource(4096, 1);
+        var denseIds = CompressedMidoraIdSet.Create(Enumerable.Range(1, 4096).Select(i => new MidoraId(i)));
+        var result = MainWindow.ReadSelectionInputMetrics(project, dense, denseIds,
+            id => (id.Value, id.Value + 1, 60, 100d), default,
+            id => id.Value != 4096, maximumBuilderWorkingBytes: 6144);
+        Assert.Equal(4095, result.Ids.Count);
+        Assert.False(result.Ids.Contains(new(4096)));
+
+        var sparse = new MetricsSource(3, 4096);
+        var sparseIds = CompressedMidoraIdSet.Create([new(1), new(4097), new(8193)]);
+        var unchanged = MainWindow.ReadSelectionInputMetrics(project, sparse, sparseIds,
+            id => (id.Value, id.Value + 1, 60, 100d), default,
+            maximumBuilderWorkingBytes: 1);
+        Assert.Same(sparseIds, unchanged.Ids);
+        Assert.Throws<InvalidOperationException>(() => MainWindow.ReadSelectionInputMetrics(
+            project, sparse, sparseIds, id => (id.Value, id.Value + 1, 60, 100d), default,
+            id => id.Value != 8193, maximumBuilderWorkingBytes: 6144));
+        Assert.Equal(3, sparseIds.Count);
+    }
+
+    private sealed class MetricsSource(int count, int stride) : ITimelineObjectSource<MidoraId>
+    {
+        public int Count => count;
+        public long SourceRevision => 0;
+        public int PageCapacity => 4096;
+        public MidoraId GetByOrdinal(int ordinal) => new(1L + ordinal * (long)stride);
+        public bool TryFindOrdinalById(MidoraId id, out int ordinal)
+        {
+            ordinal = checked((int)((id.Value - 1) / stride));
+            return id.Value > 0 && (id.Value - 1) % stride == 0 && ordinal < count;
+        }
+        public bool TryGetPageByOrdinal(int firstOrdinal, int requestedCount, out TimelineObjectPage<MidoraId> page)
+        {
+            if (firstOrdinal < 0 || firstOrdinal >= count) { page = default; return false; }
+            int length = Math.Min(Math.Min(requestedCount, PageCapacity), count - firstOrdinal);
+            page = new(SourceRevision, firstOrdinal,
+                Enumerable.Range(firstOrdinal, length).Select(GetByOrdinal).ToArray());
+            return true;
+        }
+        public int FindOrdinalAtOrAfterTick(long tick) => throw new NotSupportedException();
+        public IEnumerable<MidoraId> QueryTickRange(TimelineObjectRangeQuery query) => throw new NotSupportedException();
+        public void Prefetch(TimelineObjectRangeQuery query, CancellationToken cancellationToken = default) { }
+    }
+
+    [Fact]
+    public async Task ColdSelectionMetricsAreReadOnceAndCancellationDoesNotPublishASelection()
+    {
+        var (session, workspace, segment, first) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        segment.Notes.Add(new(session.Project!) { StartTick = 5, LengthTicks = 20, Note = 12, Velocity = 9 });
+        segment.Notes.Add(new(session.Project!) { StartTick = 80, LengthTicks = 200, Note = 100, Velocity = 126 });
+        var source = segment.Notes.CreateQuerySnapshot();
+        var ids = CompressedMidoraIdSet.Create(segment.Notes.Select(value => value.Id));
+        int reads = 0;
+        var result = await Task.Run(() => MainWindow.ReadSelectionInputMetrics(session.Project!, source, ids, value =>
+        {
+            reads++;
+            return (value.StartTick, value.StartTick + value.LengthTicks, value.Note, (double)value.Velocity);
+        }, default));
+        Assert.Equal(3, reads);
+        Assert.Equal((5L, 280L, 12, 100, 9d, 126d, 200L),
+            (result.MinimumTick, result.MaximumTick, result.MinimumPitch, result.MaximumPitch,
+                result.MinimumValue, result.MaximumValue, result.MaximumLength));
+        Assert.True(ids.SetEquals(result.Ids));
+        Assert.Same(ids, result.Ids);
+        using var cancellation = new CancellationTokenSource();
+        Assert.ThrowsAny<OperationCanceledException>(() => MainWindow.ReadSelectionInputMetrics(session.Project!, source, ids, value =>
+        {
+            cancellation.Cancel();
+            return (value.StartTick, value.StartTick + value.LengthTicks, value.Note, (double)value.Velocity);
+        }, cancellation.Token));
+        Assert.Equal([first.Id], workspace.Selection.Ids);
+        Assert.Equal(3, segment.Notes.Count);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemEditKind.Move)]
+    [InlineData(TimelineItemEditKind.ResizeEnd)]
+    public async Task ArrangementGesturePreparationUsesFrozenIdsAndExistingAtomicCommands(TimelineItemEditKind kind)
+    {
+        var (session, _, segment, _) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        var target = new ArrangementLaneDescriptor(1, ArrangementLaneKind.LogicalTrack, track.Id,
+            null, 0, true, false, true);
+        var command = new ArrangementGestureEditCommand(
+            CompressedMidoraIdSet.Create([segment.Id]), segment.Id, segment.ProjectStartTick,
+            kind, false, 48, 48, 1, target);
+        using StagedProjectEdit prepared = session.Document!.PrepareEdit(command);
+        Assert.Equal((0L, 480L), (segment.ProjectStartTick, segment.LengthTicks));
+        session.Document.ExecutePrepared(prepared);
+        Segment current = session.Project.Tracks.SelectMany(value => value.Segments).Single();
+        Assert.Equal(kind == TimelineItemEditKind.Move ? (48L, 480L) : (0L, 528L),
+            (current.ProjectStartTick, current.LengthTicks));
+        session.Document.Undo();
+        Segment restored = session.Project.Tracks.SelectMany(value => value.Segments).Single();
+        Assert.Equal((0L, 480L), (restored.ProjectStartTick, restored.LengthTicks));
+    }
+
+    [Fact]
+    public async Task ArrangementGestureDirectoryScanCanCancelBeforeAllocatingOrPublishingSelectionArrays()
+    {
+        var (session, _, segment, _) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        for (int index = 0; index < 5000; index++)
+            track.Segments.Add(new(session.Project!) { ProjectStartTick = 1000 + index * 10L, LengthTicks = 5 });
+        var root = session.Project.Tracks;
+        long nextId = session.Project.NextStableId;
+        int history = session.Document!.History.Count;
+        using var cancellation = new CancellationTokenSource();
+        var progress = new InlinePropertiesProgress(_ => cancellation.Cancel());
+        var command = new ArrangementGestureEditCommand(
+            CompressedMidoraIdSet.Create([segment.Id]), segment.Id, segment.ProjectStartTick,
+            TimelineItemEditKind.ResizeEnd, false, 0, 1, 1, null);
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+            session.Document.PrepareEdit(command, cancellation.Token, progress));
+        Assert.Same(root, session.Project.Tracks);
+        Assert.Equal(nextId, session.Project.NextStableId);
+        Assert.Equal(history, session.Document.History.Count);
+        Assert.Equal(480, segment.LengthTicks);
+    }
+
+    [Fact]
+    public async Task FullyCollidingPastePublishesEmptySelection()
+    {
+        var (session, workspace, segment, first) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        workspace.Selection.Replace(first.Id, new(WorkspaceTimelineSelectionKind.LogicalNote, segment.Id));
+        session.RefreshWorkspaceSelection(workspace);
+        using var payload = ProjectObjectClipboard.CopyLogicalNotes(session.Document!, segment.Id, [first.Id]);
+        var command = ProjectObjectClipboard.CreatePasteLogicalNotesCommand(session.Document!, payload, segment.Id, first.StartTick);
+        using var commandLifetime = command as IDisposable;
+        using StagedProjectEdit staged = session.PrepareProjectEdit(command, workspace);
+        Assert.NotNull(staged.PreparedSelection);
+        Assert.Empty(staged.PreparedSelection.ResultSelectionIds);
+        session.ExecutePreparedPreservingWorkspaceSelection(staged, workspace);
+        Assert.Empty(workspace.Selection.Ids);
+        Assert.Single(segment.Notes);
+        Assert.Single(session.Project!.Tracks.SelectMany(track => track.Segments)
+            .Single(value => value.Id == segment.Id).Notes);
+    }
+
+    [Fact]
+    public async Task UnchangedSplitPublishesPreparedSelectionWithoutAddingHistory()
+    {
+        var (session, workspace, segment, first) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        workspace.Selection.Replace(first.Id, new(WorkspaceTimelineSelectionKind.LogicalNote, segment.Id));
+        session.RefreshWorkspaceSelection(workspace);
+        using StagedProjectEdit staged = session.PrepareProjectEdit(
+            ProjectDomainEditCommands.SplitLogicalNotes(segment.Id, [first.Id],
+                new NoteSplitOptions
+                {
+                    Mode = NoteSplitMode.FixedPieceLength,
+                    FixedPieceLengthTicks = 1000
+                }), workspace);
+        Assert.NotNull(staged.PreparedSelection);
+        Assert.Equal([first.Id], staged.PreparedSelection.ResultSelectionIds);
+        workspace.Selection.Clear();
+        long state = session.Document!.CurrentStateId;
+        int historyCount = session.Document.History.Count;
+        bool modified = session.Document.IsModified;
+        ProjectEditExecution result = session.ExecutePreparedPreservingWorkspaceSelection(staged, workspace);
+        Assert.False(result.Changed);
+        Assert.Equal([first.Id], workspace.Selection.Ids);
+        Assert.Equal(state, session.Document.CurrentStateId);
+        Assert.Equal(historyCount, session.Document.History.Count);
+        Assert.Equal(modified, session.Document.IsModified);
+    }
+
+    [Fact]
+    public async Task BulkPropertiesReadsFrozenSelectionOffThreadAndCanCancel()
+    {
+        var (session, workspace, segment, first) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        for (int index = 0; index < 5000; index++)
+            segment.Notes.Add(new(session.Project!)
+            {
+                StartTick = 1000 + index, LengthTicks = 12, Note = 62, Velocity = 100
+            });
+        workspace.Selection.ApplyRange(segment.Notes.Select(note => note.Id), WorkspaceSelectionRangeMode.Replace,
+            new(WorkspaceTimelineSelectionKind.LogicalNote, segment.Id));
+        ObjectPropertiesSelectionContext frozen = ObjectPropertiesSelectionContext.Capture(workspace);
+        workspace.Selection.Replace(first.Id);
+        ObjectPropertiesViewModel properties = await Task.Run(() =>
+            ObjectPropertiesProjection.ReadMultiSelection(session.Project!, frozen, default, null));
+        Assert.Equal("5001 Logical Notes", properties.Title);
+        Assert.Equal("Mixed", Assert.Single(properties.Fields, field => field.Key == "batch.note.number").Value);
+        using var cancellation = new CancellationTokenSource();
+        var progress = new InlinePropertiesProgress(_ => cancellation.Cancel());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Task.Run(() =>
+            ObjectPropertiesProjection.ReadMultiSelection(session.Project!, frozen, cancellation.Token, progress)));
+        Assert.Equal([first.Id], workspace.Selection.Ids);
+        Assert.Equal(5001, segment.Notes.Count);
+    }
+
+    private sealed class InlinePropertiesProgress(Action<TimelineEditPreparationProgress> action)
+        : IProgress<TimelineEditPreparationProgress>
+    {
+        public void Report(TimelineEditPreparationProgress value) => action(value);
+    }
+
+    [Fact]
+    public async Task PreparationReportsFinalReadyOnlyAfterSelectionProjection()
+    {
+        var (session, workspace, segment, note) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        List<TimelineEditPreparationProgress> updates = [];
+        using StagedProjectEdit staged = session.PrepareProjectEdit(
+            ProjectDomainEditCommands.SplitLogicalNotes(segment.Id, [note.Id],
+                new NoteSplitOptions { Mode = NoteSplitMode.FixedPieceLength, FixedPieceLengthTicks = 40 }),
+            workspace, progress: new InlinePropertiesProgress(updates.Add));
+        Assert.True(session.TryGetPreparedWorkspaceSelectionProjection(staged, out _));
+        Assert.Single(updates, value => value.Phase == TimelineEditPreparationPhase.Ready);
+        Assert.Equal(TimelineEditPreparationPhase.Ready, updates[^1].Phase);
+        Assert.Equal(1, updates[^1].OverallFraction);
+        Assert.All(updates.Take(updates.Count - 1), value => Assert.True(value.OverallFraction < 1));
+        Assert.Contains(updates, value => value.IsIndeterminate && value.OverallFraction == 0.97);
+    }
+
+    [Fact]
+    public async Task CancelAtSelectionProjectionDoesNotReportReadyOrPublishSelection()
+    {
+        var (session, workspace, segment, note) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        using var cancellation = new CancellationTokenSource();
+        List<TimelineEditPreparationProgress> updates = [];
+        var before = workspace.Selection.SharedIds;
+        int history = session.Document!.History.Count;
+        var progress = new InlinePropertiesProgress(value =>
+        {
+            updates.Add(value);
+            if (value.IsIndeterminate && value.OverallFraction == 0.97) cancellation.Cancel();
+        });
+        Assert.ThrowsAny<OperationCanceledException>(() => session.PrepareProjectEdit(
+            ProjectDomainEditCommands.SplitLogicalNotes(segment.Id, [note.Id],
+                new NoteSplitOptions { Mode = NoteSplitMode.FixedPieceLength, FixedPieceLengthTicks = 40 }),
+            workspace, cancellation.Token, progress));
+        Assert.DoesNotContain(updates, value => value.Phase == TimelineEditPreparationPhase.Ready);
+        Assert.Same(before, workspace.Selection.SharedIds);
+        Assert.Equal(history, session.Document.History.Count);
+        Assert.Single(segment.Notes);
+    }
+
+    [Fact]
+    public async Task ClipboardPastePublishesSurvivingSelectionWithoutACommandSelectionFacet()
+    {
+        var (session, workspace, segment, first) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        LogicalNote second = new(session.Project!) { StartTick = 48, LengthTicks = 1, Note = 62, Velocity = 100 };
+        LogicalNote blocker = new(session.Project!) { StartTick = 48, LengthTicks = 1, Note = 60, Velocity = 100 };
+        segment.Notes.Add(second);
+        segment.Notes.Add(blocker);
+        workspace.Selection.ApplyRange([first.Id, second.Id], WorkspaceSelectionRangeMode.Replace,
+            new(WorkspaceTimelineSelectionKind.LogicalNote, segment.Id));
+        session.RefreshWorkspaceSelection(workspace);
+        var originalSelection = workspace.Selection.SharedIds;
+        using var payload = ProjectObjectClipboard.CopyLogicalNotes(session.Document!, segment.Id,
+            workspace.Selection.SharedIds);
+        var command = ProjectObjectClipboard.CreatePasteLogicalNotesCommand(session.Document!, payload, segment.Id, 48);
+        using var commandLifetime = command as IDisposable;
+        using StagedProjectEdit prepared = session.PrepareProjectEdit(command, workspace);
+        Assert.NotNull(prepared.PreparedSelection);
+        MidoraId survivor = Assert.Single(prepared.PreparedSelection.ResultSelectionIds);
+        session.ExecutePreparedPreservingWorkspaceSelection(prepared, workspace);
+        Assert.Equal([survivor], workspace.Selection.Ids);
+        Segment result = session.Project!.Tracks.SelectMany(track => track.Segments).Single(value => value.Id == segment.Id);
+        LogicalNote pasted = Assert.Single(result.Notes, note => note.Id == survivor);
+        Assert.Equal((72L, 62), (pasted.StartTick, pasted.Note));
+        Assert.Contains(result.Notes, note => note.Id == blocker.Id);
+        session.Undo();
+        Assert.Equal(originalSelection, workspace.Selection.SharedIds);
+        session.Redo();
+        Assert.Equal([survivor], workspace.Selection.Ids);
+    }
+
+    [Fact]
+    public async Task LargePropertiesTickAndKeyAreResolvedTogetherBeforeCollisions()
+    {
+        var (session, workspace, segment, existing) = await CreateSessionAsync();
+        await using var ownedSession = session;
+        var ids = new List<MidoraId>();
+        for (int index = 0; index < 4100; index++)
+        {
+            LogicalNote note = new(session.Project!)
+            {
+                StartTick = 1000 + index, LengthTicks = 1, Note = existing.Note, Velocity = 100
+            };
+            segment.Notes.Add(note);
+            ids.Add(note.Id);
+        }
+        workspace.Selection.ApplyRange(ids, WorkspaceSelectionRangeMode.Replace,
+            new(WorkspaceTimelineSelectionKind.LogicalNote, segment.Id));
+        var command = ObjectPropertiesProjection.CreateEditCommand(session.Project!, workspace,
+            new Dictionary<string, string>
+            {
+                ["batch.note.start"] = existing.StartTick.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["batch.note.number"] = "61"
+            });
+        using StagedProjectEdit staged = session.PrepareProjectEdit(command, workspace);
+        Assert.Equal(4101, segment.Notes.Count);
+        session.ExecutePreparedPreservingWorkspaceSelection(staged, workspace);
+        Segment result = session.Project!.Tracks.SelectMany(track => track.Segments).Single(value => value.Id == segment.Id);
+        Assert.Equal(2, result.Notes.Count);
+        Assert.Contains(result.Notes, value => value.Id == existing.Id && value.Note == 60);
+        LogicalNote winner = Assert.Single(result.Notes, value => value.Id != existing.Id);
+        Assert.Equal(61, winner.Note);
+        Assert.Equal(existing.StartTick, winner.StartTick);
+        session.Undo();
+        Assert.Equal(4101, session.Project.Tracks.SelectMany(track => track.Segments).Single(value => value.Id == segment.Id).Notes.Count);
+    }
+
     [Fact]
     public async Task PreparedSplitPublishesResultSelectionAndUndoRedoRestoreBothSides()
     {

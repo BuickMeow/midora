@@ -54,6 +54,7 @@ internal sealed class CompactMidoraIdList : IReadOnlyList<MidoraId>
     internal static IReadOnlyList<MidoraId> Freeze(IReadOnlyList<MidoraId> values)
     {
         ArgumentNullException.ThrowIfNull(values);
+        if (values is BoundedImmutableValueSource<MidoraId> or ConcatenatedList) return values;
         if (values is CompactMidoraIdList compact) return compact;
         if (values.Count == 0) return EmptyInstance;
 
@@ -129,7 +130,7 @@ internal sealed class CompactMidoraIdList : IReadOnlyList<MidoraId>
             1 => Freeze(parts[0]),
             _ when parts.All(static value => value is CompactMidoraIdList) =>
                 ConcatenateCompact(parts.Cast<CompactMidoraIdList>().ToArray()),
-            _ => Freeze(new ConcatenatedList(parts))
+            _ => new ConcatenatedList(parts.Select(Freeze).ToArray())
         };
     }
 

@@ -58,19 +58,24 @@ public sealed class EventInstrumentPreRollPropertiesTests
             workspace,
             [templateLength, preRoll, loopStart, loopEnd, isolation]);
 
-        Assert.Equal(240, instrument.TemplateLengthTicks);
-        Assert.Equal(120, instrument.PreRollTicks);
-        Assert.Equal(10, instrument.LoopStartTick);
-        Assert.Equal(240, instrument.LoopEndTick);
-        Assert.True(instrument.RequiresChannelIsolation);
+        EventInstrument published = Assert.Single(session.Project.EventInstruments);
+        Assert.Equal(instrument.Id, published.Id);
+        Assert.Equal(240, published.TemplateLengthTicks);
+        Assert.Equal(120, published.PreRollTicks);
+        Assert.Equal(10, published.LoopStartTick);
+        Assert.Equal(240, published.LoopEndTick);
+        Assert.True(published.RequiresChannelIsolation);
         Assert.Equal(historyCount + 1, session.Document.History.Count);
 
         session.Document.Undo();
 
+        Assert.Same(instrument, Assert.Single(session.Project.EventInstruments));
         Assert.Equal(480, instrument.TemplateLengthTicks);
         Assert.Equal(360, instrument.PreRollTicks);
         Assert.Equal(0, instrument.LoopStartTick);
         Assert.Equal(480, instrument.LoopEndTick);
         Assert.False(instrument.RequiresChannelIsolation);
+        session.Document.Redo();
+        Assert.Same(published, Assert.Single(session.Project.EventInstruments));
     }
 }

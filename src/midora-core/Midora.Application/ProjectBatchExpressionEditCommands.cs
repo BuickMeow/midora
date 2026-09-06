@@ -17,6 +17,19 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(program);
             ValidateNoteBatchProgram(program);
             SegmentLocation location = FindSegment(project, segmentId);
+            if (noteIds.Count >= BoundedNoteThreshold || location.Segment.Notes.Count >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalNotes(project, location, noteIds, values =>
+                {
+                    long origin = values.Min(v => v.Value.StartTick);
+                    Stopwatch timer = Stopwatch.StartNew();
+                    return value =>
+                    {
+                        var result = EvaluateLogicalNote(new(value.StartTick, value.LengthTicks, value.Note, value.Velocity), origin, program, timer);
+                        var changed = result.Replacement;
+                        return result.Discard ? null : value with { StartTick = changed.StartTick, LengthTicks = changed.LengthTicks,
+                            Note = changed.Note, Velocity = changed.Velocity };
+                    };
+                }, expandWindow: true);
             SelectedLogicalNote[] selected = SelectLogicalNotes(location.Segment, noteIds);
             LogicalNoteValue[] old = selected.Select(value => Snapshot(value.Note)).ToArray();
             long relativeOrigin = old.Min(value => value.StartTick);
@@ -59,6 +72,20 @@ public static partial class ProjectDomainEditCommands
             ValidateNoteBatchProgram(program);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold)
+                return PrepareBoundedTemplateNotes(project, instrument, voice, noteIds, values =>
+                {
+                    long origin = values.Min(v => v.Value.Tick);
+                    Stopwatch timer = Stopwatch.StartNew();
+                    return value =>
+                    {
+                        var result = EvaluateTemplateNote(new(value.Kind, value.Tick, value.LengthTicks,
+                            value.Number, value.Value, value.SecondaryValue, value.HasBankMsb, value.HasBankLsb, value.FollowPitchDelta), origin, program, timer);
+                        var changed = result.Replacement;
+                        return result.Discard ? null : value with { Tick = changed.Tick, LengthTicks = changed.LengthTicks,
+                            Number = changed.Number, Value = changed.Value };
+                    };
+                });
             HashSet<MidoraId> requested = ValidateBatchIds(noteIds, nameof(noteIds), "Template Note");
             TemplateEventTransformEntry[] selected = voice.Events
                 .ResolveByIdsWithIndicesInCollectionOrder(requested)
@@ -113,6 +140,9 @@ public static partial class ProjectDomainEditCommands
             {
                 throw new ArgumentException("Every selected ID must identify a Segment.", nameof(segmentIds));
             }
+            if (RequiresBoundedLogicalSegmentContent(segments))
+                return PrepareBoundedLogicalSegmentTransform(project, segments, null,
+                    SegmentSelectionTransformScope.ExposedContentOnly, program: program);
             List<(SegmentTransformEntry Segment, SelectedLogicalNote Note)> exposed = [];
             foreach (SegmentTransformEntry segment in segments)
             {
@@ -172,12 +202,17 @@ public static partial class ProjectDomainEditCommands
         MidoraId laneId,
         IReadOnlyCollection<MidoraId> pointIds,
         BatchEditExpressionProgram program) =>
+        pointIds.Count >= BoundedPointThreshold
+        ? BoundedLogicalPoints("Batch edit logical parameter points", segmentId, laneId, pointIds, BoundedPointOperation.Batch, program: program)
+        :
         Command("Batch edit logical parameter points", project =>
         {
             ArgumentNullException.ThrowIfNull(program);
             ValidatePointBatchProgram(program);
             SegmentLocation location = FindSegment(project, segmentId);
             LogicalParameterLane lane = FindLogicalParameterLane(location.Segment, laneId);
+            if (lane.Points.Count >= BoundedPointThreshold)
+                return BoundedLogicalPoints("Batch edit logical parameter points", segmentId, laneId, pointIds, BoundedPointOperation.Batch, program: program).Prepare(project);
             LogicalParameterDefinition definition = FindBoundLogicalParameter(
                 project,
                 location.Track,
@@ -237,6 +272,10 @@ public static partial class ProjectDomainEditCommands
         IReadOnlyCollection<MidoraId> eventIds,
         MidiValueTarget target,
         BatchEditExpressionProgram program) =>
+        eventIds.Count >= BoundedPointThreshold
+        ? BoundedTemplatePoints("Batch edit SubVoice event points", eventInstrumentId, subVoiceId,
+            eventIds, BoundedPointOperation.Batch, target, program: program)
+        :
         Command("Batch edit SubVoice event points", project =>
         {
             ArgumentNullException.ThrowIfNull(program);
@@ -245,6 +284,8 @@ public static partial class ProjectDomainEditCommands
             ValidateDirectRange(program, BatchEditField.PointValue, minimum, maximum);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (voice.Events.Count >= BoundedPointThreshold)
+                return BoundedTemplatePoints("Batch edit SubVoice event points", eventInstrumentId, subVoiceId, eventIds, BoundedPointOperation.Batch, target, program: program).Prepare(project);
             HashSet<MidoraId> requested = ValidateBatchIds(eventIds, nameof(eventIds), "Template Event");
             TemplateEventTransformEntry[] selected = voice.Events
                 .ResolveByIdsWithIndicesInCollectionOrder(requested)

@@ -24,7 +24,8 @@ internal static class ProjectTimelineOwnerRootClone
             ContentOffsetTick = source.ContentOffsetTick
         };
 
-        result.Notes.AddRange(CloneLogicalNotes());
+        cancellationToken.ThrowIfCancellationRequested();
+        result.Notes.AdoptSnapshot(project, source.Notes.CreateQuerySnapshot());
         for (int index = 0; index < source.ParameterLanes.Count; index++)
         {
             CheckCancellation(index, cancellationToken);
@@ -33,26 +34,10 @@ internal static class ProjectTimelineOwnerRootClone
             {
                 ParameterId = lane.ParameterId
             };
-            laneCopy.Points.AddRange(CloneCurvePoints(lane.Points, project, cancellationToken));
+            laneCopy.Points.AdoptSnapshot(project, lane.Points.CreateQuerySnapshot());
             result.ParameterLanes.Add(laneCopy);
         }
         return result;
-
-        IEnumerable<LogicalNote> CloneLogicalNotes()
-        {
-            int index = 0;
-            foreach (LogicalNote note in source.Notes)
-            {
-                CheckCancellation(index++, cancellationToken);
-                yield return new LogicalNote(project, note.Id)
-                {
-                    StartTick = note.StartTick,
-                    LengthTicks = note.LengthTicks,
-                    Note = note.Note,
-                    Velocity = note.Velocity
-                };
-            }
-        }
     }
 
     public static MidiSegment CloneDirectMidiSegment(
@@ -104,41 +89,18 @@ internal static class ProjectTimelineOwnerRootClone
             result.EventMappings.Add(mappingCopy);
         }
 
-        result.Events.AddRangeWithoutOptionalMappingCreation(CloneTemplateEvents());
+        cancellationToken.ThrowIfCancellationRequested();
+        result.Events.AdoptSnapshot(project, source.Events.CreateQuerySnapshot());
         for (int index = 0; index < source.Curves.Count; index++)
         {
             CheckCancellation(index, cancellationToken);
             ValueCurve curve = source.Curves[index];
             ValueCurve curveCopy = new(project, curve.Id) { Target = curve.Target };
             CopyTargetSettings(curve.TargetSettings, curveCopy.TargetSettings);
-            curveCopy.Points.AddRange(CloneCurvePoints(
-                curve.Points,
-                project,
-                cancellationToken));
+            curveCopy.Points.AdoptSnapshot(project, curve.Points.CreateQuerySnapshot());
             result.Curves.Add(curveCopy);
         }
         return result;
-
-        IEnumerable<TemplateEvent> CloneTemplateEvents()
-        {
-            int index = 0;
-            foreach (TemplateEvent value in source.Events)
-            {
-                CheckCancellation(index++, cancellationToken);
-                yield return new TemplateEvent(project, value.Id)
-                {
-                    Kind = value.Kind,
-                    Tick = value.Tick,
-                    LengthTicks = value.LengthTicks,
-                    Number = value.Number,
-                    Value = value.Value,
-                    SecondaryValue = value.SecondaryValue,
-                    HasBankMsb = value.HasBankMsb,
-                    HasBankLsb = value.HasBankLsb,
-                    FollowPitchDelta = value.FollowPitchDelta
-                };
-            }
-        }
     }
 
     private static IEnumerable<CurvePoint> CloneCurvePoints(

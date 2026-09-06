@@ -19,6 +19,8 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(noteIds);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold)
+                return PrepareBoundedTemplateDuplicate(project, instrument, voice, noteIds, newEarliestTick, pitchDelta);
             HashSet<MidoraId> requested = ValidateBatchIds(noteIds, nameof(noteIds), "Template Note");
             TemplateEvent[] notes = ResolveTemplateEventsByIds(voice.Events, noteIds);
             if (notes.Length != requested.Count || notes.Any(item => item.Kind != TemplateEventKind.Note))
@@ -93,6 +95,14 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(noteIds);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold)
+                return PrepareBoundedTemplateNotes(project, instrument, voice, noteIds, _ => value =>
+                {
+                    int pitch = checked(value.Number + pitchDelta);
+                    long tick = checked(value.Tick + tickDelta);
+                    ValidateLogicalNote(tick, value.LengthTicks, pitch is < 0 or > 127 ? 0 : pitch, value.Value);
+                    return pitch is < 0 or > 127 ? null : value with { Tick = tick, Number = pitch };
+                }, collisions: tickDelta != 0 || pitchDelta != 0);
             HashSet<MidoraId> requested = ValidateBatchIds(noteIds, nameof(noteIds), "Template Note");
             TemplateEvent[] notes = ResolveTemplateEventsByIds(voice.Events, noteIds);
             (TemplateEvent Note, int Index)[] selected = notes
@@ -243,6 +253,17 @@ public static partial class ProjectDomainEditCommands
             ArgumentNullException.ThrowIfNull(noteIds);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (noteIds.Count >= BoundedNoteThreshold || voice.Events.Count >= BoundedNoteThreshold)
+                return PrepareBoundedTemplateNotes(project, instrument, voice, noteIds, selected =>
+                {
+                    long delta = startDelta < 0 ? Math.Max(startDelta, -selected.Min(v => v.Value.Tick)) : startDelta;
+                    return value =>
+                    {
+                        var result = AdjustLogicalNoteEdgesSaturated(new(value.Tick, value.LengthTicks, value.Number, value.Value),
+                            delta, endDelta, minimumLengthTicks);
+                        return value with { Tick = result.StartTick, LengthTicks = result.LengthTicks };
+                    };
+                }, collisions: startDelta != 0);
             HashSet<MidoraId> requested = ValidateBatchIds(noteIds, nameof(noteIds), "Template Note");
             TemplateEvent[] notes = ResolveTemplateEventsByIds(voice.Events, noteIds);
             if (notes.Length != requested.Count || notes.Any(item => item.Kind != TemplateEventKind.Note))

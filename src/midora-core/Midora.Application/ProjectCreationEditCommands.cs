@@ -180,6 +180,8 @@ public static partial class ProjectDomainEditCommands
                     trackIndex++;
                 }
             }
+            if (source.Segments.Sum(LogicalSegmentRecordCount) >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalTrackCopy(project, source, copyName, shareInstrumentState, trackIndex);
             return DeferredCreate(
                 EverythingChange(),
                 value =>
@@ -303,11 +305,10 @@ public static partial class ProjectDomainEditCommands
                 EverythingChange(),
                 value =>
                 {
-                    EventInstrument copy = EventInstrumentLibrary.Duplicate(
+                    EventInstrument copy = CopyBoundedEventInstrument(
                         value,
-                        source.Id,
+                        source,
                         normalized);
-                    RemoveLaterExactTimelineCollisions(copy);
                     Move(value.EventInstruments, copy, definitionIndex);
                     return copy;
                 },
@@ -364,6 +365,8 @@ public static partial class ProjectDomainEditCommands
                 source.Segment.LengthTicks,
                 source.Segment.ContentOffsetTick);
             EnsureNoSegmentOverlap(target, null, newProjectStartTick, source.Segment.LengthTicks);
+            if (LogicalSegmentRecordCount(source.Segment) >= BoundedNoteThreshold)
+                return PrepareBoundedSegmentCopies(project, [new(source, target, newProjectStartTick)]);
             return DeferredCreate(
                 TrackChange(source.Track.Id, target.Id),
                 value =>
@@ -388,6 +391,8 @@ public static partial class ProjectDomainEditCommands
             {
                 throw new ArgumentOutOfRangeException(nameof(projectSplitTick));
             }
+            if (LogicalSegmentRecordCount(source.Segment) >= BoundedNoteThreshold)
+                return PrepareBoundedLogicalSegmentSplit(project, source, projectSplitTick);
             SegmentSplitResult? result = null;
             return Prepared(
                 hasChanges: true,

@@ -20,6 +20,7 @@ internal sealed class PersistentTimelineSequence<TValue>
     }
 
     public int Count => _root?.Count ?? 0;
+    public bool UsesExternalStorage => _root?.UsesExternalStorage ?? false;
     public ulong ContentFingerprint => (_root?.Aggregate ?? default).ToFingerprint();
 
     public static PersistentTimelineSequence<TValue> Empty(
@@ -69,6 +70,27 @@ internal sealed class PersistentTimelineSequence<TValue>
         }
         return new(BuildBalanced(leaves, 0, leaves.Count), getFingerprint);
     }
+
+    public static PersistentTimelineSequence<TValue> CreateSourceBacked(
+        IImmutableTimelineValueSource<TValue> source,
+        Func<TValue, ulong> getFingerprint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (source.PageCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(source));
+        List<Leaf> leaves = new((source.Count + LeafCapacity - 1) / LeafCapacity);
+        for (int first = 0; first < source.Count; first += LeafCapacity)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            leaves.Add(new(new TimelineValueBuffer<TValue>(source, first,
+                Math.Min(LeafCapacity, source.Count - first)), getFingerprint));
+        }
+        return new(BuildBalanced(leaves, 0, leaves.Count), getFingerprint);
+    }
+
+    internal static PersistentTimelineSequence<TValue> CreateFromLeaves(
+        List<Leaf> leaves, Func<TValue, ulong> getFingerprint) =>
+        new(BuildBalanced(leaves, 0, leaves.Count), getFingerprint);
 
     public TValue this[int index]
     {
@@ -574,12 +596,18 @@ internal sealed class PersistentTimelineSequence<TValue>
 
         public int Count { get; }
         public int Height { get; }
+        public abstract bool UsesExternalStorage { get; }
         public PagedTimelineSequenceFingerprintAggregate Aggregate { get; }
     }
 
     internal sealed class Leaf : Node
     {
         public Leaf(TValue[] values, Func<TValue, ulong> getFingerprint)
+            : this(new TimelineValueBuffer<TValue>(values), getFingerprint)
+        {
+        }
+
+        public Leaf(TimelineValueBuffer<TValue> values, Func<TValue, ulong> getFingerprint)
             : base(values.Length, 1, AggregateValues(values, getFingerprint))
         {
             BaseValues = values;
@@ -587,7 +615,7 @@ internal sealed class PersistentTimelineSequence<TValue>
         }
 
         internal Leaf(
-            TValue[] baseValues,
+            TimelineValueBuffer<TValue> baseValues,
             LeafReplacement[] replacements,
             PagedTimelineSequenceFingerprintAggregate aggregate)
             : base(baseValues.Length, 1, aggregate)
@@ -596,13 +624,14 @@ internal sealed class PersistentTimelineSequence<TValue>
             Replacements = replacements;
         }
 
-        public TValue[] BaseValues { get; }
+        public TimelineValueBuffer<TValue> BaseValues { get; }
+        public override bool UsesExternalStorage => BaseValues.UsesExternalStorage;
         public IReadOnlyList<LeafReplacement> Replacements { get; }
         public TValue[] Values
         {
             get
             {
-                if (Replacements.Count == 0) return BaseValues;
+                if (Replacements.Count == 0) return BaseValues.ToArray();
                 TValue[] result = [.. BaseValues];
                 foreach (LeafReplacement replacement in Replacements)
                     result[replacement.Index] = replacement.Value;
@@ -643,7 +672,7 @@ internal sealed class PersistentTimelineSequence<TValue>
         }
 
         private static PagedTimelineSequenceFingerprintAggregate AggregateValues(
-            TValue[] values,
+            IEnumerable<TValue> values,
             Func<TValue, ulong> getFingerprint)
         {
             PagedTimelineSequenceFingerprintAggregate aggregate = default;
@@ -666,10 +695,12 @@ internal sealed class PersistentTimelineSequence<TValue>
         {
             Left = left;
             Right = right;
+            UsesExternalStorage = left.UsesExternalStorage || right.UsesExternalStorage;
         }
 
         public Node Left { get; }
         public Node Right { get; }
+        public override bool UsesExternalStorage { get; }
 
         private static PagedTimelineSequenceFingerprintAggregate Combine(
             PagedTimelineSequenceFingerprintAggregate left,

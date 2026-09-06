@@ -45,6 +45,18 @@ public sealed class DirectMidiChannelEventQuerySnapshot
     public int Count { get; }
     public long Generation { get; }
 
+    internal IEnumerable<DirectMidiChannelEventSourceMatch> ResolveSourceMatches(IReadOnlySet<MidoraId> ids) =>
+        _source is null ? [] : _sourceIdCache.Resolve(ids, _source.QueryChannelEventsByIds);
+
+    internal IEnumerable<PureMidiContentRangeSummary> GetRangeSummaries()
+    {
+        if (_source is IPureMidiContentOverviewSource overview)
+            foreach (var value in overview.GetChannelEventRangeSummaries()) yield return value;
+        else if (_source is not null && _source.ChannelEventCount != 0)
+            foreach (var value in _source.QueryChannelEvents(0, long.MaxValue)) yield return new(value.Tick, value.Tick, 1);
+        foreach (var value in _overlayIndex.Query(0, long.MaxValue)) yield return new(value.Tick, value.Tick, 1);
+    }
+
     public ulong GetRangeFingerprint(long startTick, long endTick)
     {
         ulong result = 14695981039346656037UL;
@@ -69,6 +81,21 @@ public sealed class DirectMidiChannelEventQuerySnapshot
         }
         foreach (DirectMidiChannelEventValue value in _overlayIndex.Query(startTick, endTick))
             yield return value;
+    }
+
+    internal IEnumerable<DirectMidiChannelEventValue> QueryStartKeys(IReadOnlySet<DirectMidiEventStartKey> keys)
+    {
+        if (_source is not null)
+            foreach (var match in _source.QueryChannelEventsAtStarts(keys))
+                if (_sourceExclusions?.Contains(match.Value.Id) != true) yield return match.Value;
+        foreach (long tick in keys.Select(static key => key.Tick).Distinct())
+            foreach (var value in _overlayIndex.QueryAtTick(tick))
+            {
+                int selector = value.Kind is DirectMidiChannelEventKind.ControlChange
+                    or DirectMidiChannelEventKind.PolyphonicKeyPressure
+                    or DirectMidiChannelEventKind.NoteOn or DirectMidiChannelEventKind.NoteOff ? value.Data1 : 0;
+                if (keys.Contains(new(value.Tick, value.Kind, selector))) yield return value;
+            }
     }
 
     public IEnumerable<DirectMidiChannelEventValue> QueryOrderedValues(
@@ -326,6 +353,18 @@ public sealed class OpaqueMidiEventQuerySnapshot
 
     public int Count { get; }
     public long Generation { get; }
+
+    internal IEnumerable<OpaqueMidiEventSourceMatch> ResolveSourceMatches(IReadOnlySet<MidoraId> ids) =>
+        _source is null ? [] : _sourceIdCache.Resolve(ids, _source.QueryOpaqueEventsByIds);
+
+    internal IEnumerable<PureMidiContentRangeSummary> GetRangeSummaries()
+    {
+        if (_source is IPureMidiContentOverviewSource overview)
+            foreach (var value in overview.GetOpaqueEventRangeSummaries()) yield return value;
+        else if (_source is not null)
+            foreach (var value in _source.QueryOpaqueEvents(0, long.MaxValue)) yield return new(value.Tick, value.Tick, 1);
+        foreach (var value in _overlayIndex.Query(0, long.MaxValue)) yield return new(value.Tick, value.Tick, 1);
+    }
 
     public ulong GetRangeFingerprint(long startTick, long endTick)
     {

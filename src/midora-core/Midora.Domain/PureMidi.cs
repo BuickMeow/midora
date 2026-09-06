@@ -143,7 +143,22 @@ public sealed class MidiSegment
         _opaqueEvents.AttachSource(source);
     }
 
-    public string? PagedContentFingerprint => _pagedContentSource?.ContentFingerprint;
+    public string? PagedContentFingerprint
+    {
+        get
+        {
+            IPureMidiSegmentContentSource? notes = _notes.PagedSource;
+            IPureMidiSegmentContentSource? events = _channelEvents.PagedSource;
+            IPureMidiSegmentContentSource? opaque = _opaqueEvents.PagedSource;
+            if (ReferenceEquals(notes, events) && ReferenceEquals(notes, opaque)) return notes?.ContentFingerprint;
+            static string Part(IPureMidiSegmentContentSource? source)
+            {
+                string value = source?.ContentFingerprint ?? string.Empty;
+                return $"{value.Length}:{value}";
+            }
+            return $"collection-roots-v1:{Part(notes)}{Part(events)}{Part(opaque)}";
+        }
+    }
 
     internal PureMidiContentPack? TryGetPristineContentPack()
     {

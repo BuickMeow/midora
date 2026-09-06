@@ -48,11 +48,18 @@ public static partial class ProjectDomainEditCommands
         long tickDelta,
         int valueDelta,
         bool duplicate) =>
+        templateEventIds.Count >= BoundedPointThreshold
+        ? BoundedTemplatePoints(duplicate ? "Duplicate SubVoice event points" : "Move SubVoice event points",
+            eventInstrumentId, subVoiceId, templateEventIds, BoundedPointOperation.Adjust, target, tickDelta, valueDelta, duplicate)
+        :
         Command(duplicate ? "Duplicate SubVoice event points" : "Move SubVoice event points", project =>
         {
             ArgumentNullException.ThrowIfNull(templateEventIds);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (voice.Events.Count >= BoundedPointThreshold)
+                return BoundedTemplatePoints(duplicate ? "Duplicate SubVoice event points" : "Move SubVoice event points",
+                    eventInstrumentId, subVoiceId, templateEventIds, BoundedPointOperation.Adjust, target, tickDelta, valueDelta, duplicate).Prepare(project);
             HashSet<MidoraId> requested = ValidateBatchIds(
                 templateEventIds,
                 nameof(templateEventIds),
@@ -162,6 +169,8 @@ public static partial class ProjectDomainEditCommands
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            if (voice.Events.Count >= BoundedPointThreshold)
+                return PrepareBoundedTemplateLaneDelete(project, instrument, voice, target, nonEmptyDeletionConfirmed);
             TemplateEventMappingTarget requestedTarget = TemplateEventMidiTargets.ToMappingTarget(target);
             TemplateEventMappingTarget[] mappingTargets = target.Kind is
                 MidiValueKind.PitchBendRangeSemitones or MidiValueKind.PitchBendRangeCents

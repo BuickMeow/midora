@@ -374,6 +374,9 @@ public abstract class WorkspaceViewModel(
         protected set => Set(ref _tabIconKind, value);
     }
     public WorkspaceSelection Selection { get; } = new();
+    // Document publication and render/selection revisions are different axes.
+    // Only the session stamps this after rebuilding from the current Project.
+    internal long PresentationDocumentRevision { get; set; } = -1;
     public TimelineSelectionSnapshot SelectionSnapshot
     {
         get => _selectionSnapshot;

@@ -527,11 +527,21 @@ public sealed class ExactTimelineCollisionPolicyTests
 
         wrapped.Apply(project);
 
-        Assert.Equal(source.NoteCount + 1, segment.Notes.Count);
+        MidiSegment current = project.PureMidiTracks.SelectMany(static value => value.Segments).Single(value => value.Id == segment.Id);
+        Assert.Equal(source.NoteCount + 1, current.Notes.Count);
+        DirectMidiNoteValue created = current.Notes.CreateObjectSource().GetByOrdinal(source.NoteCount);
+        Assert.Equal((400L, 20L, 72, 100), (created.StartTick, created.LengthTicks, created.Key, created.NoteOnVelocity));
         Assert.Single(source.NoteQueries);
         Assert.All(source.NoteQueries, query => Assert.Equal((400L, 401L, 72, 72), query));
+        var querySnapshot = current.Notes.CreateQuerySnapshot();
+        using (TimelineValueReadScope.EnterCacheOnly())
+            Assert.Throws<TimelineValueReadPendingException>(() => querySnapshot.MaximumEndTick);
+        Assert.Equal(420, querySnapshot.MaximumEndTick);
+        using (TimelineValueReadScope.EnterCacheOnly())
+            Assert.Equal(420, querySnapshot.MaximumEndTick);
 
         wrapped.Undo(project);
+        Assert.Same(segment, project.PureMidiTracks.SelectMany(static value => value.Segments).Single(value => value.Id == segment.Id));
         Assert.Equal(source.NoteCount, segment.Notes.Count);
     }
 
@@ -549,7 +559,8 @@ public sealed class ExactTimelineCollisionPolicyTests
 
         prepared.Apply(project);
 
-        Assert.True(segment.Notes.TryGetById(source.Note.Id, out DirectMidiNote? edited));
+        MidiSegment current = project.PureMidiTracks[0].Segments[0];
+        Assert.True(current.Notes.TryGetById(source.Note.Id, out DirectMidiNote? edited));
         Assert.NotNull(edited);
         Assert.Equal(30, edited!.StartTick);
         Assert.Equal(62, edited.Key);
@@ -559,12 +570,12 @@ public sealed class ExactTimelineCollisionPolicyTests
 
         prepared.Undo(project);
 
-        Assert.Equal(10, edited.StartTick);
-        Assert.Equal(60, edited.Key);
-        Assert.Same(
-            edited,
-            Assert.Single(segment.Notes.ResolveValuesByIds(
-                new HashSet<MidoraId> { source.Note.Id })));
+        Assert.Same(segment, project.PureMidiTracks[0].Segments[0]);
+        var restored = Assert.Single(segment.Notes.ResolveValuesByIds(new HashSet<MidoraId> { source.Note.Id }));
+        Assert.Equal(10, restored.StartTick);
+        Assert.Equal(60, restored.Key);
+        Assert.Equal(source.Note.Id, restored.Id);
+        Assert.Equal(30, edited.StartTick); // Published roots remain immutable across Undo.
         Assert.Equal(1, source.BatchIdQueryCount);
         Assert.Equal(0, source.GetNoteCallCount);
         Assert.Equal(0, source.FindNoteIndexCallCount);

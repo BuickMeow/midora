@@ -11,6 +11,68 @@ namespace Midora.Application;
 /// </summary>
 internal static class ProjectTimelineOwnerChangeSetBuilder
 {
+    public static bool TryAddLogicalNoteValueEdits(ProjectChangeSet changes, Segment previous, Segment current,
+        IImmutableTimelineValueSource<TimelineValueEdit<LogicalNoteSnapshotValue>> edits) => TryAddValueOnlyEdits(
+            changes, previous.Id, ProjectTimelineOwnerKind.LogicalSegment, ProjectTimelineSourceKind.LogicalNotes,
+            previous.Notes.Generation, current.Notes.Generation, previous.Notes.CreateQuerySnapshot(), edits,
+            static (a, b) => a.Id == b.Id && a.StartTick == b.StartTick && a.LengthTicks == b.LengthTicks && a.Note == b.Note,
+            static value => NoteRange(value.StartTick, value.LengthTicks, value.Note));
+
+    public static bool TryAddTemplateNoteValueEdits(ProjectChangeSet changes, SubVoice previous, SubVoice current,
+        IImmutableTimelineValueSource<TimelineValueEdit<TemplateEventSnapshotValue>> edits) => TryAddValueOnlyEdits(
+            changes, previous.Id, ProjectTimelineOwnerKind.SubVoice, ProjectTimelineSourceKind.SubVoiceEvents,
+            previous.Events.Generation, current.Events.Generation, previous.Events.CreateQuerySnapshot(), edits,
+            static (a, b) => a.Kind == TemplateEventKind.Note && b.Kind == TemplateEventKind.Note && a.Id == b.Id
+                && a.Tick == b.Tick && a.LengthTicks == b.LengthTicks && a.Number == b.Number,
+            static value => NoteRange(value.Tick, value.LengthTicks, value.Number));
+
+    private static bool TryAddValueOnlyEdits<T>(ProjectChangeSet changes, MidoraId ownerId,
+        ProjectTimelineOwnerKind ownerKind, ProjectTimelineSourceKind sourceKind, long previousRevision,
+        long currentRevision, ITimelineObjectSource<T> snapshot, IImmutableTimelineValueSource<TimelineValueEdit<T>> edits,
+        Func<T, T, bool> sameGeometry, Func<T, ProjectTimelineContentChangeRange> range) where T : unmanaged
+    {
+        using var scope = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default);
+        using var footprints = new BoundedEditRecordStore<ProjectTimelineContentChangeRange>(scope.Resources);
+        var ordinals = new BoundedEditRecordStore<TimelineOrdinalRange>(scope.Resources);
+        bool ordinalsTransferred = false;
+        try
+        {
+            int first = -1, end = -1;
+            foreach (var edit in edits)
+            {
+                scope.Token.ThrowIfCancellationRequested();
+                if (edit.IsDeleted) return false;
+                T original = snapshot.GetByOrdinal(edit.Ordinal);
+                if (!sameGeometry(original, edit.Replacement)) return false;
+                if (EqualityComparer<T>.Default.Equals(original, edit.Replacement)) continue;
+                if (edit.Ordinal < end) throw new InvalidOperationException("Value-only receipt edits must be unique and sorted.");
+                if (edit.Ordinal != end)
+                {
+                    if (first >= 0) ordinals.Add(new(first, end - first), scope.Token);
+                    first = edit.Ordinal;
+                }
+                end = checked(edit.Ordinal + 1);
+                footprints.Add(range(original), scope.Token);
+            }
+            if (first < 0) return true;
+            ordinals.Add(new(first, end - first), scope.Token);
+            footprints.Seal(); ordinals.Seal();
+            var ranges = MergeRanges(footprints);
+            var ordinalRanges = FreezeResult(ordinals, scope.Token);
+            ordinalsTransferred = true;
+            // Geometry and ordinal identity are unchanged: old, new and dirty
+            // footprints are exactly equal and may share one immutable result.
+            Append(changes, ownerId, ownerKind, new ProjectTimelineSourceChange(sourceKind, null,
+                previousRevision, currentRevision, ordinalRanges, [], ranges)
+            {
+                PreviousContentRanges = ranges, CurrentContentRanges = ranges,
+                CurrentOrdinalRanges = ordinalRanges, CurrentPageIndices = []
+            });
+            return true;
+        }
+        finally { if (!ordinalsTransferred) ordinals.Dispose(); }
+    }
+
     public static void AddLogicalNotes(
         ProjectChangeSet changes,
         Segment previous,
@@ -23,8 +85,9 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             laneOrCurveId: null,
             previous.Notes.Generation,
             current.Notes.Generation,
-            ResolveLogicalNotes(previous.Notes, candidateIds),
-            ResolveLogicalNotes(current.Notes, candidateIds));
+            candidateIds,
+            ids => ResolveLogicalNotes(previous.Notes, ids),
+            ids => ResolveLogicalNotes(current.Notes, ids));
 
     public static void AddDirectNotes(
         ProjectChangeSet changes,
@@ -38,8 +101,9 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             laneOrCurveId: null,
             previous.Notes.Generation,
             current.Notes.Generation,
-            ResolveDirectNotes(previous.Notes, candidateIds),
-            ResolveDirectNotes(current.Notes, candidateIds));
+            candidateIds,
+            ids => ResolveDirectNotes(previous.Notes, ids),
+            ids => ResolveDirectNotes(current.Notes, ids));
 
     public static void AddSubVoiceEvents(
         ProjectChangeSet changes,
@@ -53,8 +117,9 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             laneOrCurveId: null,
             previous.Events.Generation,
             current.Events.Generation,
-            ResolveTemplateEvents(previous.Events, candidateIds),
-            ResolveTemplateEvents(current.Events, candidateIds));
+            candidateIds,
+            ids => ResolveTemplateEvents(previous.Events, ids),
+            ids => ResolveTemplateEvents(current.Events, ids));
 
     public static void AddLogicalParameterPoints(
         ProjectChangeSet changes,
@@ -69,8 +134,9 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             previous.Id,
             previous.Points.Generation,
             current.Points.Generation,
-            ResolveCurvePoints(previous.Points, candidateIds),
-            ResolveCurvePoints(current.Points, candidateIds));
+            candidateIds,
+            ids => ResolveCurvePoints(previous.Points, ids),
+            ids => ResolveCurvePoints(current.Points, ids));
 
     public static void AddDirectEvents(
         ProjectChangeSet changes,
@@ -84,105 +150,95 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             laneOrCurveId: null,
             previous.ChannelEvents.Generation,
             current.ChannelEvents.Generation,
-            ResolveDirectEvents(previous.ChannelEvents, candidateIds),
-            ResolveDirectEvents(current.ChannelEvents, candidateIds));
+            candidateIds,
+            ids => ResolveDirectEvents(previous.ChannelEvents, ids),
+            ids => ResolveDirectEvents(current.ChannelEvents, ids));
 
     private static IReadOnlyList<ResolvedValue<LogicalNoteSnapshotValue>> ResolveLogicalNotes(
         LogicalNoteCollection source,
         IEnumerable<MidoraId> candidateIds)
     {
-        MidoraId[] ids = FreezeIds(candidateIds);
-        return source.ResolveByIdsWithIndicesInCollectionOrder(ids)
-            .Select(static match => new ResolvedValue<LogicalNoteSnapshotValue>(
-                match.Value.Id,
-                match.Index,
-                new(
-                    match.Value.Id,
-                    match.Value.StartTick,
-                    match.Value.LengthTicks,
-                    match.Value.Note,
-                    match.Value.Velocity),
-                NoteRange(match.Value.StartTick, match.Value.LengthTicks, match.Value.Note)))
-            .ToArray();
+        LogicalNoteQuerySnapshot snapshot = source.CreateQuerySnapshot();
+        snapshot.PrepareOrdinalLookup(BoundedTimelineOrdinalIndexBuilder.Instance, BulkEditPreparationContext.Current!.Token);
+        List<ResolvedValue<LogicalNoteSnapshotValue>> result = [];
+        foreach (MidoraId id in candidateIds)
+        {
+            BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
+            if (!snapshot.TryFindOrdinalById(id, out int ordinal)) continue;
+            LogicalNoteSnapshotValue value = snapshot.GetByOrdinal(ordinal);
+            result.Add(new(id, ordinal, value, NoteRange(value.StartTick, value.LengthTicks, value.Note)));
+        }
+        return result;
     }
 
     private static IReadOnlyList<ResolvedValue<DirectMidiNoteValue>> ResolveDirectNotes(
         DirectMidiNoteCollection source,
         IEnumerable<MidoraId> candidateIds)
     {
-        MidoraId[] ids = FreezeIds(candidateIds);
-        return source.ResolveByIds(ids)
-            .Select(static match => new ResolvedValue<DirectMidiNoteValue>(
-                match.Value.Id,
-                match.Index,
-                new(
-                    match.Value.Id,
-                    match.Value.StartTick,
-                    match.Value.LengthTicks,
-                    match.Value.Key,
-                    match.Value.NoteOnVelocity,
-                    match.Value.NoteOffVelocity,
-                    match.Value.NoteOnOrder,
-                    match.Value.NoteOffOrder),
-                NoteRange(match.Value.StartTick, match.Value.LengthTicks, match.Value.Key)))
-            .ToArray();
+        DirectMidiNoteObjectSource snapshot = source.CreateObjectSource();
+        List<ResolvedValue<DirectMidiNoteValue>> result = [];
+        IReadOnlySet<MidoraId> ids = candidateIds as IReadOnlySet<MidoraId> ?? candidateIds.ToHashSet();
+        foreach (var match in snapshot.QueryByIds(ids))
+        {
+            BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
+            DirectMidiNoteValue value = match.Value;
+            result.Add(new(value.Id, match.Index, value, NoteRange(value.StartTick, value.LengthTicks, value.Key)));
+        }
+        return result;
     }
 
     private static IReadOnlyList<ResolvedValue<TemplateEventSnapshotValue>> ResolveTemplateEvents(
         TemplateEventCollection source,
         IEnumerable<MidoraId> candidateIds)
     {
-        MidoraId[] ids = FreezeIds(candidateIds);
-        return source.ResolveByIdsWithIndicesInCollectionOrder(ids)
-            .Select(static match => new ResolvedValue<TemplateEventSnapshotValue>(
-                match.Value.Id,
-                match.Index,
-                Snapshot(match.Value),
-                match.Value.Kind == TemplateEventKind.Note
-                    ? NoteRange(match.Value.Tick, match.Value.LengthTicks, match.Value.Number)
-                    : PointRange(match.Value.Tick, TemplateEventLane(match.Value))))
-            .ToArray();
+        TemplateEventQuerySnapshot snapshot = source.CreateQuerySnapshot();
+        snapshot.PrepareOrdinalLookup(BoundedTimelineOrdinalIndexBuilder.Instance, BulkEditPreparationContext.Current!.Token);
+        List<ResolvedValue<TemplateEventSnapshotValue>> result = [];
+        foreach (MidoraId id in candidateIds)
+        {
+            BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
+            if (!snapshot.TryFindOrdinalById(id, out int ordinal)) continue;
+            TemplateEventSnapshotValue value = snapshot.GetByOrdinal(ordinal);
+            result.Add(new(id, ordinal, value, value.Kind == TemplateEventKind.Note
+                ? NoteRange(value.Tick, value.LengthTicks, value.Number) : PointRange(value.Tick, TemplateEventLane(value))));
+        }
+        return result;
     }
 
     private static IReadOnlyList<ResolvedValue<CurvePointSnapshotValue>> ResolveCurvePoints(
         CurvePointCollection source,
         IEnumerable<MidoraId> candidateIds)
     {
-        MidoraId[] ids = FreezeIds(candidateIds);
-        return source.ResolveByIdsWithIndicesInCollectionOrder(ids)
-            .Select(static match => new ResolvedValue<CurvePointSnapshotValue>(
-                match.Value.Id,
-                match.Index,
-                new(
-                    match.Value.Id,
-                    match.Value.Tick,
-                    match.Value.Value,
-                    match.Value.Interpolation),
-                PointRange(match.Value.Tick, 0)))
-            .ToArray();
+        CurvePointQuerySnapshot snapshot = source.CreateQuerySnapshot();
+        snapshot.PrepareOrdinalLookup(BoundedTimelineOrdinalIndexBuilder.Instance, BulkEditPreparationContext.Current!.Token);
+        List<ResolvedValue<CurvePointSnapshotValue>> result = [];
+        foreach (MidoraId id in candidateIds)
+        {
+            BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
+            if (!snapshot.TryFindOrdinalById(id, out int ordinal)) continue;
+            CurvePointSnapshotValue value = snapshot.GetByOrdinal(ordinal);
+            result.Add(new(id, ordinal, value, PointRange(value.Tick, 0)));
+        }
+        return result;
     }
 
     private static IReadOnlyList<ResolvedValue<DirectMidiChannelEventValue>> ResolveDirectEvents(
         DirectMidiChannelEventCollection source,
         IEnumerable<MidoraId> candidateIds)
     {
-        MidoraId[] ids = FreezeIds(candidateIds);
-        return source.ResolveByIds(ids)
-            .Select(static match => new ResolvedValue<DirectMidiChannelEventValue>(
-                match.Value.Id,
-                match.Index,
-                new(
-                    match.Value.Id,
-                    match.Value.Tick,
-                    match.Value.Kind,
-                    match.Value.Data1,
-                    match.Value.Data2,
-                    match.Value.Order),
-                PointRange(match.Value.Tick, DirectEventLane(match.Value))))
-            .ToArray();
+        DirectMidiChannelEventObjectSource snapshot = source.CreateObjectSource();
+        List<ResolvedValue<DirectMidiChannelEventValue>> result = [];
+        IReadOnlySet<MidoraId> ids = candidateIds as IReadOnlySet<MidoraId> ?? candidateIds.ToHashSet();
+        foreach (var match in snapshot.QueryByIds(ids))
+        {
+            BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
+            DirectMidiChannelEventValue value = match.Value;
+            result.Add(new(value.Id, match.Index, value, PointRange(value.Tick, DirectEventLane(value))));
+        }
+        return result;
     }
 
-    private static int DirectEventLane(DirectMidiChannelEvent value)
+    private static int DirectEventLane(DirectMidiChannelEventValue value)
     {
         int selector = value.Kind is DirectMidiChannelEventKind.PolyphonicKeyPressure
             or DirectMidiChannelEventKind.ControlChange
@@ -191,7 +247,7 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
         return checked(((int)value.Kind * 256) + selector);
     }
 
-    private static int TemplateEventLane(TemplateEvent value)
+    private static int TemplateEventLane(TemplateEventSnapshotValue value)
     {
         int selector = value.Kind is TemplateEventKind.ControlChange
             or TemplateEventKind.RegisteredParameter
@@ -221,31 +277,41 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
         MidoraId? laneOrCurveId,
         long previousRevision,
         long currentRevision,
-        IReadOnlyList<ResolvedValue<TValue>> previous,
-        IReadOnlyList<ResolvedValue<TValue>> current)
+        IEnumerable<MidoraId> candidateIds,
+        Func<IReadOnlyCollection<MidoraId>, IReadOnlyList<ResolvedValue<TValue>>> resolvePrevious,
+        Func<IReadOnlyCollection<MidoraId>, IReadOnlyList<ResolvedValue<TValue>>> resolveCurrent)
         where TValue : struct
     {
-        Dictionary<MidoraId, ResolvedValue<TValue>> previousById =
-            previous.ToDictionary(static value => value.Id);
-        Dictionary<MidoraId, ResolvedValue<TValue>> currentById =
-            current.ToDictionary(static value => value.Id);
-        HashSet<MidoraId> changedIds = [.. previousById.Keys];
-        changedIds.UnionWith(currentById.Keys);
-        changedIds.RemoveWhere(id =>
-            previousById.TryGetValue(id, out ResolvedValue<TValue> oldValue)
-            && currentById.TryGetValue(id, out ResolvedValue<TValue> newValue)
-            && EqualityComparer<TValue>.Default.Equals(oldValue.Value, newValue.Value));
-        if (changedIds.Count == 0) return;
+        using BulkEditPreparationContext scope = BulkEditPreparationContext.Enter(
+            BulkEditPreparationContext.Current?.Token ?? default);
+        BoundedEditResources resources = scope.Resources;
+        using var ids = BoundedEditSort.Sort(candidateIds.Where(static id => id != default),
+            Comparer<MidoraId>.Default, resources, scope.Token);
+        using var oldOrdinals = new BoundedEditRecordStore<int>(resources);
+        using var newOrdinals = new BoundedEditRecordStore<int>(resources);
+        using var oldRanges = new BoundedEditRecordStore<ProjectTimelineContentChangeRange>(resources);
+        using var newRanges = new BoundedEditRecordStore<ProjectTimelineContentChangeRange>(resources);
+        List<MidoraId> page = new(resources.Budget.PageRecordCount);
+        MidoraId last = default;
+        foreach (MidoraId id in ids.ReadValues(scope.Token))
+        {
+            if (id == last) continue;
+            last = id;
+            page.Add(id);
+            if (page.Count == resources.Budget.PageRecordCount) ComparePage();
+        }
+        if (page.Count != 0) ComparePage();
+        oldOrdinals.Seal();
+        newOrdinals.Seal();
+        oldRanges.Seal();
+        newRanges.Seal();
+        if (oldOrdinals.Count == 0 && newOrdinals.Count == 0) return;
 
-        ImmutableArray<TimelineOrdinalRange> previousOrdinals = CompressOrdinals(
-            changedIds.Where(previousById.ContainsKey).Select(id => previousById[id].Ordinal));
-        ImmutableArray<TimelineOrdinalRange> currentOrdinals = CompressOrdinals(
-            changedIds.Where(currentById.ContainsKey).Select(id => currentById[id].Ordinal));
-        ImmutableArray<ProjectTimelineContentChangeRange> previousRanges = MergeRanges(
-            changedIds.Where(previousById.ContainsKey).Select(id => previousById[id].Range));
-        ImmutableArray<ProjectTimelineContentChangeRange> currentRanges = MergeRanges(
-            changedIds.Where(currentById.ContainsKey).Select(id => currentById[id].Range));
-        ImmutableArray<ProjectTimelineContentChangeRange> invalidationRanges = MergeRanges(
+        IReadOnlyList<TimelineOrdinalRange> previousOrdinals = CompressOrdinals(oldOrdinals);
+        IReadOnlyList<TimelineOrdinalRange> currentOrdinals = CompressOrdinals(newOrdinals);
+        IReadOnlyList<ProjectTimelineContentChangeRange> previousRanges = MergeRanges(oldRanges);
+        IReadOnlyList<ProjectTimelineContentChangeRange> currentRanges = MergeRanges(newRanges);
+        IReadOnlyList<ProjectTimelineContentChangeRange> invalidationRanges = MergeRanges(
             previousRanges.Concat(currentRanges));
 
         ProjectTimelineSourceChange source = new(
@@ -263,6 +329,24 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             CurrentPageIndices = []
         };
         Append(changes, ownerId, ownerKind, source);
+
+        void ComparePage()
+        {
+            scope.Token.ThrowIfCancellationRequested();
+            Dictionary<MidoraId, ResolvedValue<TValue>> previous =
+                resolvePrevious(page).ToDictionary(static value => value.Id);
+            Dictionary<MidoraId, ResolvedValue<TValue>> current =
+                resolveCurrent(page).ToDictionary(static value => value.Id);
+            foreach (MidoraId id in page)
+            {
+                bool had = previous.TryGetValue(id, out ResolvedValue<TValue> before);
+                bool has = current.TryGetValue(id, out ResolvedValue<TValue> after);
+                if (had && has && EqualityComparer<TValue>.Default.Equals(before.Value, after.Value)) continue;
+                if (had) { oldOrdinals.Add(before.Ordinal, scope.Token); oldRanges.Add(before.Range, scope.Token); }
+                if (has) { newOrdinals.Add(after.Ordinal, scope.Token); newRanges.Add(after.Range, scope.Token); }
+            }
+            page.Clear();
+        }
     }
 
     private static void Append(
@@ -289,63 +373,78 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
         .Distinct()
         .ToArray();
 
-    private static ImmutableArray<TimelineOrdinalRange> CompressOrdinals(
+    private static IReadOnlyList<TimelineOrdinalRange> CompressOrdinals(
         IEnumerable<int> ordinals)
     {
-        int[] ordered = ordinals.Distinct().Order().ToArray();
-        if (ordered.Length == 0) return [];
-        ImmutableArray<TimelineOrdinalRange>.Builder result = ImmutableArray.CreateBuilder<TimelineOrdinalRange>();
-        int first = ordered[0];
-        int end = checked(first + 1);
-        for (int index = 1; index < ordered.Length; index++)
+        BulkEditPreparationContext scope = BulkEditPreparationContext.Current!;
+        using var ordered = BoundedEditSort.Sort(ordinals, Comparer<int>.Default, scope.Resources, scope.Token);
+        if (ordered.Count == 0) return [];
+        var result = new BoundedEditRecordStore<TimelineOrdinalRange>(scope.Resources);
+        try
         {
-            int ordinal = ordered[index];
-            if (ordinal == end)
+            int first = -1, end = -1;
+            foreach (int ordinal in ordered.ReadValues(scope.Token))
             {
-                end++;
-                continue;
+                if (first == -1) { first = ordinal; end = checked(ordinal + 1); continue; }
+                if (ordinal < end) continue;
+                if (ordinal == end) { end++; continue; }
+                result.Add(new(first, end - first), scope.Token);
+                first = ordinal;
+                end = checked(ordinal + 1);
             }
             result.Add(new(first, end - first));
-            first = ordinal;
-            end = checked(ordinal + 1);
+            result.Seal();
+            return FreezeResult(result, scope.Token);
         }
-        result.Add(new(first, end - first));
-        return result.ToImmutable();
+        catch { result.Dispose(); throw; }
     }
 
-    private static ImmutableArray<ProjectTimelineContentChangeRange> MergeRanges(
+    private static IReadOnlyList<ProjectTimelineContentChangeRange> MergeRanges(
         IEnumerable<ProjectTimelineContentChangeRange> ranges)
     {
-        ProjectTimelineContentChangeRange[] ordered = ranges
-            .Distinct()
-            .OrderBy(static value => value.MinimumLane)
-            .ThenBy(static value => value.MaximumLane)
-            .ThenBy(static value => value.StartTick)
-            .ThenBy(static value => value.EndTick)
-            .ToArray();
-        if (ordered.Length == 0) return [];
-        ImmutableArray<ProjectTimelineContentChangeRange>.Builder result =
-            ImmutableArray.CreateBuilder<ProjectTimelineContentChangeRange>();
-        ProjectTimelineContentChangeRange current = ordered[0];
-        for (int index = 1; index < ordered.Length; index++)
+        BulkEditPreparationContext scope = BulkEditPreparationContext.Current!;
+        using var ordered = BoundedEditSort.Sort(ranges, Comparer<ProjectTimelineContentChangeRange>.Create((a, b) =>
         {
-            ProjectTimelineContentChangeRange next = ordered[index];
-            if (next.MinimumLane == current.MinimumLane
-                && next.MaximumLane == current.MaximumLane
-                && next.StartTick <= current.EndTick)
+            int value = a.MinimumLane.CompareTo(b.MinimumLane);
+            if (value == 0) value = a.MaximumLane.CompareTo(b.MaximumLane);
+            if (value == 0) value = a.StartTick.CompareTo(b.StartTick);
+            return value == 0 ? a.EndTick.CompareTo(b.EndTick) : value;
+        }), scope.Resources, scope.Token);
+        if (ordered.Count == 0) return [];
+        var result = new BoundedEditRecordStore<ProjectTimelineContentChangeRange>(scope.Resources);
+        try
+        {
+            ProjectTimelineContentChangeRange? current = null;
+            foreach (ProjectTimelineContentChangeRange next in ordered.ReadValues(scope.Token))
             {
-                current = new(
-                    current.StartTick,
-                    Math.Max(current.EndTick, next.EndTick),
-                    current.MinimumLane,
-                    current.MaximumLane);
-                continue;
+                if (current is not { } value) { current = next; continue; }
+                if (next.MinimumLane == value.MinimumLane && next.MaximumLane == value.MaximumLane
+                    && next.StartTick <= value.EndTick)
+                {
+                    current = new(value.StartTick, Math.Max(value.EndTick, next.EndTick), value.MinimumLane, value.MaximumLane);
+                    continue;
+                }
+                result.Add(value, scope.Token);
+                current = next;
             }
-            result.Add(current);
-            current = next;
+            if (current is { } lastRange) result.Add(lastRange, scope.Token);
+            result.Seal();
+            return FreezeResult(result, scope.Token);
         }
-        result.Add(current);
-        return result.ToImmutable();
+        catch { result.Dispose(); throw; }
+    }
+
+    private static IReadOnlyList<T> FreezeResult<T>(BoundedEditRecordStore<T> result,
+        CancellationToken cancellationToken) where T : unmanaged
+    {
+        if (result.Count <= result.PageCapacity)
+        {
+            T[] values = result.ReadValues(cancellationToken).ToArray();
+            result.Dispose();
+            return values;
+        }
+        result.SpillResidentPages(cancellationToken);
+        return new BoundedImmutableValueSource<T>(result);
     }
 
     private static ProjectTimelineContentChangeRange NoteRange(

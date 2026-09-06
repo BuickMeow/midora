@@ -6,6 +6,81 @@ namespace Midora.Application.Tests;
 
 public sealed class PureMidiContentPackTests
 {
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    public void EncoderSchedulerRemainsOpenUntilAllPendingResultsAreObserved(
+        bool disposeWithoutComplete, bool faultEncoder, bool cancel)
+    {
+        string directory = System.IO.Path.Combine(
+            AppContext.BaseDirectory, ".tmp", "encoder-lifecycle-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = System.IO.Path.Combine(directory, "lifecycle.mpk");
+        using CancellationTokenSource cancellation = new();
+        using ManualResetEventSlim releaseEncoder = new(false);
+        using MidoraProject project = new(192);
+        MidiSegment segment = new(project);
+        int waitCount = 0;
+        bool completedBeforeWait = false;
+        PureMidiContentPackWriter writer = new(
+            path, cancellation.Token, encoderConcurrency: 1,
+            encodeBufferBudget: 64L * 1024 * 1024,
+            encodePageTestHook: () =>
+            {
+                if (!releaseEncoder.Wait(TimeSpan.FromSeconds(20)))
+                    throw new TimeoutException("The test did not enter the pending-page drain.");
+                if (faultEncoder) throw new IOException("Injected encoder fault.");
+            },
+            beforePageWaitTestHook: schedulingCompleted =>
+            {
+                waitCount++;
+                completedBeforeWait |= schedulingCompleted;
+                // Force task completion to race with the ensuing synchronous
+                // wait, without depending on machine timing to check ordering.
+                releaseEncoder.Set();
+            });
+        try
+        {
+            int notes = disposeWithoutComplete
+                ? PureMidiContentPackWriter.MaximumEndpointPageRecordCount + 1
+                : 1;
+            for (int index = 0; index < notes; index++)
+            {
+                writer.AddNote(segment.Id, new(
+                    project.AllocateStableId(), index, 12, index % 128,
+                    100, 0, index * 2L, index * 2L + 1));
+            }
+            if (cancel) cancellation.Cancel();
+            if (disposeWithoutComplete)
+            {
+                if (faultEncoder)
+                {
+                    InvalidDataException failure = Assert.Throws<InvalidDataException>(writer.Dispose);
+                    Assert.IsType<IOException>(failure.InnerException);
+                }
+                else writer.Dispose();
+                Assert.False(File.Exists(path));
+            }
+            else
+            {
+                using PureMidiContentPack pack = writer.Complete();
+                Assert.Equal(1, pack.GetSegmentSource(segment.Id).NoteCount);
+                writer.Dispose();
+                Assert.True(File.Exists(path));
+            }
+            Assert.True(waitCount > 0);
+            Assert.False(completedBeforeWait);
+        }
+        finally
+        {
+            releaseEncoder.Set();
+            writer.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void NoteOrdinalExclusionsRemainExactAcrossEndpointPageRuns()
     {

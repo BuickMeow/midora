@@ -555,13 +555,17 @@ public sealed class ProjectObjectClipboardTests
         AssertMatchesFull(compilation);
 
         long nextStableId = project.NextStableId;
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
+        document.Execute(
             ProjectObjectClipboard.CreatePasteConductorEventsCommand(
                 document,
                 payload,
-                editCursorTick: 500)));
-        Assert.Equal(nextStableId, project.NextStableId);
-        Assert.Single(document.History);
+                editCursorTick: 500));
+        Assert.True(project.NextStableId > nextStableId);
+        Assert.Equal(2, document.History.Count);
+        Assert.Single(project.Conductor.Tempos, value => value.Tick == 500);
+        Assert.Equal(4, project.Conductor.Markers.Count(value => value.Tick == 650));
+        document.Undo();
+        Assert.Equal(2, project.Conductor.Markers.Count(value => value.Tick == 650));
 
         Assert.Throws<ArgumentException>(() => ProjectObjectClipboard.CopyConductorEvents(
             document,

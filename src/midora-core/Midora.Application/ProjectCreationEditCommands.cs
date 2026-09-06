@@ -535,145 +535,19 @@ public static partial class ProjectDomainEditCommands
         });
 
     public static IProjectEditCommand CreateTempo(long tick, decimal beatsPerMinute) =>
-        Command("Create tempo", project =>
-        {
-            ValidateConductorTick(tick, nameof(tick));
-            ValidateTempo(beatsPerMinute);
-            EnsureUniqueTick(project.Conductor.Tempos, default, tick, value => value.Id, value => value.Tick);
-            return DeferredCreate(
-                ConductorChange(),
-                value =>
-                {
-                    TempoChange tempo = new(value, tick, beatsPerMinute);
-                    InsertConductorEvent(project.Conductor.Tempos, tempo, item => item.Tick, item => item.Id);
-                    return tempo;
-                },
-                (_, tempo) => InsertConductorEvent(
-                    project.Conductor.Tempos,
-                    tempo,
-                    item => item.Tick,
-                    item => item.Id),
-                (_, tempo) => RemoveRequired(project.Conductor.Tempos, tempo, "Tempo"));
-        });
+        CreateConductorValue("Create tempo", ConductorKind.Tempo, tick, bpm: beatsPerMinute);
 
-    public static IProjectEditCommand CreateTimeSignature(
-        long tick,
-        int numerator,
-        int denominator) =>
-        Command("Create time signature", project =>
-        {
-            ValidateConductorTick(tick, nameof(tick));
-            if (numerator is < 1 or > 99)
-            {
-                throw new ArgumentOutOfRangeException(nameof(numerator));
-            }
-            if (denominator is not (1 or 2 or 4 or 8 or 16 or 32 or 64))
-            {
-                throw new ArgumentOutOfRangeException(nameof(denominator));
-            }
-            ProjectTimeSignatureRules.ValidateCompatibility(
-                project.TicksPerQuarterNote,
-                denominator,
-                nameof(denominator));
-            EnsureUniqueTick(
-                project.Conductor.TimeSignatures,
-                default,
-                tick,
-                value => value.Id,
-                value => value.Tick);
-            return DeferredCreate(
-                ConductorChange(),
-                value =>
-                {
-                    TimeSignatureChange signature = new(value, tick, numerator, denominator);
-                    InsertConductorEvent(
-                        project.Conductor.TimeSignatures,
-                        signature,
-                        item => item.Tick,
-                        item => item.Id);
-                    return signature;
-                },
-                (_, signature) => InsertConductorEvent(
-                    project.Conductor.TimeSignatures,
-                    signature,
-                    item => item.Tick,
-                    item => item.Id),
-                (_, signature) => RemoveRequired(
-                    project.Conductor.TimeSignatures,
-                    signature,
-                    "Time Signature"));
-        });
+    public static IProjectEditCommand CreateTimeSignature(long tick, int numerator, int denominator) =>
+        CreateConductorValue("Create time signature", ConductorKind.TimeSignature, tick, primary: numerator, secondary: denominator);
 
-    public static IProjectEditCommand CreateKeySignature(
-        long tick,
-        int sharpsFlats,
-        bool isMinor) =>
-        Command("Create key signature", project =>
-        {
-            ValidateConductorTick(tick, nameof(tick));
-            if (sharpsFlats is < -7 or > 7)
-            {
-                throw new ArgumentOutOfRangeException(nameof(sharpsFlats));
-            }
-            EnsureUniqueTick(
-                project.Conductor.KeySignatures,
-                default,
-                tick,
-                value => value.Id,
-                value => value.Tick);
-            return DeferredCreate(
-                ConductorChange(),
-                value =>
-                {
-                    KeySignatureChange signature = new(value, tick, sharpsFlats, isMinor);
-                    InsertConductorEvent(
-                        project.Conductor.KeySignatures,
-                        signature,
-                        item => item.Tick,
-                        item => item.Id);
-                    return signature;
-                },
-                (_, signature) => InsertConductorEvent(
-                    project.Conductor.KeySignatures,
-                    signature,
-                    item => item.Tick,
-                    item => item.Id),
-                (_, signature) => RemoveRequired(
-                    project.Conductor.KeySignatures,
-                    signature,
-                    "Key Signature"));
-        });
+    public static IProjectEditCommand CreateKeySignature(long tick, int sharpsFlats, bool isMinor) =>
+        CreateConductorValue("Create key signature", ConductorKind.KeySignature, tick, primary: sharpsFlats, flag: isMinor);
 
-    public static IProjectEditCommand CreateProjectMarker(long tick, string name) =>
-        Command("Create project marker", project =>
-        {
-            ValidateConductorTick(tick, nameof(tick));
-            string normalized = ProjectTextRules.NormalizeShortText(
-                name,
-                allowEmpty: true,
-                nameof(name));
-            return DeferredCreate(
-                ConductorChange(),
-                value =>
-                {
-                    ProjectMarker marker = new(value, tick, normalized);
-                    InsertConductorEvent(
-                        project.Conductor.Markers,
-                        marker,
-                        item => item.Tick,
-                        item => item.Id);
-                    return marker;
-                },
-                (_, marker) => InsertConductorEvent(
-                    project.Conductor.Markers,
-                    marker,
-                    item => item.Tick,
-                    item => item.Id),
-                (_, marker) => RemoveRequired(
-                    project.Conductor.Markers,
-                    marker,
-                    "Project Marker"));
-        });
+    public static IProjectEditCommand CreateProjectMarker(long tick, string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return CreateConductorValue("Create project marker", ConductorKind.Marker, tick, text: name);
+    }
 
     public static IProjectEditCommand CreateProjectEndMarker(long tick) =>
         Command("Create project end marker", project =>
@@ -768,21 +642,4 @@ public static partial class ProjectDomainEditCommands
         return low;
     }
 
-    private static void InsertConductorEvent<T>(
-        List<T> events,
-        T item,
-        Func<T, long> getTick,
-        Func<T, MidoraId> getId)
-        where T : class
-    {
-        MidoraId id = getId(item);
-        if (events.Any(value => getId(value) == id))
-        {
-            throw new InvalidOperationException("The Conductor event ID is already present.");
-        }
-        int index = events.FindIndex(value =>
-            getTick(value) > getTick(item)
-            || getTick(value) == getTick(item) && getId(value).CompareTo(id) > 0);
-        events.Insert(index < 0 ? events.Count : index, item);
-    }
 }

@@ -103,7 +103,11 @@ internal sealed class BoundedEditRecordStore<T> : IReadOnlyList<T>, IDisposable 
     public BoundedEditRecordStore(BoundedEditResources resources)
     {
         _resources = resources ?? throw new ArgumentNullException(nameof(resources));
-        _pageCapacity = resources.Budget.PageRecordCount;
+        // Tiny, known-size edits may select smaller pages without creating a
+        // separate budget. Normal/large commands keep the standard page size.
+        var context = BulkEditPreparationContext.Current;
+        _pageCapacity = context is not null && ReferenceEquals(context.Resources, resources)
+            ? context.PreferredPageRecordCount : resources.Budget.PageRecordCount;
         _pendingLease = resources.ReserveWorking(checked((long)_pageCapacity * _recordBytes));
         try { _pending = new T[_pageCapacity]; }
         catch { _pendingLease.Dispose(); throw; }

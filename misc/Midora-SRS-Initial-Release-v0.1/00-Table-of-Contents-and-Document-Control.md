@@ -52,6 +52,7 @@
 
 ## 2026-09-06 修订摘要
 
+- Conductor 编辑器改为左侧虚拟事件列表、右侧 Tempo 阶梯图及其他正式元事件 lane。Tempo 沿用 Event Lane 绘线与修饰键，显示轴与合法 BPM 范围分离；密集显示只做设备列 LOD，不丢正式事件。编辑采用可取消、有界准备及原子发布，五种音乐事件和持久化 wire 契约不变。
 - 加入三类音符与三类数值事件的 Batch Create，冻结独立 generate-note/event profiles、递推变量、Initial 首对象开关、候选上限、相对 Tick、有限内存碰撞归并与程序级 Preset；旧 Batch Edit 和 Mapping ABI 不变。
 - Logical/MIDI Segment 的拖动、复制、粘贴统一支持显式双向转换和多项混合选择；保留 crop 外音符，所有非共同数据（含空参数 Lane）汇总确认，失败不改源，一次 Undo 与目标选择。
 

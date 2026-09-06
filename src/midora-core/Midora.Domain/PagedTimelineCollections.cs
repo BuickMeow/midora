@@ -3103,7 +3103,7 @@ internal sealed class PersistentTimelineIdDeltaMap<TValue>
         IReadOnlyList<Bucket> AddedBuckets);
 }
 
-internal sealed class PagedTimelineValueSnapshot<TValue>
+internal sealed partial class PagedTimelineValueSnapshot<TValue>
 {
     internal object? EditableRoot { get; init; }
     public bool UsesExternalStorage => _sequence.UsesExternalStorage;
@@ -3615,7 +3615,7 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
     }
 }
 
-internal sealed class PagedTimelineSpatialBlockIndex<TValue>
+internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
 {
     private readonly Node? _root;
 
@@ -4204,6 +4204,10 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
             CategoryMask = entry.Block.CategoryMask
                 | (left?.CategoryMask ?? 0)
                 | (right?.CategoryMask ?? 0);
+            PagedTimelineRangeFingerprintAggregate metadataAggregate = entry.Block.Aggregate;
+            metadataAggregate.Combine(left?.MetadataAggregate ?? default);
+            metadataAggregate.Combine(right?.MetadataAggregate ?? default);
+            MetadataAggregate = metadataAggregate;
         }
 
         public PagedTimelineSpatialBlockReference<TValue> Entry { get; }
@@ -4222,6 +4226,7 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
         public double MaximumRasterValue { get; }
         public int ApproximateSourceCount { get; }
         public ulong CategoryMask { get; }
+        public PagedTimelineRangeFingerprintAggregate MetadataAggregate { get; }
 
         private static int SaturatingAdd(int left, int right) =>
             left > int.MaxValue - right ? int.MaxValue : left + right;

@@ -451,7 +451,7 @@ public abstract class WorkspaceViewModel(
     /// untouched, but no orphaned metrics scan may retain paged snapshots or
     /// publish back into a closed Workspace.
     /// </summary>
-    public void CancelBackgroundPresentationWork()
+    public virtual void CancelBackgroundPresentationWork()
     {
         _selectionPresentationScope = checked(_selectionPresentationScope + 1);
         _selectionPrefetchGeneration = checked(_selectionPrefetchGeneration + 1);
@@ -849,11 +849,9 @@ public sealed class TimelineEditorSettings : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(project);
         _ticksPerQuarterNote = project.TicksPerQuarterNote;
-        _timeSignatureMap = new ProjectTimeSignatureMap(project);
-        TimeSignatureChange? signature = project.Conductor.TimeSignatures
-            .Where(item => item.Tick <= Math.Max(0, referenceTick))
-            .OrderByDescending(item => item.Tick)
-            .FirstOrDefault();
+        _timeSignatureMap = ProjectTimeSignatureMap.GetOrCreate(project);
+        project.Conductor.TimeSignatures.CaptureQuerySnapshot()
+            .TryGetAtOrBeforeTick(Math.Max(0, referenceTick), out TimeSignatureChange? signature);
         _barNumerator = signature?.Numerator ?? 4;
         _barDenominator = signature?.Denominator ?? 4;
         Raise(nameof(DisplayGridStepTicks));
@@ -968,7 +966,7 @@ internal static class TimelineLowerEditorLayout
     public const double MaximumHeight = 520;
 }
 
-public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
+public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel
 {
     private const int MaterializedSegmentPreviewThreshold = 4096;
     private readonly Dictionary<MidoraId, SegmentPreviewCacheEntry> _segmentPreviewCache = [];
@@ -1115,7 +1113,6 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         ? 720
         : TimelineLowerEditorLayout.MaximumHeight;
 
-    public ObservableCollection<ConductorEventRow> ConductorEvents { get; } = [];
     public ConductorEventRow? SelectedConductorEvent
     {
         get => _selectedConductorEvent;
@@ -1132,10 +1129,9 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             // Note snapshots also produce the Velocity metrics/render alias.
             // Resolving the same million selected note IDs through the
             // velocity projection would decode the identical pages twice.
-            [Snapshot, ParameterSnapshot, RulerSnapshot],
+            [Snapshot, ParameterSnapshot, RulerSnapshot, ConductorTempoSnapshot],
             IsConductor
-                ? () => SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
-                    value.Id == Selection.Primary)
+                ? RefreshConductorPrimary
                 : null);
     }
 
@@ -1147,15 +1143,13 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         base.PublishMaterializedSelection(metrics, metricsAreComplete, renderIndex);
         if (IsConductor)
         {
-            SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
-                value.Id == Selection.Primary);
+            RefreshConductorPrimary();
         }
         ScheduleMaterializedSelectionMetricsIfNeeded(
             metricsAreComplete,
-            [Snapshot, ParameterSnapshot, RulerSnapshot],
+            [Snapshot, ParameterSnapshot, RulerSnapshot, ConductorTempoSnapshot],
             IsConductor
-                ? () => SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
-                    value.Id == Selection.Primary)
+                ? RefreshConductorPrimary
                 : null);
     }
     public ObservableCollection<EventInstrumentBrowserRow> EventInstrumentBrowser { get; } = [];
@@ -1563,7 +1557,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 throw new InvalidOperationException("Unknown timeline workspace mode.");
         }
         long contentEnd = Math.Max(
-            Snapshot?.MaximumEndTick ?? 0,
+            Math.Max(Snapshot?.MaximumEndTick ?? 0, ConductorTempoSnapshot?.MaximumEndTick ?? 0),
             RangeEndTick ?? 0);
         long minimumExtent = StartTick <= long.MaxValue - TickSpan
             ? StartTick + TickSpan
@@ -1639,8 +1633,11 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             0,
             TimelineLaneState.None,
             false);
-        TimelineRenderSnapshot conductor = BuildConductorOverview(project, revision);
-        items.AddRange(conductor.Items);
+        ConductorTimelineProjection conductor = new(project.Conductor, revision, 0, 240);
+        if (project.Conductor.EndMarker is { } conductorEnd)
+            items.Add(new(conductorEnd.Id, TimelineItemKind.ProjectEndMarker, conductorEnd.Tick,
+                conductorEnd.Tick == long.MaxValue ? long.MaxValue : conductorEnd.Tick + 1,
+                0, 0, 4, TimelineItemState.HitTestDisabled) { Label = "END" });
 
         Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments
             .GroupBy(value => value.Id)
@@ -1843,11 +1840,9 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             previews,
             secondaryLabels,
             laneColors,
-            lanes);
-        RulerSnapshot = new(
-            revision,
-            "arrangement-marker-ruler",
-            conductor.Items.Where(item => item.Kind == TimelineItemKind.Marker));
+            lanes,
+            conductorPreviewSource: conductor.ArrangementSource);
+        RulerSnapshot = conductor.RulerSnapshot;
 
         TimelineLaneState TrackMonitoringState(MidoraId trackId) =>
             (_mutedTrackIds.Contains(trackId) ? TimelineLaneState.Muted : TimelineLaneState.None)
@@ -2549,118 +2544,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         _ => value.Data2 / 127d
     };
 
-    private void RebuildConductor(MidoraProject project, long revision)
-    {
-        PruneSelection(
-            project.Conductor.Tempos.Select(item => item.Id)
-                .Concat(project.Conductor.TimeSignatures.Select(item => item.Id))
-                .Concat(project.Conductor.KeySignatures.Select(item => item.Id))
-                .Concat(project.Conductor.Markers.Select(item => item.Id))
-                .Concat(project.Conductor.EndMarker is ProjectEndMarker selectionEndMarker
-                    ? [selectionEndMarker.Id]
-                    : Array.Empty<MidoraId>()));
-        RulerSnapshot = null;
-        RangeStartTick = null;
-        RangeEndTick = null;
-        ConductorEvents.Clear();
-        List<TimelineRenderItem> items = [];
-        foreach (TempoChange item in project.Conductor.Tempos)
-        {
-            items.Add(Item(item.Id, TimelineItemKind.ConductorEvent, item.Tick, checked(item.Tick + 1), 0));
-            ConductorEvents.Add(new(item.Id, item.Tick, "Tempo", $"{item.BeatsPerMinute:0.######} BPM"));
-        }
-        foreach (TimeSignatureChange item in project.Conductor.TimeSignatures)
-        {
-            items.Add(Item(item.Id, TimelineItemKind.ConductorEvent, item.Tick, checked(item.Tick + 1), 1));
-            ConductorEvents.Add(new(item.Id, item.Tick, "Time Signature", $"{item.Numerator}/{item.Denominator}"));
-        }
-        foreach (KeySignatureChange item in project.Conductor.KeySignatures)
-        {
-            items.Add(Item(item.Id, TimelineItemKind.ConductorEvent, item.Tick, checked(item.Tick + 1), 2));
-            ConductorEvents.Add(new(item.Id, item.Tick, "Key Signature", $"{item.SharpsFlats:+0;-0;0} · {(item.IsMinor ? "Minor" : "Major")}"));
-        }
-        foreach (ProjectMarker item in project.Conductor.Markers)
-        {
-            items.Add(Item(item.Id, TimelineItemKind.Marker, item.Tick, checked(item.Tick + 1), 3));
-            ConductorEvents.Add(new(item.Id, item.Tick, "Marker", string.IsNullOrWhiteSpace(item.Name) ? "(unnamed)" : item.Name));
-        }
-        if (project.Conductor.EndMarker is ProjectEndMarker endMarker)
-        {
-            items.Add(Item(
-                endMarker.Id,
-                TimelineItemKind.ProjectEndMarker,
-                endMarker.Tick,
-                checked(endMarker.Tick + 1),
-                4,
-                z: 2));
-            ConductorEvents.Add(new(endMarker.Id, endMarker.Tick, "Project End", "Hard end boundary"));
-        }
-        ConductorEventRow[] orderedRows = ConductorEvents
-            .OrderBy(item => item.Tick).ThenBy(item => item.Type, StringComparer.Ordinal).ThenBy(item => item.Id)
-            .ToArray();
-        ConductorEvents.Clear();
-        foreach (ConductorEventRow row in orderedRows) ConductorEvents.Add(row);
-        Context = "Tempo · Time Signature · Key Signature · Markers · Project End Marker";
-        Snapshot = new(
-            revision,
-            "conductor",
-            items,
-            ["Tempo", "Time Signature", "Key Signature", "Marker", "Project End"]);
-    }
-
-    private static TimelineRenderSnapshot BuildConductorOverview(MidoraProject project, long revision)
-    {
-        List<(MidoraId Id, TimelineItemKind Kind, long Tick, string Label, int Priority)> events = [];
-        foreach (TempoChange item in project.Conductor.Tempos)
-        {
-            events.Add((item.Id, TimelineItemKind.ConductorEvent, item.Tick,
-                $"{item.BeatsPerMinute:0.##} BPM", 0));
-        }
-        foreach (TimeSignatureChange item in project.Conductor.TimeSignatures)
-        {
-            events.Add((item.Id, TimelineItemKind.ConductorEvent, item.Tick,
-                $"{item.Numerator}/{item.Denominator}", 1));
-        }
-        foreach (KeySignatureChange item in project.Conductor.KeySignatures)
-        {
-            events.Add((item.Id, TimelineItemKind.ConductorEvent, item.Tick, "Key", 2));
-        }
-        foreach (ProjectMarker item in project.Conductor.Markers)
-        {
-            events.Add((item.Id, TimelineItemKind.Marker, item.Tick,
-                string.IsNullOrWhiteSpace(item.Name) ? "Marker" : item.Name, 3));
-        }
-        if (project.Conductor.EndMarker is ProjectEndMarker end)
-        {
-            events.Add((end.Id, TimelineItemKind.ProjectEndMarker, end.Tick, "END", 4));
-        }
-        TimelineRenderItem[] items = events
-            .OrderBy(item => item.Tick)
-            .ThenBy(item => item.Priority)
-            .ThenBy(item => item.Id.Value)
-            .Select(item => new TimelineRenderItem(
-                item.Id,
-                item.Kind,
-                item.Tick,
-                checked(item.Tick + 1),
-                0,
-                0,
-                item.Priority,
-                TimelineItemState.HitTestDisabled)
-            {
-                Label = item.Label,
-                AccentColor = item.Priority switch
-                {
-                    0 => 0xFFE5484Du,
-                    1 => 0xFF62A6F6u,
-                    2 => 0xFFAF7AC5u,
-                    3 => 0xFFE8B34Bu,
-                    _ => 0xFFE5E7EBu
-                }
-            })
-            .ToArray();
-        return new(revision, "arrangement-conductor-overview", items);
-    }
+    private void RebuildConductor(MidoraProject project, long revision) =>
+        RebuildConductorPaged(project, revision);
 
     private TimelineRenderItem Item(
         MidoraId id,

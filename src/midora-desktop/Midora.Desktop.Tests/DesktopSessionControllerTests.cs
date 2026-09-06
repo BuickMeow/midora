@@ -1313,16 +1313,22 @@ public sealed class DesktopSessionControllerTests
 
         TimelineRenderSnapshot snapshot = Assert.IsType<TimelineRenderSnapshot>(arrangement.Snapshot);
         TimelineRenderSnapshot ruler = Assert.IsType<TimelineRenderSnapshot>(arrangement.RulerSnapshot);
-        TimelineRenderItem marker = Assert.Single(ruler.Items);
+        TimelineRenderItem marker = Assert.Single(ruler.EnumerateAllItems());
         Assert.Equal(TimelineItemKind.Marker, marker.Kind);
         Assert.Equal("Verse", marker.Label);
         Assert.True(marker.State.HasFlag(TimelineItemState.HitTestDisabled));
-        Assert.True(snapshot.Items.Count >= 3);
+        Assert.True(snapshot.HasConductorPreviewItems);
+        Assert.Empty(snapshot.Items);
         Assert.All(snapshot.Items, item =>
             Assert.True(item.State.HasFlag(TimelineItemState.HitTestDisabled)));
-        Assert.Contains(snapshot.Items, item => item.Label.Contains("132.5 BPM", StringComparison.Ordinal));
-        Assert.Contains(snapshot.Items, item => item.Label == "3/4");
-        Assert.Contains(snapshot.Items, item => item.Label == "Verse");
+        Assert.Equal(385, snapshot.MaximumEndTick);
+        // Conductor previews now use a separate immutable source instead of
+        // copying every event into the Arrangement's hit-test items.
+        var projection = new ConductorTimelineProjection(session.Project!.Conductor, 0, 0, 240);
+        var preview = projection.ArrangementSource.EnumerateAll().ToArray();
+        Assert.Contains(preview, item => ConductorRenderItemSource.GetDisplayLabel(item) == "132.5 BPM");
+        Assert.Contains(preview, item => ConductorRenderItemSource.GetDisplayLabel(item) == "3/4");
+        Assert.Contains(preview, item => item.Label == "Verse");
     }
 
     [Fact]

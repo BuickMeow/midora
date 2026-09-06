@@ -12,8 +12,9 @@ internal static class BoundedProjectDirectoryBudget
     internal static IDisposable Reserve(MidoraProject project, BulkEditPreparationContext scope)
     {
         long bytes = 4096;
-        Add((long)project.Conductor.Tempos.Count + project.Conductor.TimeSignatures.Count
-            + project.Conductor.KeySignatures.Count + project.Conductor.Markers.Count, 16);
+        // Four immutable Conductor roots are shared with the private mirror;
+        // neither their record directories nor their text/value pages are copied.
+        Add(4, 256);
         State(project.GlobalInitialState); State(project.GlobalResetDefaults);
         Add((long)project.Tracks.Count + project.PureMidiTracks.Count + project.MidiChannelRoots.Count
             + project.EventInstrumentUsages.Count, 1024);

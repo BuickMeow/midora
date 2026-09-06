@@ -118,6 +118,9 @@
 | INV-107 | Note/Event Quantize 复用正式 Snap/Grid/Time Signature 服务，固定 100%、不提供 Bar，中点选早格。Note 提供 Start only 与 Start+End，后者 `end<=start` 时饱和为 `start+1`，exact start+key 按冻结 formal order later-loses。Event 只覆盖 Direct MIDI Channel Event、Logical Parameter Point 和 SubVoice MIDI Event，只改 Tick，exact tick+target 按冻结 formal order later-wins；未命中的导入重复必须保留。全部命令以 detached paged transaction 可取消准备、零部分发布，成功后形成一次 Undo 和确定选择结果。 |
 | INV-108 | Batch Create 只在有效 Note owner / 数值 Event lane 上生成正式对象。Generator 的 i 为零基，*0 是上一轮正规化结果/Initial，*1 是本轮 DAG 结果，tr=input t0；Initial 首对象开关默认关闭，开启时首对象计 candidate 0。Maximum Candidates 默认 65,535、硬上限 16,777,216，计迭代而非保留对象。负相对 tick Clamp 0，finite/checked 失败零发布，Note 既有/较早候选优先，Event 较晚候选覆盖命中键；任意 Tick 倒退也必须有界归并与安全取消，Undo/Redo 不重新求值。Preset 不保存 Base/owner/lane。 |
 | INV-109 | Logical/MIDI Segment 双向拖动、复制、粘贴共用完整内容转换；保持全局 Track 相对偏移、crop 和 hidden Notes。非共同数据（含空参数 Lane、非零 NoteOff velocity、折叠 exact duplicate）必须冻结类型/数量并一次确认，不按名称推断。Move 的源删除与验证完成的目标属于一个 detached 原子事务；失败、取消、revision race 不改源。成功选择目标并形成一次 Undo，同类型保留全部数据。 |
+| INV-110 | Conductor Tempo 只允许离散保持状态，图形为水平保持及变化 tick 的竖直跳变。绘线只生成正式离散点；设备列 first/last/min/max 与标签 LOD 不改变源记录、命中、选择、编译或导出。可见左界恢复前驱值，显示轴不得成为隐式 BPM 合法范围。 |
+| INV-111 | Conductor 的虚拟列表、范围命中与编辑使用不可变修订和有界后台准备；不在 UI 线程整表物化百万事件。Tempo/拍号/调号同 tick 后来编辑者覆盖，Marker 保留同 tick 多项；tick 0 必需 Tempo/拍号不可移动或删除。取消、失败及旧修订结果零发布，Undo/Redo 与列表/时间线共享稳定 ID 选择。 |
+
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -141,6 +144,7 @@
 | 产品 SemVer、Project Format 冻结、兼容迁移、Git tag 与发布门 | 第 16、21 章 |
 | 主窗口、导航、对象所属属性编辑器和全局面板 | 第 17、24 章 |
 | 各编辑器工作区、Timeline 精确属性与事务式 Properties | 第 17、18、20、24 章 |
+| Conductor 虚拟列表、Tempo 阶梯图、绘线、密集元事件与原子批量编辑 | 第 4、18、20 章；INV-110～111 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、分页 ordinal/range query、detached edit、浮动工具、拖放、验证、快捷键和 UI 验收 | 第 18、20、23、24 章；INV-095～100 |
 | 工具表达式 profile、Preset、Humanize、Note Split/Join、Note/Event Quantize、Batch Create、Segment 双向转换 | 第 18、20、23 章；INV-104～109 |

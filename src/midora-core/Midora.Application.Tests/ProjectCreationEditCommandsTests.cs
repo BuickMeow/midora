@@ -448,8 +448,11 @@ public sealed class ProjectCreationEditCommandsTests
         long highWater = project.NextStableId;
         AssertMatchesFull(compilation);
 
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.CreateTempo(480, 100m)));
+        document.Execute(ProjectDomainEditCommands.CreateTempo(480, 100m));
+        Assert.Equal(100m, project.Conductor.Tempos.Single(value => value.Tick == 480).BeatsPerMinute);
+        document.Undo();
+        Assert.Equal(90m, project.Conductor.Tempos.Single(value => value.Tick == 480).BeatsPerMinute);
+        highWater = project.NextStableId;
         Assert.Throws<InvalidOperationException>(() => document.Execute(
             ProjectDomainEditCommands.CreateProjectEndMarker(2_400)));
         Assert.Equal(highWater, project.NextStableId);

@@ -215,41 +215,14 @@ internal static partial class ProjectCompilationSnapshot
         ConductorTrack target,
         CancellationToken cancellationToken)
     {
-        List<TempoChange> tempos = new(source.Tempos.Count);
-        List<TimeSignatureChange> timeSignatures = new(source.TimeSignatures.Count);
-        List<KeySignatureChange> keySignatures = new(source.KeySignatures.Count);
-        List<ProjectMarker> markers = new(source.Markers.Count);
-        foreach (TempoChange value in source.Tempos)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            tempos.Add(value);
-        }
-        foreach (TimeSignatureChange value in source.TimeSignatures)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            timeSignatures.Add(value);
-        }
-        foreach (KeySignatureChange value in source.KeySignatures)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            keySignatures.Add(value);
-        }
-        foreach (ProjectMarker marker in source.Markers)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            markers.Add(marker);
-        }
-        ProjectEndMarker? endMarker = source.EndMarker is null
-            ? null
-            : new ProjectEndMarker(source.EndMarker.Id, source.EndMarker.Tick);
-        // These four record types contain only init-only scalar/immutable text
-        // fields. Share the records, not their mutable list directories. Prepare
-        // all directories before publication so cancellation keeps target intact.
-        target.Tempos = tempos;
-        target.TimeSignatures = timeSignatures;
-        target.KeySignatures = keySignatures;
-        target.Markers = markers;
-        target.EndMarker = endMarker;
+        cancellationToken.ThrowIfCancellationRequested();
+        ConductorTrack captured = source.CloneFrozen();
+        cancellationToken.ThrowIfCancellationRequested();
+        target.Tempos = captured.Tempos;
+        target.TimeSignatures = captured.TimeSignatures;
+        target.KeySignatures = captured.KeySignatures;
+        target.Markers = captured.Markers;
+        target.EndMarker = captured.EndMarker;
     }
 
     private static LogicalTrack CloneTrack(

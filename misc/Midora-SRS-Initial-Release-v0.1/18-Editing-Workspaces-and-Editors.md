@@ -480,11 +480,11 @@ Lifecycle Preview Timeline 和 Scenario Preview 只用于解释和测试，不�
 +--------------------------------------------------------------------------+
 | [A] Conductor Toolbar                                                    |
 +----------------------+---------------------------------------------------+
-| [B] Event Type Panel| [C] Timeline Header                              |
+| [B] Virtual Event List| [C] Timeline Header                             |
 +----------------------+---------------------------------------------------+
-|                      | [D] Global Event Timeline                         |
+|                      | [D] Tempo state / step graph                     |
 +----------------------+---------------------------------------------------+
-| [E] Resizable Event List                                                 |
+|                      | [E] Time Signature / Key / Marker / End lanes    |
 +--------------------------------------------------------------------------+
 | [F] Timeline Overview and Horizontal Scroll                              |
 +--------------------------------------------------------------------------+
@@ -500,6 +500,9 @@ Project End Marker
 ### 18.7.2 Tempo
 初版只支持离散 Tempo 事件，不支持 Tempo Ramp 或连续 Tempo Automation。
 Tempo 大于 0，允许小数，不设置 20～300 等经验型限制。
+Tempo 占独立较高区域，以水平保持线及变化 tick 的竖直跳变连接，不得画斜线暗示 Ramp。可见区域左界须恢复最近前驱状态。BPM 显示范围可缩放、平移或 Fit，不是合法值限制。自由绘线、右键直线、Shift+右键 `y=k`、Shift 固定 tick 改值及 Ctrl 复制均沿用 Event Lane 交互；Snap 开启按操作格点插点，关闭逐 tick 插点。所有生成值仍按第 4 章和 MIDI 表示边界验证。
+
+密集 Tempo 按设备列保留 first/last/min/max 包络和末值保持；可分离点保持固定 device pixel 大小。LOD、阶梯缓存和标签只是展示，不替代正式对象命中或编译。其他正式事件 lane 同样使用有界密集点聚合和不重叠标签，不把任意 opaque Meta 提升为 Conductor 类型。
 ### 18.7.3 Time Signature 与 Key Signature
 Time Signature 修改只更新网格和音乐位置显示，不移动任何内容 tick。
 Key Signature 不自动转调或修改 Note 音高。
@@ -516,7 +519,7 @@ Project End Marker 使用贯穿 Lane 的特殊竖线：
 Event List 与 Timeline Selection 同步。
 播放期间允许查看和导航，不允许编辑 Conductor 事件。
 
-Event List 双击或右键 `Properties...` 打开当前单个 Conductor event 的固定目标模态编辑器。Tempo、Time Signature、Key Signature、Marker 与 Project End Marker 的 tick 和类型专属字段在 `OK` 时通过一个正式 Project command 提交；不显示 Stable ID。Event List 下部区域可由水平 splitter 调整，具有防止吞没上下编辑区的硬最小/最大高度；首次打开默认约占整个 Conductor Workspace 高度的一半。
+Event List 双击或右键 `Properties...` 打开当前单个 Conductor event 的固定目标模态编辑器。Tempo、Time Signature、Key Signature、Marker 与 Project End Marker 的 tick 和类型专属字段在 `OK` 时通过一个正式 Project command 提交；不显示 Stable ID。列表位于左侧，可调整宽度；右侧 Tempo 与其余 lane 之间可调整高度并保留两侧硬最小值。列表采用修订绑定的分页/ordinal 查询及虚拟行，不得为百万事件建立完整 ObservableCollection 或 WPF 控件。单击、Ctrl 多选、Shift 连续范围与拖动范围选择与时间线同步；`Locate` 定位对应事件。异步读取或选择完成必须校验来源修订和当前选择修订，旧请求不得覆盖新选择。宽度、滚动和显示轴仅属于工作区会话状态。
 
 ### 18.7.6 Arrangement 概览
 

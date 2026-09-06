@@ -71,10 +71,10 @@ internal static partial class ProjectCompilationSnapshot
         CurvePointQuerySnapshot Points);
 
     internal sealed record ConductorCapture(
-        TempoChange[] Tempos,
-        TimeSignatureChange[] TimeSignatures,
-        KeySignatureChange[] KeySignatures,
-        ProjectMarker[] Markers,
+        ConductorQuerySnapshot<TempoChange> Tempos,
+        ConductorQuerySnapshot<TimeSignatureChange> TimeSignatures,
+        ConductorQuerySnapshot<KeySignatureChange> KeySignatures,
+        ConductorQuerySnapshot<ProjectMarker> Markers,
         ProjectEndMarker? EndMarker);
 
     internal static RevisionCapture CaptureRevision(
@@ -627,44 +627,11 @@ internal static partial class ProjectCompilationSnapshot
         ConductorTrack source,
         CancellationToken cancellationToken)
     {
-        TempoChange[] tempos = new TempoChange[source.Tempos.Count];
-        for (int index = 0; index < tempos.Length; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            TempoChange value = source.Tempos[index];
-            tempos[index] = new(value.Id, value.Tick, value.BeatsPerMinute);
-        }
-        TimeSignatureChange[] timeSignatures =
-            new TimeSignatureChange[source.TimeSignatures.Count];
-        for (int index = 0; index < timeSignatures.Length; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            TimeSignatureChange value = source.TimeSignatures[index];
-            timeSignatures[index] = new(
-                value.Id,
-                value.Tick,
-                value.Numerator,
-                value.Denominator);
-        }
-        KeySignatureChange[] keySignatures =
-            new KeySignatureChange[source.KeySignatures.Count];
-        for (int index = 0; index < keySignatures.Length; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            KeySignatureChange value = source.KeySignatures[index];
-            keySignatures[index] = new(
-                value.Id,
-                value.Tick,
-                value.SharpsFlats,
-                value.IsMinor);
-        }
-        ProjectMarker[] markers = new ProjectMarker[source.Markers.Count];
-        for (int index = 0; index < markers.Length; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            ProjectMarker value = source.Markers[index];
-            markers[index] = new(value.Id, value.Tick, value.Name);
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        ConductorQuerySnapshot<TempoChange> tempos = source.Tempos.CaptureQuerySnapshot();
+        ConductorQuerySnapshot<TimeSignatureChange> timeSignatures = source.TimeSignatures.CaptureQuerySnapshot();
+        ConductorQuerySnapshot<KeySignatureChange> keySignatures = source.KeySignatures.CaptureQuerySnapshot();
+        ConductorQuerySnapshot<ProjectMarker> markers = source.Markers.CaptureQuerySnapshot();
         ProjectEndMarker? endMarker = source.EndMarker is null
             ? null
             : new ProjectEndMarker(source.EndMarker.Id, source.EndMarker.Tick);
@@ -677,11 +644,11 @@ internal static partial class ProjectCompilationSnapshot
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ReplaceList(target.Tempos, capture.Tempos);
-        ReplaceList(target.TimeSignatures, capture.TimeSignatures);
-        ReplaceList(target.KeySignatures, capture.KeySignatures);
-        ReplaceList(target.Markers, capture.Markers);
-        target.EndMarker = capture.EndMarker;
+        target.Tempos.AdoptSnapshot(capture.Tempos);
+        target.TimeSignatures.AdoptSnapshot(capture.TimeSignatures);
+        target.KeySignatures.AdoptSnapshot(capture.KeySignatures);
+        target.Markers.AdoptSnapshot(capture.Markers);
+        target.EndMarker = capture.EndMarker is { } marker ? new(marker.Id, marker.Tick) : null;
     }
 
     private static void ApplyState(

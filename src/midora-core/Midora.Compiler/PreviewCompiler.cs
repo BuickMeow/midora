@@ -607,23 +607,21 @@ public sealed class PreviewCompiler
     private static void CopyConductor(ConductorTrack source, MidoraProject targetProject)
     {
         ConductorTrack target = targetProject.Conductor;
-        target.Tempos.Clear();
-        target.Tempos.AddRange(source.Tempos);
-        target.TimeSignatures.Clear();
-        target.TimeSignatures.AddRange(source.TimeSignatures);
-        target.KeySignatures.AddRange(source.KeySignatures);
-        target.Markers.AddRange(source.Markers);
+        target.Tempos.AdoptSnapshot(source.Tempos.CaptureQuerySnapshot());
+        target.TimeSignatures.AdoptSnapshot(source.TimeSignatures.CaptureQuerySnapshot());
+        target.KeySignatures.AdoptSnapshot(source.KeySignatures.CaptureQuerySnapshot());
+        target.Markers.AdoptSnapshot(source.Markers.CaptureQuerySnapshot());
         target.EndMarker = source.EndMarker is null
             ? null
             : new ProjectEndMarker(targetProject, source.EndMarker.Tick) { Id = source.EndMarker.Id };
     }
 
-    private static decimal GetTempoAt(ConductorTrack conductor, long tick) => conductor.Tempos
-        .Where(value => value.Tick <= tick)
-        .OrderBy(value => value.Tick)
-        .LastOrDefault()?.BeatsPerMinute
-        ?? conductor.Tempos.OrderBy(value => value.Tick).FirstOrDefault()?.BeatsPerMinute
-        ?? 120m;
+    private static decimal GetTempoAt(ConductorTrack conductor, long tick)
+    {
+        var snapshot = conductor.Tempos.CaptureQuerySnapshot();
+        return snapshot.TryGetAtOrBeforeTick(tick, out var value) ? value.BeatsPerMinute
+            : snapshot.Count != 0 ? snapshot.GetByOrdinal(0).BeatsPerMinute : 120m;
+    }
 
     private static long AddPreviewDurationClamped(long left, long right) =>
         right >= long.MaxValue - left

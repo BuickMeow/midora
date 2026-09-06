@@ -239,12 +239,13 @@ public sealed class TimelineItemEditEventArgs(
     public bool CopyRequested { get; } = copyRequested;
 }
 
-public sealed class TimelineSurface : Control
+public sealed partial class TimelineSurface : Control
 {
     private const int MaximumFormattedTextCacheEntries = 2048;
     public const double MinimumPianoLaneHeight = 3;
     public const double MaximumPianoLaneHeight = 128;
     public const double ArrangementLaneHeaderWidth = 232;
+    public const double ConductorEditorLaneHeaderWidth = 150;
     private const double MinimumArrangementLaneHeight = 28;
     private const double MaximumArrangementLaneHeight = 112;
     private const double ArrangementParentLaneHeightRatio = 0.62;
@@ -330,6 +331,14 @@ public sealed class TimelineSurface : Control
             FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
             OnViewportMetricsChanged,
             CoerceLaneHeight));
+
+    public static readonly DependencyProperty LaneHeaderWidthOverrideProperty = DependencyProperty.Register(
+        nameof(LaneHeaderWidthOverride),
+        typeof(double),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsRender,
+            OnViewportMetricsChanged),
+        value => double.IsNaN((double)value) || (double.IsFinite((double)value) && (double)value >= 0));
 
     public static readonly DependencyProperty GridStepTicksProperty = DependencyProperty.Register(
         nameof(GridStepTicks),
@@ -832,6 +841,8 @@ public sealed class TimelineSurface : Control
         _ = args;
         if (_backgroundWorkSuspended) return;
         _backgroundWorkSuspended = true;
+        CancelConductorHit();
+        _conductorLabelRequests.Clear();
         CancelPendingRightGesture(cancelDelayedMenu: true);
 
         _rasterRequestCancellation.Cancel();
@@ -1160,6 +1171,7 @@ public sealed class TimelineSurface : Control
     public event EventHandler<TimelineArrangementMidiRouteEventArgs>? ArrangementMidiRouteInvoked;
     public event EventHandler<TimelineVelocityEditEventArgs>? VelocityEditCompleted;
     public event EventHandler<TimelineEventPointEditEventArgs>? EventPointEditCompleted;
+    public event EventHandler<TimelineEventPointTraceEventArgs>? EventPointTraceCompleted;
     public event EventHandler? ViewportChanged;
     public event RoutedEventHandler AltGestureConsumed
     {
@@ -1168,6 +1180,12 @@ public sealed class TimelineSurface : Control
     }
 
     public double LaneHeaderWidth => GetLaneHeaderWidth();
+
+    public double LaneHeaderWidthOverride
+    {
+        get => (double)GetValue(LaneHeaderWidthOverrideProperty);
+        set => SetValue(LaneHeaderWidthOverrideProperty, value);
+    }
 
     public bool TryGetArrangementLaneHeader(Point point, out int lane)
     {
@@ -1359,6 +1377,11 @@ public sealed class TimelineSurface : Control
             if (args.Property == SnapshotProperty)
             {
                 surface.CancelDelayedContextMenu();
+                surface.CancelConductorHit();
+            }
+            if (args.Property == LaneHeaderWidthOverrideProperty)
+            {
+                surface.CancelConductorHit();
             }
             if (args.Property == SurfaceModeProperty)
             {
@@ -1522,6 +1545,7 @@ public sealed class TimelineSurface : Control
         layer is TimelineRasterLayer.PianoSelection
             or TimelineRasterLayer.VelocityBars
             or TimelineRasterLayer.EventPoints
+            or TimelineRasterLayer.ConductorMeta
             or TimelineRasterLayer.EventPointSelection;
 
     private void ScheduleVisibleExactPrefetch()
@@ -1676,6 +1700,7 @@ public sealed class TimelineSurface : Control
         DependencyPropertyChangedEventArgs args)
     {
         TimelineSurface surface = (TimelineSurface)dependencyObject;
+        if (surface._pendingConductorPress is not null) surface.CancelConductorHit();
         surface.RefreshHoverIntent();
     }
 
@@ -1986,6 +2011,10 @@ public sealed class TimelineSurface : Control
                     laneHeaderWidth,
                     rulerHeight);
             }
+            else if (SurfaceMode == TimelineSurfaceMode.Conductor && snapshot.ConductorSource is not null)
+            {
+                DrawConductorMetaTiles(drawingContext, viewport, info, red, text, border, laneHeaderWidth, rulerHeight);
+            }
             else
             {
                 if (SurfaceMode == TimelineSurfaceMode.Arrangement)
@@ -2111,6 +2140,10 @@ public sealed class TimelineSurface : Control
     protected override void OnMouseDown(MouseButtonEventArgs e)
     {
         base.OnMouseDown(e);
+        // A new physical press supersedes a previous cold Conductor request.
+        // Hover cannot replace the pending hit, but a later deliberate gesture can.
+        // Replay clears its pending record before re-entering this handler.
+        if (_pendingConductorPress is not null) CancelConductorHit();
         _pendingGestureCancellation.Cancel();
         _pendingGestureCancellation.Dispose();
         _pendingGestureCancellation = new();
@@ -2120,7 +2153,7 @@ public sealed class TimelineSurface : Control
             Cursor = Cursors.Arrow;
         }
         _gestureToken = checked(_gestureToken + 1);
-        Point point = e.GetPosition(this);
+        Point point = InteractionPosition(e);
         if (SurfaceMode == TimelineSurfaceMode.PianoRoll
             && e.ChangedButton == MouseButton.Right
             && point.X >= 0
@@ -2154,6 +2187,12 @@ public sealed class TimelineSurface : Control
             return;
         }
 
+        if (TryDeferConductorPress(e, point, viewport))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (e.ChangedButton == MouseButton.Right
             && IsEditableTimelineContent(point, viewport))
         {
@@ -2168,7 +2207,7 @@ public sealed class TimelineSurface : Control
                 return;
             }
 
-            BeginPendingRightGesture(point, Keyboard.Modifiers);
+            BeginPendingRightGesture(point, ConductorGestureModifiers);
             CaptureMouse();
             e.Handled = true;
             return;
@@ -2184,7 +2223,7 @@ public sealed class TimelineSurface : Control
                 ToolMode,
                 SurfaceMode,
                 e.ChangedButton,
-                Keyboard.Modifiers);
+                ConductorGestureModifiers);
             _velocityOrigin = point;
             _velocityButton = e.ChangedButton;
             _velocityEdits.Clear();
@@ -2221,7 +2260,7 @@ public sealed class TimelineSurface : Control
         if (SurfaceMode == TimelineSurfaceMode.EventLanes
             && ToolMode == TimelineToolMode.Draw
             && CanEdit
-            && EventPointEditCompleted is not null
+            && (EventPointEditCompleted is not null || EventPointTraceCompleted is not null)
             && e.ChangedButton is MouseButton.Left or MouseButton.Right
             && point.X >= GetLaneHeaderWidth()
             && point.Y >= GetRulerHeight())
@@ -2231,7 +2270,7 @@ public sealed class TimelineSurface : Control
                 ToolMode,
                 SurfaceMode,
                 e.ChangedButton,
-                Keyboard.Modifiers);
+                ConductorGestureModifiers);
             bool hasDirectItem = e.ChangedButton == MouseButton.Left
                 && !forceTrace
                 && TryHitEventPoint(point, viewport, out directItem);
@@ -2254,12 +2293,12 @@ public sealed class TimelineSurface : Control
                 ToolMode,
                 SurfaceMode,
                 e.ChangedButton,
-                Keyboard.Modifiers);
+                ConductorGestureModifiers);
             _eventPointTimeLocked = TimelineToolPolicy.RequestsTimeLockedPointCreation(
                 ToolMode,
                 SurfaceMode,
                 e.ChangedButton,
-                Keyboard.Modifiers);
+                ConductorGestureModifiers);
             _eventPointEdits.Clear();
             _eventPointDirectItemId = null;
             if (forceTrace)
@@ -2289,7 +2328,7 @@ public sealed class TimelineSurface : Control
 
         double laneHeaderWidth = GetLaneHeaderWidth();
         double rulerHeight = GetRulerHeight();
-        ModifierKeys modifiers = Keyboard.Modifiers;
+        ModifierKeys modifiers = ConductorGestureModifiers;
         if (point.X >= laneHeaderWidth && point.Y >= 0 && point.Y < rulerHeight)
         {
             long rulerTick = viewport.XToTick(point.X - laneHeaderWidth);
@@ -2466,7 +2505,7 @@ public sealed class TimelineSurface : Control
                 e.Handled = true;
                 return;
             }
-            if (_hitItems.Count == 0 && Snapshot is not null)
+            if (_hitItems.Count == 0 && Snapshot is { ConductorSource: null })
             {
                 long pointTolerance = Math.Max(1, checked((long)Math.Ceiling(4 / viewport.PixelsPerTick)));
                 if (!Snapshot.TryHitTestCached(tick, pointTolerance, lane, _hitItems))
@@ -2712,7 +2751,7 @@ public sealed class TimelineSurface : Control
         _pendingRightGestureCanTrace = CanEdit
             && SurfaceMode == TimelineSurfaceMode.EventLanes
             && ToolMode == TimelineToolMode.Draw
-            && EventPointEditCompleted is not null;
+            && (EventPointEditCompleted is not null || EventPointTraceCompleted is not null);
         _suppressAutomaticContextMenuOpening = true;
         PrepareDelayedContextMenuQuery(
             point,
@@ -3066,7 +3105,16 @@ public sealed class TimelineSurface : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        Point point = e.GetPosition(this);
+        Point point = InteractionPosition(e);
+        if (_pendingConductorPress is { } pendingConductor)
+        {
+            pendingConductor.LastPosition = point;
+            pendingConductor.LastMove = e;
+            if (pendingConductor.MovePositions.Count == 0 || pendingConductor.MovePositions[^1] != point)
+                pendingConductor.MovePositions.Add(point);
+            e.Handled = true;
+            return;
+        }
         _hoverPoint = point;
         if (TryCreateViewport(out TimelineViewport pointerViewport))
         {
@@ -3249,7 +3297,7 @@ public sealed class TimelineSurface : Control
             return;
         }
         if (_eventPointOrigin is Point eventPointOrigin
-            && (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed))
+            && (_replayingConductorMove || e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed))
         {
             if (_eventPointDirectItemId is MidoraId directId
                 && Snapshot?.TryGetItem(directId, out TimelineRenderItem directItem) == true)
@@ -3263,7 +3311,7 @@ public sealed class TimelineSurface : Control
             InvalidateVisual();
             return;
         }
-        if (e.LeftButton == MouseButtonState.Pressed
+        if ((_replayingConductorMove || e.LeftButton == MouseButtonState.Pressed)
             && (_notePlacementStartTick is not null
                 || _segmentPlacementStartTick is not null
                 || _dragItem is not null))
@@ -3318,13 +3366,14 @@ public sealed class TimelineSurface : Control
             InvalidateVisual();
             return;
         }
-        if (_dragItem is TimelineRenderItem dragItem && e.LeftButton == MouseButtonState.Pressed
+        if (_dragItem is TimelineRenderItem dragItem && (_replayingConductorMove || e.LeftButton == MouseButtonState.Pressed)
             && TryCreateViewport(out TimelineViewport dragViewport))
         {
             _dragCurrentTick = _dragTimeLocked
                 ? _dragOriginTick
                 : dragViewport.XToTick(point.X - GetLaneHeaderWidth());
-            _dragCurrentLane = YToLane(dragViewport, point.Y - GetRulerHeight());
+            _dragCurrentLane = SurfaceMode == TimelineSurfaceMode.Conductor && Snapshot?.ConductorSource is not null
+                ? _dragOriginLane : YToLane(dragViewport, point.Y - GetRulerHeight());
             bool wasActivated = _dragActivated;
             _dragActivated |= Math.Abs(point.X - _dragOrigin.X) >= 3
                 || Math.Abs(point.Y - _dragOrigin.Y) >= 3;
@@ -3444,6 +3493,13 @@ public sealed class TimelineSurface : Control
     protected override void OnMouseUp(MouseButtonEventArgs e)
     {
         base.OnMouseUp(e);
+        if (_pendingConductorPress is { } pendingConductor && e.ChangedButton == MouseButton.Left)
+        {
+            pendingConductor.LastPosition = InteractionPosition(e);
+            pendingConductor.Up = e;
+            e.Handled = true;
+            return;
+        }
         if (e.ChangedButton == MouseButton.Left
             && _selectionToolGripOrigin is not null)
         {
@@ -3580,10 +3636,14 @@ public sealed class TimelineSurface : Control
         }
         if (_eventPointOrigin is not null && e.ChangedButton == _eventPointButton)
         {
+            TimelineEventPointTraceEventArgs? traceResult = null;
             if (_eventPointDirectItemId is null && TryCreateViewport(out TimelineViewport eventViewport))
             {
-                UpdateEventPointTrace(_eventPointOrigin.Value, e.GetPosition(this));
-                BuildEventPointEditsFromTrace(eventViewport);
+                UpdateEventPointTrace(_eventPointOrigin.Value, InteractionPosition(e));
+                if (EventPointTraceCompleted is not null)
+                    traceResult = new(CreateEventPointTrace(eventViewport), Math.Max(1, OperationStepTicks),
+                        OperationUsesBars, TimeSignatureMap, RangeStartTick, RangeEndTick);
+                else BuildEventPointEditsFromTrace(eventViewport);
             }
             IReadOnlyDictionary<long, double> result = new Dictionary<long, double>(_eventPointEdits);
             MidoraId? directItemId = _eventPointDirectItemId;
@@ -3594,7 +3654,8 @@ public sealed class TimelineSurface : Control
             _eventPointEdits.Clear();
             _eventPointTracePoints.Clear();
             ReleaseMouseCapture();
-            if (result.Count > 0) EventPointEditCompleted?.Invoke(this, new(directItemId, result));
+            if (traceResult is not null) EventPointTraceCompleted?.Invoke(this, traceResult);
+            else if (result.Count > 0) EventPointEditCompleted?.Invoke(this, new(directItemId, result));
             RefreshPointerPositionText();
             InvalidateVisual();
             e.Handled = true;
@@ -3678,8 +3739,8 @@ public sealed class TimelineSurface : Control
                         checked(_dragCurrentTick - _dragOriginTick),
                         laneDelta,
                         IsValueEditableEventPointKind(item.Kind)
-                            ? GetDragNormalizedValueDelta(e.GetPosition(this).Y)
-                            : -(e.GetPosition(this).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
+                            ? GetDragNormalizedValueDelta(InteractionPosition(e).Y)
+                            : -(InteractionPosition(e).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
                         _dragModifiers,
                         _dragCopyRequested));
             }
@@ -3721,6 +3782,7 @@ public sealed class TimelineSurface : Control
 
     protected override void OnLostMouseCapture(MouseEventArgs e)
     {
+        if (_pendingConductorPress is not null) CancelConductorHit();
         if (_notePlacementStartTick is not null)
         {
             _notePlacementStartTick = null;
@@ -3911,6 +3973,14 @@ public sealed class TimelineSurface : Control
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && _pendingConductorPress is not null)
+        {
+            CancelConductorHit();
+            _exactQueryPending = false;
+            Cursor = Cursors.Arrow;
+            e.Handled = true;
+            return;
+        }
         if (IsAltKey(e))
         {
             RefreshHoverIntent();
@@ -4061,7 +4131,7 @@ public sealed class TimelineSurface : Control
             return;
         }
         TimelineRenderSnapshot snapshot = Snapshot;
-        ModifierKeys modifiers = Keyboard.Modifiers;
+        ModifierKeys modifiers = ConductorGestureModifiers;
         WorkspaceSelectionRangeMode mode =
             TimelineToolPolicy.ResolveMarqueeSelectionMode(modifiers);
         TimelineSelectionSnapshot baseSelection;
@@ -6229,6 +6299,14 @@ public sealed class TimelineSurface : Control
                 currentFrameComplete: true);
             return;
         }
+        // A Tempo state continues beyond the last event. Ordinary event lanes
+        // retain their existing finite point-content bounds.
+        if (snapshot.IsTempoProjection)
+        {
+            firstContentTileX = 0;
+            lastContentTileX = Math.Max(lastContentTileX, FloorToLong(
+                viewport.EndTick * devicePixelsPerTick / TimelineEventPointTileRasterizer.TileSize) + 1);
+        }
         long firstVisibleTileX = Math.Max(firstContentTileX, FloorToLong(
             viewport.StartTick * devicePixelsPerTick / TimelineEventPointTileRasterizer.TileSize));
         long lastVisibleTileX = Math.Min(lastContentTileX, FloorToLong(
@@ -6256,8 +6334,12 @@ public sealed class TimelineSurface : Control
         long lastVisibleTileY = Math.Max(firstVisibleTileY, FloorToLong(
             Math.BitDecrement(visibleWorldBottom) / TimelineEventPointTileRasterizer.TileSize));
         TimelineSelectionSnapshot? selection = SelectionSnapshot;
-        Color normalColor = GetSolidColor(normalBrush, Color.FromRgb(98, 166, 246));
-        Color primaryColor = GetSolidColor(primaryBrush, Color.FromRgb(241, 243, 245));
+        Color normalColor = snapshot.IsTempoProjection
+            ? GetSolidColor(Brush("Brush.Success", Color.FromRgb(88, 196, 135)), Color.FromRgb(88, 196, 135))
+            : GetSolidColor(normalBrush, Color.FromRgb(98, 166, 246));
+        Color primaryColor = snapshot.IsTempoProjection
+            ? GetSolidColor(Brush("Brush.Red", Color.FromRgb(229, 72, 77)), Color.FromRgb(229, 72, 77))
+            : GetSolidColor(primaryBrush, Color.FromRgb(241, 243, 245));
         Color borderColor = GetSolidColor(borderBrush, Color.FromRgb(42, 48, 58));
         Rect contentBounds = new(
             laneHeaderWidth,
@@ -6742,6 +6824,8 @@ public sealed class TimelineSurface : Control
     {
         item = default;
         if (Snapshot is null) return false;
+        if (Snapshot.ConductorSource is not null)
+            return TryHitConductorPoint(point, viewport, out item);
         long tick = viewport.XToTick(point.X - GetLaneHeaderWidth());
         long tolerance = Math.Max(1, checked((long)Math.Ceiling(5 / viewport.PixelsPerTick)));
         _visibleItems.Clear();
@@ -6818,6 +6902,12 @@ public sealed class TimelineSurface : Control
 
     private void BuildEventPointEditsFromTrace(TimelineViewport viewport)
     {
+        TimelineValueTraceSampler.SampleInto(CreateEventPointTrace(viewport), _eventPointEdits,
+            Math.Max(1, OperationStepTicks), OperationUsesBars, TimeSignatureMap, RangeStartTick, RangeEndTick);
+    }
+
+    private TimelineValueTracePoint[] CreateEventPointTrace(TimelineViewport viewport)
+    {
         TimelineValueTracePoint[] trace = new TimelineValueTracePoint[_eventPointTracePoints.Count];
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
@@ -6831,14 +6921,7 @@ public sealed class TimelineSurface : Control
                 tick,
                 Math.Clamp(ValueYToNormalized(point.Y, ruler), 0, 1));
         }
-        TimelineValueTraceSampler.SampleInto(
-            trace,
-            _eventPointEdits,
-            Math.Max(1, OperationStepTicks),
-            OperationUsesBars,
-            TimeSignatureMap,
-            RangeStartTick,
-            RangeEndTick);
+        return trace;
     }
 
     private void DrawValueGrid(
@@ -8428,7 +8511,7 @@ public sealed class TimelineSurface : Control
             or TimelineItemKind.LogicalNote
             or TimelineItemKind.DirectMidiNote
             or TimelineItemKind.TemplateNote
-            or TimelineItemKind.LogicalParameterPoint
+            or TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
             or TimelineItemKind.DirectMidiEvent
             or TimelineItemKind.OpaqueMidiEvent;
 
@@ -8728,7 +8811,8 @@ public sealed class TimelineSurface : Control
                         2,
                         2);
                 }
-                context.PushClip(new RectangleGeometry(new Rect(6 + contentIndent, laneTop, Math.Max(0, laneHeaderWidth - 52 - contentIndent), headerVisualHeight)));
+                double labelRightInset = SurfaceMode == TimelineSurfaceMode.Conductor ? 14 : 52;
+                context.PushClip(new RectangleGeometry(new Rect(6 + contentIndent, laneTop, Math.Max(0, laneHeaderWidth - labelRightInset - contentIndent), headerVisualHeight)));
                 context.DrawText(formatted, new Point(8 + contentIndent, y));
                 if (secondaryFormatted is not null)
                 {
@@ -9132,7 +9216,11 @@ public sealed class TimelineSurface : Control
         }
 
         _rulerItems.Clear();
-        if (!snapshot.TryQueryIntoCached(
+        if (snapshot.ConductorSource is not null)
+        {
+            if (!TryPrepareConductorRuler(snapshot, viewport)) return;
+        }
+        else if (!snapshot.TryQueryIntoCached(
                 viewport.StartTick,
                 viewport.EndTick,
                 0,
@@ -9172,7 +9260,8 @@ public sealed class TimelineSurface : Control
                 Rect bounds = new(
                     x,
                     1.5,
-                    Math.Max(12, label.Width + horizontalPadding * 2),
+                    snapshot.ConductorSource is null ? Math.Max(12, label.Width + horizontalPadding * 2)
+                        : Math.Clamp(label.Width + horizontalPadding * 2, 12, 90),
                     markerHeight);
                 context.DrawRoundedRectangle(
                     markerBackground,
@@ -9180,11 +9269,13 @@ public sealed class TimelineSurface : Control
                     bounds,
                     3,
                     3);
+                context.PushClip(new RectangleGeometry(bounds));
                 context.DrawText(
                     label,
                     new Point(
                         bounds.X + horizontalPadding,
                         bounds.Y + (bounds.Height - label.Height) / 2));
+                context.Pop();
                 continue;
             }
             Brush brush = item.Kind == TimelineItemKind.ProjectEndMarker ? warning : text;
@@ -9717,6 +9808,7 @@ public sealed class TimelineSurface : Control
             ],
             TimelineSurfaceMode.EventLanes =>
             [
+                TimelineItemKind.TempoPoint,
                 TimelineItemKind.LogicalParameterPoint,
                 TimelineItemKind.DirectMidiEvent,
                 TimelineItemKind.OpaqueMidiEvent,
@@ -9752,7 +9844,7 @@ public sealed class TimelineSurface : Control
                 or TimelineItemKind.LogicalNote
                 or TimelineItemKind.DirectMidiNote
                 or TimelineItemKind.TemplateNote
-                or TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
                 or TimelineItemKind.DirectMidiEvent
                 or TimelineItemKind.TemplateEvent
                 or TimelineItemKind.OpaqueMidiEvent
@@ -10549,12 +10641,12 @@ public sealed class TimelineSurface : Control
         || e.SystemKey is Key.LeftAlt or Key.RightAlt;
 
     private static bool IsEventPointKind(TimelineItemKind kind) =>
-        kind is TimelineItemKind.LogicalParameterPoint
+        kind is TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
             or TimelineItemKind.DirectMidiEvent
             or TimelineItemKind.OpaqueMidiEvent;
 
     private static bool IsValueEditableEventPointKind(TimelineItemKind kind) =>
-        kind is TimelineItemKind.LogicalParameterPoint
+        kind is TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
             or TimelineItemKind.DirectMidiEvent;
 
     private bool TryHitTimelineItem(
@@ -10615,6 +10707,13 @@ public sealed class TimelineSurface : Control
         int lane = SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity
             ? 0
             : YToLane(viewport, point.Y - ruler);
+        if (snapshot.ConductorSource is not null)
+        {
+            _hitItems.Clear();
+            if (TryHitConductorPoint(point, viewport, out TimelineRenderItem conductorItem))
+                _hitItems.Add(conductorItem);
+            return !_exactQueryPending;
+        }
         if (SurfaceMode == TimelineSurfaceMode.Conductor)
         {
             const double hitRadius = 8;
@@ -10738,6 +10837,17 @@ public sealed class TimelineSurface : Control
                 Keyboard.Modifiers,
                 isDoubleClick,
                 isEmptyBackground));
+    }
+
+    /// <summary>Restore the complete displayed value axis without changing horizontal navigation.</summary>
+    public void ResetValueViewport()
+    {
+        SetValueViewRange(0, 1);
+        UpdateValueScrollMetrics();
+        SetCurrentValue(ValueScrollOffsetProperty, 0d);
+        if (Snapshot?.ConductorSource is not null) CancelConductorHit();
+        RefreshPointerPositionText();
+        RefreshHoverIntent();
     }
 
     private void ZoomValueAxis(double pointerY, int wheelDelta, double rulerHeight)
@@ -11174,7 +11284,7 @@ public sealed class TimelineSurface : Control
         return first;
     }
 
-    private double GetLaneHeaderWidth() => SurfaceMode switch
+    private double GetLaneHeaderWidth() => !double.IsNaN(LaneHeaderWidthOverride) ? LaneHeaderWidthOverride : SurfaceMode switch
     {
         TimelineSurfaceMode.Arrangement => ArrangementLaneHeaderWidth,
         TimelineSurfaceMode.PianoRoll => 52,

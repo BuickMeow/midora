@@ -1150,7 +1150,7 @@ public partial class MainWindow : Window
                 ObjectId: MidoraId segmentId
             } => SegmentSelection(segmentId),
             TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor } conductor =>
-                CompressedMidoraIdSet.Create(conductor.ConductorEvents.Select(item => item.Id)
+                CompressedMidoraIdSet.Create(conductor.EnumerateConductorIds()
                     .Where(id => id.Value >= firstNewStableId)),
             InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId } =>
                 InstrumentSelection(instrumentId),
@@ -1824,7 +1824,25 @@ public partial class MainWindow : Window
     {
         if (!PrepareForModalSurface()) return;
         ObjectPropertiesViewModel? properties = null;
-        if (workspace.Selection.Ids.Count > 1 && _session.Project is MidoraProject project)
+        if (workspace is TimelineWorkspaceViewModel { IsConductor: true }
+            && workspace.Selection.Ids.Count == 1 && workspace.Selection.Primary is MidoraId conductorId
+            && _session.Project is MidoraProject conductorProject)
+        {
+            ConductorTrack frozen = conductorProject.Conductor.CloneFrozen();
+            long revision = _session.Document!.PublicationRevision;
+            long selectionRevision = workspace.Selection.Revision;
+            bool completed = await RunOperationAsync("Read Properties", async token =>
+            {
+                properties = await Task.Run(() => ObjectPropertiesProjection.ReadConductorSelection(frozen, conductorId, token), token);
+                token.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(_session.Project, conductorProject)
+                    || _session.Document!.PublicationRevision != revision
+                    || workspace.Selection.Revision != selectionRevision || !_session.Workspaces.Contains(workspace))
+                    throw new InvalidOperationException("The Properties source changed while it was being read.");
+            }, canCancel: true);
+            if (!completed) { RestoreModalCommandFocus(workspace, _lastTimelineCommandSurface); return; }
+        }
+        else if (workspace.Selection.Ids.Count > 1 && _session.Project is MidoraProject project)
         {
             ObjectPropertiesSelectionContext selection = ObjectPropertiesSelectionContext.Capture(workspace);
             long revision = _session.Document!.PublicationRevision;
@@ -3337,7 +3355,8 @@ public partial class MainWindow : Window
     private T? FindWorkspaceElement<T>(object tag) where T : FrameworkElement
     {
         return FindDescendant<T>(WorkspaceTabs, element =>
-            Equals(element.Tag, tag)
+            (Equals(element.Tag, tag) || Equals(tag, "PrimaryTimeline") && Equals(element.Tag, "ConductorTempo"))
+            && element.IsVisible
             && ReferenceEquals(element.DataContext, _session.ActiveWorkspace));
     }
 
@@ -4018,6 +4037,8 @@ public partial class MainWindow : Window
     private void OnTimelineItemInvoked(object? sender, TimelineItemEventArgs e)
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
+        if (workspace is TimelineWorkspaceViewModel { IsConductor: true })
+            _conductorListSelectionCancellation.Cancel();
         // The clicked lane is part of the selection's formal presentation
         // source. Publish it before deriving the lightweight routing context so
         // a click that also switches lanes cannot inherit the previous lane.
@@ -6084,26 +6105,6 @@ public partial class MainWindow : Window
             workspace));
     }
 
-    private void OnConductorEventSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (sender is not ListBox { SelectedItem: ConductorEventRow row }
-            || _session.ActiveWorkspace is not TimelineWorkspaceViewModel
-            {
-                Mode: TimelineWorkspaceMode.Conductor
-            } workspace)
-        {
-            return;
-        }
-        if (workspace.Selection.Primary == row.Id) return;
-        workspace.Selection.Replace(row.Id);
-        workspace.EditCursorTick = row.Tick;
-        if (row.Tick < workspace.StartTick || row.Tick >= workspace.StartTick + workspace.TickSpan)
-        {
-            workspace.StartTick = Math.Max(0, row.Tick - workspace.TickSpan / 4);
-        }
-        _session.RefreshWorkspaceSelection(workspace);
-    }
-
     private void OnProjectSettingLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         if (sender is TextBox textBox) CommitProjectSetting(textBox, restoreOnFailure: true);
@@ -6205,6 +6206,8 @@ public partial class MainWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is not WorkspaceViewModel workspace)
             return;
+        if (workspace is TimelineWorkspaceViewModel { IsConductor: true })
+            _conductorListSelectionCancellation.Cancel();
         if (_session.Project is null || !_session.Workspaces.Contains(workspace)) return;
         e.BaseSelection = _session.BeginWorkspaceSelectionReplacement(workspace);
     }
@@ -6804,12 +6807,15 @@ public partial class MainWindow : Window
         GetTimelineSelectionSource(workspace, surface)?.QuantizeScope
             == source.QuantizeScope;
 
-    private bool CanOpenTimelineProperties(TimelineSurface surface) =>
-        _session.ActiveWorkspace is WorkspaceViewModel workspace
-        && workspace.Selection.Ids.Count != 0
-        && workspace.Selection.HomogeneousTimelineSource
-            is WorkspaceTimelineSelectionSource source
-        && IsTimelineSelectionSourceCompatible(workspace, surface, source);
+    private bool CanOpenTimelineProperties(TimelineSurface surface)
+    {
+        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return false;
+        if (workspace is TimelineWorkspaceViewModel { IsConductor: true })
+            return workspace.Selection.Ids.Count == 1;
+        return workspace.Selection.Ids.Count != 0
+            && workspace.Selection.HomogeneousTimelineSource is WorkspaceTimelineSelectionSource source
+            && IsTimelineSelectionSourceCompatible(workspace, surface, source);
+    }
 
     private async void OnHumanizeSelectionClick(object sender, RoutedEventArgs e)
     {
@@ -7090,7 +7096,7 @@ public partial class MainWindow : Window
         };
         string text = value.Total > 0
             ? $"{phase} ({value.Completed:N0}/{value.Total:N0})"
-            : phase;
+            : value.Completed > 0 ? $"{phase} ({value.Completed:N0} processed)" : phase;
         return string.IsNullOrWhiteSpace(value.Detail) ? text : $"{text} · {value.Detail}";
     }
 
@@ -7237,7 +7243,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnTimelineBackgroundInvoked(object? sender, TimelinePointEventArgs e)
+    private async void OnTimelineBackgroundInvoked(object? sender, TimelinePointEventArgs e)
     {
         if (_session.ActiveWorkspace is WorkspaceViewModel activeWorkspace)
         {
@@ -7270,6 +7276,28 @@ public partial class MainWindow : Window
                 : timeline.EditorSettings;
             timeline.EditCursorTick = activeSettings.SnapAbsolute(e.Tick);
             if (!e.IsDoubleClick || _session.Project is null) return;
+            if (timeline.IsConductor)
+            {
+                try
+                {
+                    long tick = activeSettings.SnapAbsolute(e.Tick);
+                    IProjectEditCommand? create = e.Lane switch
+                    {
+                        0 => ProjectDomainEditCommands.CreateTempo(tick,
+                            (decimal)timeline.TempoAxisMinimum + (decimal)e.NormalizedValue *
+                            ((decimal)timeline.TempoAxisMaximum - (decimal)timeline.TempoAxisMinimum)),
+                        1 => ProjectDomainEditCommands.CreateTimeSignature(tick, 4, 4),
+                        2 => ProjectDomainEditCommands.CreateKeySignature(tick, 0, isMinor: false),
+                        3 => ProjectDomainEditCommands.CreateProjectMarker(tick, string.Empty),
+                        4 => ProjectDomainEditCommands.CreateProjectEndMarker(tick),
+                        _ => null
+                    };
+                    if (create is not null)
+                        await ExecuteStagedProjectOperationAsync("Create Conductor event", create, timeline, sender as TimelineSurface);
+                }
+                catch (Exception ex) { ShowError("Create Conductor event", ex.Message); }
+                return;
+            }
             RunSynchronous("Create timeline object", () =>
             {
                 long snapped = activeSettings.SnapAbsolute(e.Tick);
@@ -7353,26 +7381,6 @@ public partial class MainWindow : Window
                                 Math.Clamp(127 - e.Lane, 0, 127),
                                 timeline.EditorSettings.DefaultVelocity);
                         ExecuteAndSelectCreated(createNote, timeline);
-                        break;
-                    case TimelineWorkspaceMode.Conductor:
-                        switch (e.Lane)
-                        {
-                            case 0:
-                                ExecuteAndSelectCreated(ProjectDomainEditCommands.CreateTempo(snapped, 120m), timeline);
-                                break;
-                            case 1:
-                                ExecuteAndSelectCreated(ProjectDomainEditCommands.CreateTimeSignature(snapped, 4, 4), timeline);
-                                break;
-                            case 2:
-                                ExecuteAndSelectCreated(ProjectDomainEditCommands.CreateKeySignature(snapped, 0, isMinor: false), timeline);
-                                break;
-                            case 3:
-                                ExecuteAndSelectCreated(ProjectDomainEditCommands.CreateProjectMarker(snapped, string.Empty), timeline);
-                                break;
-                            case 4:
-                                ExecuteAndSelectCreated(ProjectDomainEditCommands.CreateProjectEndMarker(snapped), timeline);
-                                break;
-                        }
                         break;
                 }
             });
@@ -7491,7 +7499,11 @@ public partial class MainWindow : Window
                         }
                         break;
                     case TimelineWorkspaceMode.Conductor:
-                        await EditConductorEvent(e.Item.Id, snappedTarget);
+                        await ExecuteStagedProjectOperationAsync("Move Conductor events",
+                            ProjectDomainEditCommands.MoveConductorEvents(selected, nonnegativeSnappedDelta,
+                                sender is TimelineSurface { Tag: "ConductorTempo" }
+                                    ? (decimal)(e.ValueDelta * (timeline.TempoAxisMaximum - timeline.TempoAxisMinimum)) : 0m,
+                                duplicate: e.CopyRequested), timeline, sender as TimelineSurface);
                         break;
                 }
                 return;
@@ -7586,32 +7598,6 @@ public partial class MainWindow : Window
                 voiceId,
                 target,
                 edits), workspace, sender as TimelineSurface);
-    }
-
-    private async Task EditConductorEvent(MidoraId id, long tick)
-    {
-        if (_session.Project is null) return;
-        if (_session.Project.Conductor.Tempos.FirstOrDefault(item => item.Id == id) is TempoChange tempo)
-        {
-            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateTempo(id, tick, tempo.BeatsPerMinute))) return;
-        }
-        else if (_session.Project.Conductor.TimeSignatures.FirstOrDefault(item => item.Id == id) is TimeSignatureChange signature)
-        {
-            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateTimeSignature(
-                id, tick, signature.Numerator, signature.Denominator))) return;
-        }
-        else if (_session.Project.Conductor.KeySignatures.FirstOrDefault(item => item.Id == id) is KeySignatureChange key)
-        {
-            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateKeySignature(id, tick, key.SharpsFlats, key.IsMinor))) return;
-        }
-        else if (_session.Project.Conductor.Markers.FirstOrDefault(item => item.Id == id) is ProjectMarker marker)
-        {
-            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateProjectMarker(id, tick, marker.Name))) return;
-        }
-        else if (_session.Project.Conductor.EndMarker?.Id == id)
-        {
-            if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.UpdateProjectEndMarker(tick))) return;
-        }
     }
 
     private async Task EditArrangementItem(
@@ -8100,14 +8086,22 @@ public partial class MainWindow : Window
         return GetEditorSettingsForSurface(focusedSurface);
     }
 
-    private TimelineEditorSettings GetEditorSettingsForSurface(TimelineSurface? surface)
+    private TimelineEditorSettings GetEditorSettingsForSurface(TimelineSurface? surface) =>
+        GetWorkspaceEditorSettingsForSurface(_session.ActiveWorkspace, surface) ?? _session.ArrangementEditorSettings;
+
+    internal static TimelineEditorSettings? GetWorkspaceEditorSettingsForSurface(
+        WorkspaceViewModel? workspace, TimelineSurface? surface)
     {
         bool eventLaneFocused = surface is { SurfaceMode: TimelineSurfaceMode.EventLanes };
-        return _session.ActiveWorkspace switch
+        return workspace switch
         {
-            TimelineWorkspaceViewModel timeline when eventLaneFocused => timeline.LaneEditorSettings,
+            // Tempo uses an EventLanes renderer but shares the Conductor toolbar's
+            // main settings. Only Segment parameter lanes have independent Snap.
+            TimelineWorkspaceViewModel timeline when eventLaneFocused && !timeline.IsConductor => timeline.LaneEditorSettings,
+            TimelineWorkspaceViewModel timeline => timeline.EditorSettings,
             InstrumentWorkspaceViewModel instrument when eventLaneFocused => instrument.EventLaneEditorSettings,
-            _ => GetActiveEditorSettings()
+            InstrumentWorkspaceViewModel instrument => instrument.EditorSettings,
+            _ => null
         };
     }
 
@@ -10540,6 +10534,14 @@ public partial class MainWindow : Window
 
     private async void SelectAllInFocusedScope()
     {
+        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel { IsConductor: true } conductor
+            && FindWorkspaceElement<ConductorWorkspaceView>("ConductorWorkspace") is { } conductorView)
+        {
+            if (conductor.ConductorListSource is { Count: > 0 } list)
+                OnConductorListSelectionRequested(conductorView.EventList,
+                    new(0, list.Count - 1, ModifierKeys.None, null));
+            return;
+        }
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace
             || Keyboard.FocusedElement is not TimelineSurface surface
             || surface.Snapshot is null)
@@ -10892,20 +10894,8 @@ public partial class MainWindow : Window
                     if (!await DeleteSegmentSelection(segmentId, ids)) return;
                     break;
                 case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor }:
-                    if (_session.Project.Conductor.EndMarker is ProjectEndMarker end
-                        && ids.Contains(end.Id))
-                    {
-                        if (ids.Count != 1)
-                        {
-                            throw new InvalidOperationException(
-                                "Delete the Project End Marker separately from ordinary Conductor events.");
-                        }
-                        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteProjectEndMarker())) return;
-                    }
-                    else
-                    {
-                        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.DeleteConductorEvents(ids))) return;
-                    }
+                    if (!await ExecuteStagedProjectOperationAsync("Delete Conductor events",
+                        ProjectDomainEditCommands.DeleteConductorEvents(ids), workspace)) return;
                     break;
                 case InstrumentWorkspaceViewModel instrumentWorkspace:
                     if (!await DeleteInstrumentSelection(instrumentWorkspace, ids)) return;

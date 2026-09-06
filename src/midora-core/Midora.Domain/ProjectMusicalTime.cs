@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace Midora.Domain;
 
@@ -130,16 +131,132 @@ public readonly record struct ProjectTimeSignaturePoint(
 public sealed class ProjectTimeSignatureMap
 {
     private readonly Entry[] _entries;
+    private readonly ProjectTimeSignatureMap? _cachedOwner;
+    private static readonly ConditionalWeakTable<ConductorQuerySnapshot<TimeSignatureChange>, MapCache> Cache = new();
+    private static WarmHandoff? _warmHandoff;
+
+    private sealed record WarmHandoff(object Identity, ProjectTimeSignatureMap Map);
+
+    /// <summary>
+    /// A preparation-to-consumer handoff, not an Undo-history map owner. Across
+    /// all revisions only the newest unconsumed lease retains a map strongly.
+    /// Consuming the map, disposing this lease or warming a newer revision
+    /// releases that handoff; retained leases never retain musical source data.
+    /// </summary>
+    public sealed class WarmLease : IDisposable
+    {
+        private readonly object _identity;
+        internal WarmLease(object identity) => _identity = identity;
+        public void Dispose()
+        {
+            WarmHandoff? handoff = Volatile.Read(ref _warmHandoff);
+            if (handoff is not null && ReferenceEquals(handoff.Identity, _identity))
+                Interlocked.CompareExchange(ref _warmHandoff, null, handoff);
+        }
+    }
+
+    public static WarmLease AcquireWarmLease(int ticksPerQuarterNote,
+        ConductorQuerySnapshot<TimeSignatureChange> snapshot, CancellationToken cancellationToken = default)
+    {
+        ProjectTimeSignatureMap map = GetOrCreateCore(ticksPerQuarterNote, snapshot, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        object identity = new();
+        WarmLease lease = new(identity);
+        Interlocked.Exchange(ref _warmHandoff, new(identity, map));
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return lease;
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+    }
+
+    private static void ConsumeWarmHandoff(ProjectTimeSignatureMap map)
+    {
+        WarmHandoff? handoff = Volatile.Read(ref _warmHandoff);
+        if (handoff is not null && ReferenceEquals(handoff.Map, map))
+            Interlocked.CompareExchange(ref _warmHandoff, null, handoff);
+    }
+
+    private sealed class MapCache
+    {
+        public Dictionary<int, WeakReference<ProjectTimeSignatureMap>> Maps { get; } = [];
+    }
+
+    public static ProjectTimeSignatureMap GetOrCreate(MidoraProject project, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        return GetOrCreate(project.TicksPerQuarterNote, project.Conductor.TimeSignatures.CaptureQuerySnapshot(), cancellationToken);
+    }
+
+    public static ProjectTimeSignatureMap GetOrCreate(int ticksPerQuarterNote,
+        ConductorQuerySnapshot<TimeSignatureChange> snapshot, CancellationToken cancellationToken = default)
+    {
+        ProjectTimeSignatureMap map = GetOrCreateCore(ticksPerQuarterNote, snapshot, cancellationToken);
+        ConsumeWarmHandoff(map);
+        return map;
+    }
+
+    private static ProjectTimeSignatureMap GetOrCreateCore(int ticksPerQuarterNote,
+        ConductorQuerySnapshot<TimeSignatureChange> snapshot, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (ticksPerQuarterNote is < MidoraProject.MinimumTicksPerQuarterNote or > MidoraProject.MaximumTicksPerQuarterNote)
+            throw new ArgumentOutOfRangeException(nameof(ticksPerQuarterNote));
+        cancellationToken.ThrowIfCancellationRequested();
+        MapCache cache = Cache.GetValue(snapshot, static _ => new());
+        lock (cache)
+        {
+            if (cache.Maps.TryGetValue(ticksPerQuarterNote, out var weak) && weak.TryGetTarget(out var existing)) return existing;
+            ProjectTimeSignatureMap result = new(ticksPerQuarterNote, snapshot, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            cache.Maps[ticksPerQuarterNote] = new(result);
+            return result;
+        }
+    }
+
+    public static bool TryGetCached(MidoraProject project, out ProjectTimeSignatureMap map)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        var snapshot = project.Conductor.TimeSignatures.CaptureQuerySnapshot();
+        if (Cache.TryGetValue(snapshot, out MapCache? cache) && Monitor.TryEnter(cache))
+        {
+            try
+            {
+                if (cache.Maps.TryGetValue(project.TicksPerQuarterNote, out var weak) && weak.TryGetTarget(out map!))
+                {
+                    ConsumeWarmHandoff(map);
+                    return true;
+                }
+            }
+            finally { Monitor.Exit(cache); }
+        }
+        map = null!;
+        return false;
+    }
 
     public ProjectTimeSignatureMap(MidoraProject project)
-        : this(
-            (project ?? throw new ArgumentNullException(nameof(project))).TicksPerQuarterNote,
-            project.Conductor.TimeSignatures.Select(value => new ProjectTimeSignaturePoint(
-                value.Id,
-                value.Tick,
-                value.Numerator,
-                value.Denominator)))
+        : this(GetOrCreate(project))
     {
+    }
+
+    private ProjectTimeSignatureMap(ProjectTimeSignatureMap source)
+    {
+        TicksPerQuarterNote = source.TicksPerQuarterNote;
+        _entries = source._entries;
+        _cachedOwner = source;
+    }
+
+    private ProjectTimeSignatureMap(int ticksPerQuarterNote, ConductorQuerySnapshot<TimeSignatureChange> source,
+        CancellationToken cancellationToken)
+    {
+        TicksPerQuarterNote = ticksPerQuarterNote;
+        _entries = BuildEntries(ticksPerQuarterNote, source.Select(value =>
+            new ProjectTimeSignaturePoint(value.Id, value.Tick, value.Numerator, value.Denominator)), source.Count, cancellationToken);
     }
 
     public ProjectTimeSignatureMap(
@@ -171,24 +288,30 @@ public sealed class ProjectTimeSignatureMap
             .OrderBy(value => value.Tick)
             .ThenBy(value => value.Id)
             .ToArray();
-        if (ordered.Length == 0 || ordered[0].Tick != 0)
+        _entries = BuildEntries(ticksPerQuarterNote, ordered, ordered.Length, CancellationToken.None);
+    }
+
+    private static Entry[] BuildEntries(int ticksPerQuarterNote, IEnumerable<ProjectTimeSignaturePoint> ordered,
+        int count, CancellationToken cancellationToken)
+    {
+        if (count == 0)
         {
             throw new ArgumentException(
                 "The Time Signature map must contain exactly one change at tick 0.",
-                nameof(timeSignatures));
+                nameof(ordered));
         }
 
-        _entries = new Entry[ordered.Length];
-        HashSet<long> ticks = [];
+        Entry[] entries = new Entry[count];
         ulong startBar = 1;
-        for (int i = 0; i < ordered.Length; i++)
+        int i = 0;
+        foreach (ProjectTimeSignaturePoint value in ordered)
         {
-            ProjectTimeSignaturePoint value = ordered[i];
-            if (value.Tick < 0 || !ticks.Add(value.Tick))
+            if ((i & 127) == 0) cancellationToken.ThrowIfCancellationRequested();
+            if (value.Tick < 0 || (i == 0 ? value.Tick != 0 : entries[i - 1].StartTick >= value.Tick))
             {
                 throw new ArgumentException(
                     "Time Signature ticks must be non-negative and unique.",
-                    nameof(timeSignatures));
+                    nameof(ordered));
             }
             int ticksPerBeat = ProjectTimeSignatureRules.GetTicksPerBeat(
                 ticksPerQuarterNote,
@@ -199,7 +322,7 @@ public sealed class ProjectTimeSignatureMap
                 value.Denominator);
             if (i > 0)
             {
-                Entry previous = _entries[i - 1];
+                Entry previous = entries[i - 1];
                 long delta = checked(value.Tick - previous.StartTick);
                 ulong bars = checked((ulong)(delta / previous.TicksPerBar));
                 if (delta % previous.TicksPerBar != 0)
@@ -208,7 +331,7 @@ public sealed class ProjectTimeSignatureMap
                 }
                 startBar = checked(previous.StartBar + bars);
             }
-            _entries[i] = new(
+            entries[i++] = new(
                 value.Id,
                 value.Tick,
                 startBar,
@@ -217,6 +340,8 @@ public sealed class ProjectTimeSignatureMap
                 ticksPerBeat,
                 ticksPerBar);
         }
+        cancellationToken.ThrowIfCancellationRequested();
+        return entries;
     }
 
     public int TicksPerQuarterNote { get; }

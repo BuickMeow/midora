@@ -28,8 +28,6 @@ internal static class ConductorTrackCodecV1
         {
             SchemaVersion = PersistenceContractV1.SchemaVersion,
             Tempos = conductor.Tempos
-                .OrderBy(item => item.Tick)
-                .ThenBy(item => item.Id)
                 .Select(item => new TempoChangeJsonV1
                 {
                     Id = new StableIdJsonV1(item.Id.Value),
@@ -38,8 +36,6 @@ internal static class ConductorTrackCodecV1
                 })
                 .ToArray(),
             TimeSignatures = conductor.TimeSignatures
-                .OrderBy(item => item.Tick)
-                .ThenBy(item => item.Id)
                 .Select(item => new TimeSignatureChangeJsonV1
                 {
                     Id = new StableIdJsonV1(item.Id.Value),
@@ -49,8 +45,6 @@ internal static class ConductorTrackCodecV1
                 })
                 .ToArray(),
             KeySignatures = conductor.KeySignatures
-                .OrderBy(item => item.Tick)
-                .ThenBy(item => item.Id)
                 .Select(item => new KeySignatureChangeJsonV1
                 {
                     Id = new StableIdJsonV1(item.Id.Value),
@@ -60,8 +54,6 @@ internal static class ConductorTrackCodecV1
                 })
                 .ToArray(),
             Markers = conductor.Markers
-                .OrderBy(item => item.Tick)
-                .ThenBy(item => item.Id)
                 .Select(item => new ProjectMarkerJsonV1
                 {
                     Id = new StableIdJsonV1(item.Id.Value),

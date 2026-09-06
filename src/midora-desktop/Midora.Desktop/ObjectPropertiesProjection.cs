@@ -19,6 +19,18 @@ internal static partial class ObjectPropertiesProjection
 {
     private static readonly AsyncLocal<PropertiesReadProgress?> ReadProgress = new();
 
+    public static ObjectPropertiesViewModel ReadConductorSelection(
+        ConductorTrack frozen, MidoraId id, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(frozen);
+        token.ThrowIfCancellationRequested();
+        ObjectPropertiesViewModel result = new();
+        if (!TryRebuildConductorSelection(result, frozen, id, token))
+            result.Replace("Missing Conductor Event", "The referenced object no longer exists.", []);
+        token.ThrowIfCancellationRequested();
+        return result;
+    }
+
     public static ObjectPropertiesViewModel ReadMultiSelection(
         MidoraProject project, ObjectPropertiesSelectionContext selection,
         CancellationToken token, IProgress<TimelineEditPreparationProgress>? progress)
@@ -1450,49 +1462,61 @@ internal static partial class ObjectPropertiesProjection
             }
         }
 
-        if (workspace.Mode == TimelineWorkspaceMode.Conductor && selectedId is MidoraId conductorId)
-        {
-            if (project.Conductor.Tempos.FirstOrDefault(item => item.Id == conductorId) is TempoChange tempo)
-            {
-                properties.Replace("Tempo", "Conductor event", [
-                    Field("conductor.tick", "TICK", tempo.Tick),
-                    Field("conductor.bpm", "BEATS PER MINUTE", tempo.BeatsPerMinute)]);
-                return;
-            }
-            if (project.Conductor.TimeSignatures.FirstOrDefault(item => item.Id == conductorId) is TimeSignatureChange signature)
-            {
-                properties.Replace("Time Signature", "Conductor event", [
-                    Field("conductor.tick", "TICK", signature.Tick),
-                    Field("conductor.numerator", "NUMERATOR", signature.Numerator),
-                    Field("conductor.denominator", "DENOMINATOR", signature.Denominator)]);
-                return;
-            }
-            if (project.Conductor.KeySignatures.FirstOrDefault(item => item.Id == conductorId) is KeySignatureChange key)
-            {
-                properties.Replace("Key Signature", "Conductor event", [
-                    Field("conductor.tick", "TICK", key.Tick),
-                    Field("conductor.sharpsFlats", "SHARPS / FLATS", key.SharpsFlats),
-                    Field("conductor.isMinor", "IS MINOR", key.IsMinor)]);
-                return;
-            }
-            if (project.Conductor.Markers.FirstOrDefault(item => item.Id == conductorId) is ProjectMarker marker)
-            {
-                properties.Replace("Project Marker", "Conductor event", [
-                    Field("conductor.tick", "TICK", marker.Tick),
-                    Field("conductor.name", "NAME", marker.Name)]);
-                return;
-            }
-            if (project.Conductor.EndMarker is ProjectEndMarker end && end.Id == conductorId)
-            {
-                properties.Replace("Project End Marker", "Hard Project boundary", [
-                    Field("conductor.tick", "TICK", end.Tick)]);
-                return;
-            }
-        }
+        if (workspace.Mode == TimelineWorkspaceMode.Conductor && selectedId is MidoraId conductorId &&
+            TryRebuildConductorSelection(properties, project.Conductor, conductorId, CancellationToken.None))
+            return;
 
         properties.Replace(workspace.Header, workspace.Context, [
             Field("viewport.start", "VIEW START TICK", workspace.StartTick, false),
             Field("viewport.span", "VISIBLE TICK SPAN", workspace.TickSpan, false)]);
+    }
+
+    private static bool TryRebuildConductorSelection(
+        ObjectPropertiesViewModel properties, ConductorTrack conductor,
+        MidoraId conductorId, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (conductor.Tempos.CaptureQuerySnapshot().TryGetById(conductorId, out TempoChange tempo))
+        {
+            properties.Replace("Tempo", "Conductor event", [
+                Field("conductor.tick", "TICK", tempo.Tick),
+                Field("conductor.bpm", "BEATS PER MINUTE", tempo.BeatsPerMinute)]);
+            return true;
+        }
+        token.ThrowIfCancellationRequested();
+        if (conductor.TimeSignatures.CaptureQuerySnapshot().TryGetById(conductorId, out TimeSignatureChange signature))
+        {
+            properties.Replace("Time Signature", "Conductor event", [
+                Field("conductor.tick", "TICK", signature.Tick),
+                Field("conductor.numerator", "NUMERATOR", signature.Numerator),
+                Field("conductor.denominator", "DENOMINATOR", signature.Denominator)]);
+            return true;
+        }
+        token.ThrowIfCancellationRequested();
+        if (conductor.KeySignatures.CaptureQuerySnapshot().TryGetById(conductorId, out KeySignatureChange key))
+        {
+            properties.Replace("Key Signature", "Conductor event", [
+                Field("conductor.tick", "TICK", key.Tick),
+                Field("conductor.sharpsFlats", "SHARPS / FLATS", key.SharpsFlats),
+                Field("conductor.isMinor", "IS MINOR", key.IsMinor)]);
+            return true;
+        }
+        token.ThrowIfCancellationRequested();
+        if (conductor.Markers.CaptureQuerySnapshot().TryGetById(conductorId, out ProjectMarker marker))
+        {
+            properties.Replace("Project Marker", "Conductor event", [
+                Field("conductor.tick", "TICK", marker.Tick),
+                Field("conductor.name", "NAME", marker.Name)]);
+            return true;
+        }
+        token.ThrowIfCancellationRequested();
+        if (conductor.EndMarker is ProjectEndMarker end && end.Id == conductorId)
+        {
+            properties.Replace("Project End Marker", "Hard Project boundary", [
+                Field("conductor.tick", "TICK", end.Tick)]);
+            return true;
+        }
+        return false;
     }
 
     private static void RebuildInstrument(
@@ -2271,7 +2295,7 @@ internal static partial class ObjectPropertiesProjection
     {
         MidoraId id = selectedId ?? throw new InvalidOperationException("Select one Conductor event first.");
         bool TryValue(string key, out string value) => edits.TryGetValue(key, out value!);
-        if (project.Conductor.Tempos.FirstOrDefault(item => item.Id == id) is TempoChange tempo)
+        if (project.Conductor.Tempos.CaptureQuerySnapshot().TryGetById(id, out TempoChange tempo))
         {
             return ProjectDomainEditCommands.UpdateTempo(
                 id,
@@ -2280,7 +2304,7 @@ internal static partial class ObjectPropertiesProjection
                     ? Decimal(bpmText, "Beats Per Minute")
                     : tempo.BeatsPerMinute);
         }
-        if (project.Conductor.TimeSignatures.FirstOrDefault(item => item.Id == id) is TimeSignatureChange signature)
+        if (project.Conductor.TimeSignatures.CaptureQuerySnapshot().TryGetById(id, out TimeSignatureChange signature))
         {
             return ProjectDomainEditCommands.UpdateTimeSignature(
                 id,
@@ -2292,7 +2316,7 @@ internal static partial class ObjectPropertiesProjection
                     ? Int(denominatorText, "Denominator")
                     : signature.Denominator);
         }
-        if (project.Conductor.KeySignatures.FirstOrDefault(item => item.Id == id) is KeySignatureChange keySignature)
+        if (project.Conductor.KeySignatures.CaptureQuerySnapshot().TryGetById(id, out KeySignatureChange keySignature))
         {
             return ProjectDomainEditCommands.UpdateKeySignature(
                 id,
@@ -2304,7 +2328,7 @@ internal static partial class ObjectPropertiesProjection
                     ? Bool(isMinorText, "Is Minor")
                     : keySignature.IsMinor);
         }
-        if (project.Conductor.Markers.FirstOrDefault(item => item.Id == id) is ProjectMarker marker)
+        if (project.Conductor.Markers.CaptureQuerySnapshot().TryGetById(id, out ProjectMarker marker))
         {
             return ProjectDomainEditCommands.UpdateProjectMarker(
                 id,

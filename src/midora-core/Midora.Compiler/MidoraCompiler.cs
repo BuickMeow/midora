@@ -3834,18 +3834,16 @@ public sealed partial class MidoraCompiler : IDisposable
 
     private static CanonicalConductor FreezeConductor(ConductorTrack source, long startTick, long endTick) => new(
         RangeStateful(
-            source.Tempos.OrderBy(value => value.Tick).ToArray(), startTick, endTick,
+            source.Tempos.CaptureQuerySnapshot(), startTick, endTick,
             value => value.Tick,
             (value, tick, restored) => new CanonicalTempo(value.Id, tick, value.BeatsPerMinute, restored)),
         RangeStateful(
-            source.TimeSignatures.OrderBy(value => value.Tick).ToArray(), startTick, endTick,
+            source.TimeSignatures.CaptureQuerySnapshot(), startTick, endTick,
             value => value.Tick,
             (value, tick, restored) => new CanonicalTimeSignature(
                 value.Id, tick, value.Numerator, value.Denominator, restored)),
         source.TimeSignatures
             .Where(value => value.Tick < endTick || value.Tick == 0)
-            .OrderBy(value => value.Tick)
-            .ThenBy(value => value.Id)
             .Select(value => new CanonicalTimeSignature(
                 value.Id,
                 value.Tick,
@@ -3853,18 +3851,16 @@ public sealed partial class MidoraCompiler : IDisposable
                 value.Denominator))
             .ToArray(),
         RangeStateful(
-            source.KeySignatures.OrderBy(value => value.Tick).ToArray(), startTick, endTick,
+            source.KeySignatures.CaptureQuerySnapshot(), startTick, endTick,
             value => value.Tick,
             (value, tick, restored) => new CanonicalKeySignature(
                 value.Id, tick, value.SharpsFlats, value.IsMinor, restored)),
-        source.Markers.Where(value => value.Tick >= startTick && value.Tick < endTick)
-            .OrderBy(value => value.Tick)
-            .ThenBy(value => value.Id)
+        source.Markers.CaptureQuerySnapshot().QueryTickRange(startTick, endTick)
             .Select(value => new CanonicalMarker(value.Id, value.Tick, value.Name)).ToArray(),
         source.EndMarker is null ? null : new CanonicalEndMarker(source.EndMarker.Id, source.EndMarker.Tick));
 
     private static TResult[] RangeStateful<TSource, TResult>(
-        TSource[] ordered,
+        ConductorQuerySnapshot<TSource> ordered,
         long startTick,
         long endTick,
         Func<TSource, long> getTick,
@@ -3872,22 +3868,24 @@ public sealed partial class MidoraCompiler : IDisposable
         where TSource : class
     {
         List<TResult> result = [];
-        bool hasAtStart = ordered.Any(value => getTick(value) == startTick);
+        int first = ordered.LowerBoundTick(startTick);
+        bool hasAtStart = first < ordered.Count && getTick(ordered.GetByOrdinal(first)) == startTick;
         if (startTick > 0 && !hasAtStart)
         {
-            TSource? previous = ordered.LastOrDefault(value => getTick(value) < startTick);
-            if (previous is not null)
+            if (ordered.TryGetBeforeTick(startTick, out TSource previous))
             {
                 result.Add(convert(previous, startTick, true));
             }
         }
-        foreach (TSource value in ordered)
+        for (int ordinal = first; ordinal < ordered.Count; ordinal++)
         {
+            TSource value = ordered.GetByOrdinal(ordinal);
             long tick = getTick(value);
             if (tick >= startTick && (tick < endTick || endTick == startTick && tick == startTick))
             {
                 result.Add(convert(value, tick, false));
             }
+            else break;
         }
         return result.ToArray();
     }

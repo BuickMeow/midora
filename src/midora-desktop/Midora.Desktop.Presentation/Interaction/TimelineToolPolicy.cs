@@ -220,7 +220,7 @@ public static class TimelineToolPolicy
         && (surfaceMode == TimelineSurfaceMode.PianoRoll
                 && itemKind is TimelineItemKind.LogicalNote or TimelineItemKind.DirectMidiNote or TimelineItemKind.TemplateNote
             || surfaceMode == TimelineSurfaceMode.EventLanes
-                && itemKind is TimelineItemKind.LogicalParameterPoint
+                && itemKind is TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
                     or TimelineItemKind.DirectMidiEvent
                     or TimelineItemKind.OpaqueMidiEvent);
 
@@ -242,7 +242,7 @@ public static class TimelineToolPolicy
         bool isNearStart,
         bool isNearEnd)
     {
-        if (itemKind is TimelineItemKind.LogicalParameterPoint
+        if (itemKind is TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
                 or TimelineItemKind.DirectMidiEvent
                 or TimelineItemKind.OpaqueMidiEvent
                 or TimelineItemKind.ConductorEvent
@@ -295,7 +295,7 @@ public static class TimelineToolPolicy
                     or TimelineItemKind.DirectMidiNote
                     or TimelineItemKind.TemplateNote)
             || (surfaceMode == TimelineSurfaceMode.EventLanes
-                && itemKind is TimelineItemKind.LogicalParameterPoint
+                && itemKind is TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
                     or TimelineItemKind.DirectMidiEvent
                     or TimelineItemKind.OpaqueMidiEvent));
 
@@ -346,7 +346,7 @@ public static class TimelineToolPolicy
         {
             return TimelinePointerIntent.Default;
         }
-        if (itemKind is TimelineItemKind.LogicalParameterPoint or TimelineItemKind.DirectMidiEvent)
+        if (itemKind is TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint or TimelineItemKind.DirectMidiEvent)
         {
             return TimelinePointerIntent.ResizeVertical;
         }
@@ -476,7 +476,7 @@ public static class TimelineToolPolicy
             or TimelineItemKind.LogicalNote
             or TimelineItemKind.DirectMidiNote
             or TimelineItemKind.TemplateNote
-            or TimelineItemKind.LogicalParameterPoint
+            or TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
             or TimelineItemKind.DirectMidiEvent
             or TimelineItemKind.OpaqueMidiEvent
             or TimelineItemKind.ConductorEvent

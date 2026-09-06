@@ -33,6 +33,7 @@ public enum TimelineItemKind
     TemplateNote,
     TemplateEvent,
     ConductorEvent,
+    TempoPoint,
     Marker,
     ProjectEndMarker,
     LifecycleBoundary
@@ -1329,8 +1330,10 @@ public sealed class TimelineRenderSnapshot
     private readonly ConcurrentQueue<PianoTileFingerprintKey> _pianoTileFingerprintOrder = [];
     private readonly ConcurrentQueue<ConductorTileFingerprintKey> _conductorTileFingerprintOrder = [];
     private readonly ITimelineRenderItemSource? _itemSource;
+    private readonly ITimelineRenderItemSource? _conductorPreviewSource;
     private readonly ITimelineOverviewSource? _overviewSource;
     private readonly long _materializedMaximumEndTick;
+    private readonly ulong _materializedConductorFingerprint;
     private readonly int _materializedMaximumLane;
     private readonly Dictionary<int, SegmentPlacementInterval[]> _segmentIntervalsByLane;
 
@@ -1345,7 +1348,8 @@ public sealed class TimelineRenderSnapshot
         IReadOnlyList<uint>? laneColors = null,
         IReadOnlyList<ArrangementLaneDescriptor>? arrangementLanes = null,
         ITimelineRenderItemSource? itemSource = null,
-        ITimelineOverviewSource? overviewSource = null)
+        ITimelineOverviewSource? overviewSource = null,
+        ITimelineRenderItemSource? conductorPreviewSource = null)
     {
         if (semanticRevision < 0)
         {
@@ -1370,6 +1374,7 @@ public sealed class TimelineRenderSnapshot
         SemanticRevision = semanticRevision;
         ProjectionKey = projectionKey.Trim();
         _itemSource = itemSource;
+        _conductorPreviewSource = conductorPreviewSource;
         _overviewSource = overviewSource;
         _materializedMaximumEndTick = materialized.Length == 0
             ? 0
@@ -1418,9 +1423,13 @@ public sealed class TimelineRenderSnapshot
                 TimelineContentFingerprint.ForRenderItems(materialized),
                 itemSource?.ContentFingerprint ?? 0),
             overviewSource?.ContentFingerprint ?? 0);
-        ConductorPreviewFingerprint = TimelineContentFingerprint.ForConductorPreview(materialized);
+        _materializedConductorFingerprint = TimelineContentFingerprint.ForConductorPreview(materialized);
+        ConductorPreviewFingerprint = TimelineContentFingerprint.Combine(
+            _materializedConductorFingerprint,
+            conductorPreviewSource?.ContentFingerprint ?? 0);
         HasConductorPreviewItems = materialized.Any(static item => item.Kind is
-            TimelineItemKind.ConductorEvent or TimelineItemKind.Marker);
+            TimelineItemKind.ConductorEvent or TimelineItemKind.Marker)
+            || conductorPreviewSource?.Count > 0;
         HasHitTestableItems = materialized.Any(static item =>
                 !item.State.HasFlag(TimelineItemState.HitTestDisabled))
             || itemSource?.HasHitTestableItems == true;
@@ -1442,13 +1451,24 @@ public sealed class TimelineRenderSnapshot
     public bool HasConductorPreviewItems { get; }
     public bool HasHitTestableItems { get; }
     public bool HasDedicatedOverview => _overviewSource is not null;
+    public ConductorRenderItemSource? ConductorSource => _itemSource as ConductorRenderItemSource;
+    public bool IsTempoProjection => ConductorSource?.Kind == ConductorProjectionKind.Tempo;
     public long TotalItemCount => checked(Items.Count + (_itemSource?.Count ?? 0));
     public int MaterializedMaximumLane => _materializedMaximumLane;
     public long MaximumEndTick => Math.Max(
         Math.Max(
             _materializedMaximumEndTick,
             _itemSource?.MaximumEndTick ?? 0),
-        _overviewSource?.MaximumEndTick ?? 0);
+        Math.Max(_overviewSource?.MaximumEndTick ?? 0, _conductorPreviewSource?.MaximumEndTick ?? 0));
+
+    internal void VisitConductorPreview(long startTick, long endTick, Action<TimelineRenderItem> visitor)
+    {
+        foreach (TimelineRenderItem item in Items)
+            if (item.StartTick >= startTick && item.StartTick < endTick
+                && item.Kind is TimelineItemKind.ConductorEvent or TimelineItemKind.Marker)
+                visitor(item);
+        _conductorPreviewSource?.VisitInto(startTick, endTick, 0, 1, visitor);
+    }
 
     internal void GetSegmentPlacementInfo(
         int lane,
@@ -1981,7 +2001,7 @@ public sealed class TimelineRenderSnapshot
                 or TimelineItemKind.TemplateNote,
             TimelineRasterAggregateKind.Velocity => itemKind == TimelineItemKind.Velocity,
             TimelineRasterAggregateKind.EventPoints => itemKind is
-                TimelineItemKind.LogicalParameterPoint
+                TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
                 or TimelineItemKind.DirectMidiEvent
                 or TimelineItemKind.OpaqueMidiEvent,
             _ => false
@@ -2333,6 +2353,18 @@ public sealed class TimelineRenderSnapshot
         long tileX,
         double dpiScaleX)
     {
+        if (_conductorPreviewSource is not null)
+        {
+            double left = tileX * (double)TimelineConductorTileRasterizer.TileSize
+                - TimelineConductorTileRasterizer.GetGutter(dpiScaleX);
+            long start = (long)Math.Max(0, Math.Min(long.MaxValue, Math.Floor(left / devicePixelsPerTick)));
+            double right = (left + TimelineConductorTileRasterizer.TileSize
+                + 2 * TimelineConductorTileRasterizer.GetGutter(dpiScaleX)) / devicePixelsPerTick;
+            long end = right >= long.MaxValue ? long.MaxValue : Math.Max(start + 1, (long)Math.Ceiling(right));
+            return TimelineContentFingerprint.Combine(
+                _materializedConductorFingerprint,
+                _conductorPreviewSource.GetRangeFingerprint(start, end, 0, 1));
+        }
         ConductorTileFingerprintKey key = new(
             BitConverter.DoubleToInt64Bits(devicePixelsPerTick),
             tileX,

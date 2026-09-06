@@ -42,6 +42,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
     private readonly int _maximumPendingPageCount;
     private readonly long _encodeBufferBudget;
     private readonly Action? _encodePageTestHook;
+    private readonly Action<bool>? _beforePageWaitTestHook;
     private long _pendingReservedBytes;
     private bool _encoderCompleted;
     private bool _builderBuffersReleased;
@@ -65,7 +66,8 @@ public sealed class PureMidiContentPackWriter : IDisposable
         CancellationToken cancellationToken,
         int encoderConcurrency,
         long encodeBufferBudget,
-        Action? encodePageTestHook = null)
+        Action? encodePageTestHook = null,
+        Action<bool>? beforePageWaitTestHook = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (encoderConcurrency <= 0)
@@ -80,6 +82,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
         _maximumPendingPageCount = checked(encoderConcurrency * 2);
         _encodeBufferBudget = encodeBufferBudget;
         _encodePageTestHook = encodePageTestHook;
+        _beforePageWaitTestHook = beforePageWaitTestHook;
         string? directory = System.IO.Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
         _stream = new FileStream(
@@ -127,8 +130,8 @@ public sealed class PureMidiContentPackWriter : IDisposable
             Flush(builder);
         }
         ReleaseBuilderBuffers();
-        CompleteEncoderScheduling();
         while (_pendingPages.Count != 0) CommitOldestPage();
+        CompleteEncoderScheduling();
 
         long directoryOffset = _stream.Position;
         using MemoryStream directoryBuffer = new(checked(_pages.Count * DirectoryEntryByteCount));
@@ -416,7 +419,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
     {
         PendingEncodedPage pending = _pendingPages.Dequeue();
         _pendingReservedBytes -= pending.ReservedBytes;
-        EncodedPage encoded = pending.Task.GetAwaiter().GetResult();
+        EncodedPage encoded = WaitForEncodedPage(pending);
         using (encoded)
         {
             _cancellationToken.ThrowIfCancellationRequested();
@@ -452,9 +455,18 @@ public sealed class PureMidiContentPackWriter : IDisposable
         _encoderScheduler.Complete();
     }
 
+    private EncodedPage WaitForEncodedPage(PendingEncodedPage pending)
+    {
+        // A synchronous Task wait can attempt scheduler inlining even while the
+        // task is concurrently finishing. Keep the scheduler alive until every
+        // result has been observed: Complete can otherwise dispose its internal
+        // ThreadLocal before that final inline attempt accesses it.
+        _beforePageWaitTestHook?.Invoke(_encoderCompleted);
+        return pending.Task.GetAwaiter().GetResult();
+    }
+
     private Exception? StopEncoderPipeline()
     {
-        CompleteEncoderScheduling();
         Exception? failure = null;
         while (_pendingPages.Count != 0)
         {
@@ -462,13 +474,14 @@ public sealed class PureMidiContentPackWriter : IDisposable
             _pendingReservedBytes -= pending.ReservedBytes;
             try
             {
-                using EncodedPage encoded = pending.Task.GetAwaiter().GetResult();
+                using EncodedPage encoded = WaitForEncodedPage(pending);
             }
             catch (Exception exception)
             {
                 failure ??= exception;
             }
         }
+        CompleteEncoderScheduling();
         return failure;
     }
 

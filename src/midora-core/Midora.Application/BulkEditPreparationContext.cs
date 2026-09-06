@@ -17,7 +17,8 @@ internal sealed class BulkEditPreparationContext : IDisposable
 
     private BulkEditPreparationContext(CancellationToken token,
         IProgress<TimelineEditPreparationProgress>? progress,
-        BoundedEditResources? resources, Midora.Domain.MidoraProject? project)
+        BoundedEditResources? resources, Midora.Domain.MidoraProject? project,
+        int? preferredPageRecordCount)
     {
         _previous = Slot.Value;
         if (!token.CanBeCanceled) Token = _previous?.Token ?? token;
@@ -29,6 +30,12 @@ internal sealed class BulkEditPreparationContext : IDisposable
         else Token = token;
         _progress = progress;
         Resources = resources ?? _previous?.Resources ?? new BoundedEditResources();
+        if (preferredPageRecordCount is < 64 or > 65_536)
+            throw new ArgumentOutOfRangeException(nameof(preferredPageRecordCount));
+        PreferredPageRecordCount = preferredPageRecordCount.HasValue
+            ? Math.Min(preferredPageRecordCount.Value, Resources.Budget.PageRecordCount)
+            : ReferenceEquals(Resources, _previous?.Resources)
+                ? _previous!.PreferredPageRecordCount : Resources.Budget.PageRecordCount;
         Project = _previous?.Project ?? project;
         Slot.Value = this;
     }
@@ -36,12 +43,14 @@ internal sealed class BulkEditPreparationContext : IDisposable
     public static BulkEditPreparationContext? Current => Slot.Value;
     public CancellationToken Token { get; }
     public BoundedEditResources Resources { get; }
+    internal int PreferredPageRecordCount { get; }
     public Midora.Domain.MidoraProject? Project { get; }
 
     public static BulkEditPreparationContext Enter(CancellationToken token = default,
         IProgress<TimelineEditPreparationProgress>? progress = null,
-        BoundedEditResources? resources = null, Midora.Domain.MidoraProject? project = null) =>
-        new(token, progress, resources, project);
+        BoundedEditResources? resources = null, Midora.Domain.MidoraProject? project = null,
+        int? preferredPageRecordCount = null) =>
+        new(token, progress, resources, project, preferredPageRecordCount);
 
     public void Checkpoint(long completed, long total,
         TimelineEditPreparationPhase phase = TimelineEditPreparationPhase.Planning)

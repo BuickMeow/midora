@@ -358,77 +358,8 @@ public static partial class ProjectDomainEditCommands
                 });
         });
 
-    public static IProjectEditCommand DeleteConductorEvents(
-        IReadOnlyCollection<MidoraId> eventIds) =>
-        Command("Delete conductor events", project =>
-        {
-            ArgumentNullException.ThrowIfNull(eventIds);
-            HashSet<MidoraId> requested = ValidateBatchIds(
-                eventIds,
-                nameof(eventIds),
-                "Conductor event");
-            IndexedConductorEvent<TempoChange>[] tempos = SelectConductorEvents(
-                project.Conductor.Tempos,
-                requested,
-                value => value.Id);
-            IndexedConductorEvent<TimeSignatureChange>[] timeSignatures = SelectConductorEvents(
-                project.Conductor.TimeSignatures,
-                requested,
-                value => value.Id);
-            IndexedConductorEvent<KeySignatureChange>[] keySignatures = SelectConductorEvents(
-                project.Conductor.KeySignatures,
-                requested,
-                value => value.Id);
-            IndexedConductorEvent<ProjectMarker>[] markers = SelectConductorEvents(
-                project.Conductor.Markers,
-                requested,
-                value => value.Id);
-            int selectedCount = tempos.Length
-                + timeSignatures.Length
-                + keySignatures.Length
-                + markers.Length;
-            if (selectedCount != requested.Count)
-            {
-                throw new ArgumentException(
-                    "Every selected ID must identify an ordinary Conductor event.",
-                    nameof(eventIds));
-            }
-            if (tempos.Any(value => value.Value.Tick == 0)
-                || timeSignatures.Any(value => value.Value.Tick == 0))
-            {
-                throw new InvalidOperationException(
-                    "The required tick 0 Tempo and Time Signature cannot be deleted.");
-            }
-            return Prepared(
-                hasChanges: true,
-                ConductorChange(),
-                _ =>
-                {
-                    RemoveConductorBatch(project.Conductor.Tempos, tempos, "Tempo");
-                    RemoveConductorBatch(
-                        project.Conductor.TimeSignatures,
-                        timeSignatures,
-                        "Time Signature");
-                    RemoveConductorBatch(
-                        project.Conductor.KeySignatures,
-                        keySignatures,
-                        "Key Signature");
-                    RemoveConductorBatch(project.Conductor.Markers, markers, "Marker");
-                },
-                _ =>
-                {
-                    RestoreConductorBatch(project.Conductor.Tempos, tempos, "Tempo");
-                    RestoreConductorBatch(
-                        project.Conductor.TimeSignatures,
-                        timeSignatures,
-                        "Time Signature");
-                    RestoreConductorBatch(
-                        project.Conductor.KeySignatures,
-                        keySignatures,
-                        "Key Signature");
-                    RestoreConductorBatch(project.Conductor.Markers, markers, "Marker");
-                });
-        });
+    public static IProjectEditCommand DeleteConductorEvents(IReadOnlyCollection<MidoraId> eventIds) =>
+        DeleteConductorSelection(eventIds);
 
     private static IPreparedProjectEdit PrepareCurvePointReplacementBatch(
         MidoraId trackId,
@@ -605,38 +536,6 @@ public static partial class ProjectDomainEditCommands
         return result;
     }
 
-    private static IndexedConductorEvent<T>[] SelectConductorEvents<T>(
-        List<T> values,
-        IReadOnlySet<MidoraId> requested,
-        Func<T, MidoraId> getId) =>
-        values.Select((value, index) => new IndexedConductorEvent<T>(value, index))
-            .Where(value => requested.Contains(getId(value.Value)))
-            .ToArray();
-
-    private static void RemoveConductorBatch<T>(
-        List<T> target,
-        IEnumerable<IndexedConductorEvent<T>> selected,
-        string objectName)
-        where T : class
-    {
-        foreach (IndexedConductorEvent<T> value in selected)
-        {
-            RemoveRequired(target, value.Value, objectName);
-        }
-    }
-
-    private static void RestoreConductorBatch<T>(
-        List<T> target,
-        IEnumerable<IndexedConductorEvent<T>> selected,
-        string objectName)
-        where T : class
-    {
-        foreach (IndexedConductorEvent<T> value in selected.OrderBy(value => value.Index))
-        {
-            InsertAt(target, value.Index, value.Value, objectName);
-        }
-    }
 
     private readonly record struct SelectedCurvePoint(CurvePoint Point, int Index);
-    private readonly record struct IndexedConductorEvent<T>(T Value, int Index);
 }

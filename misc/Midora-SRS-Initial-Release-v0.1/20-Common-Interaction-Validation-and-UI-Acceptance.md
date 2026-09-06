@@ -350,9 +350,15 @@ Select 模式下，同质且共同支持直接操作的非空 Selection 可以�
 
 Follow 是每个新建 Timeline Surface 的默认状态：工具框跟随 Selection 包围框并贴边保持在 viewport 内可达；切换为 Pin 后，工具框锚定 Selection 的世界坐标，Selection 离开 viewport 时允许随之离开。顶部明确的 grip 在两种状态下都允许手动移动工具框。该状态在当前 Surface 生命周期内保持，但只属于 Session UI State，不进入 Project、Undo、canonical 或 `.midora`。
 
-从浮动工具 Move 按钮开始拖动时，若 `Ctrl` 已按下且当前 Surface / 对象类型已有明确 Copy Drag 能力，则执行与普通直接操作相同的 Copy+Move，并按该类型既有规则选择幸存副本；Resize 不响应 Copy。没有既有 Copy Drag 能力的类型在 `Ctrl` 下为 Invalid，不得静默退化成 Move，也不得顺手新增 Conductor 等对象的复制语义。
+从浮动工具 Move 按钮开始拖动时，若 `Ctrl` 已按下且当前 Surface / 对象类型已有明确 Copy Drag 能力，则执行与普通直接操作相同的 Copy+Move，并按该类型既有规则选择幸存副本；Resize 不响应 Copy。没有既有 Copy Drag 能力的类型在 `Ctrl` 下为 Invalid，不得静默退化成 Move。Conductor 的 Tempo 复制已由第 18.7 节明确批准，服从下述专门边界；不得据此复制单例 Project End Marker。
 
 异类或语义不兼容 Selection 不显示工具框。所有选择规模都必须显示第 20.1.7 节规定的有效 delta 与完整 Selection 变换预览：小选择复用普通 Draw 直接操作的即时矢量路径，大选择复用同一平移或 Resize raster tile 路径。不得因超过即时矢量阈值而只显示 delta、隐藏预览，也不得为每个对象创建 WPF 控件或重新物化完整 Selection。
+
+#### 20.4.12.1 Conductor 事件交互
+
+Conductor Tempo 沿用 Event Lane 的自由绘线、右键直线、Shift+右键水平线、Shift 固定 tick 只改 BPM、Ctrl 复制拖动与选择手势。Snap 开启按操作格点采样，关闭逐 tick；绘图是逐 tick 离散状态，不是连续 ramp。Time Signature、Key Signature、Marker 和 Project End 在各自 lane 上命中正式对象，不能拖动改变事件类型。Tempo、拍号、调号同 tick 后来编辑者覆盖，Marker 不归并；tick 0 Tempo/拍号不可删除或移动，但可原位改值。所有数值按正式语义校验，非法手势整体失败，不静默更改 BPM 的合法范围。
+
+左侧列表与右侧两图共享选择。单击、Ctrl 切换、Shift 连续范围及拖动范围选择支持冷页后台解析；取消、源修订变化或新选择优先于旧请求。列表双击只打开该行对象的 Properties；Locate 定位选中对象。Ctrl+A 选择 Conductor 中全部正式事件；受保护初始状态及 End 单例规则仍有效。五种事件的复制、剪切、粘贴与删除统一服从已有专门命令，批量操作使用有界准备、进度和取消，一次成功发布对应一次 Undo。
 
 ### 20.4.13 受限数值工具表达式与 Preset
 

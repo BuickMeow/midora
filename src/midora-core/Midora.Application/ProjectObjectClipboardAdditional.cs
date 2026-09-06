@@ -76,19 +76,34 @@ public static partial class ProjectObjectClipboard
                 nameof(eventIds));
         }
         IReadOnlySet<MidoraId> requested = ValidateDistinctIds(eventIds, nameof(eventIds));
+        ConductorTrack source = document.Project.Conductor.CloneFrozen();
         ConductorClipboardList snapshots = ConductorClipboardList.Capture(
-            document.Project.Conductor.Tempos.Where(value => requested.Contains(value.Id))
-                .Select(value => new ConductorEventClipboardSnapshot(ConductorClipboardEventKind.Tempo,
-                    value.Tick, value.BeatsPerMinute, 0, 0, false, null))
-            .Concat(document.Project.Conductor.TimeSignatures.Where(value => requested.Contains(value.Id))
-                .Select(value => new ConductorEventClipboardSnapshot(ConductorClipboardEventKind.TimeSignature,
-                    value.Tick, 0, value.Numerator, value.Denominator, false, null)))
-            .Concat(document.Project.Conductor.KeySignatures.Where(value => requested.Contains(value.Id))
-                .Select(value => new ConductorEventClipboardSnapshot(ConductorClipboardEventKind.KeySignature,
-                    value.Tick, 0, value.SharpsFlats, 0, value.IsMinor, null)))
-            .Concat(document.Project.Conductor.Markers.Where(value => requested.Contains(value.Id))
-                .Select(value => new ConductorEventClipboardSnapshot(ConductorClipboardEventKind.Marker,
-                    value.Tick, 0, 0, 0, false, value.Name))));
+            SelectRows(source.Tempos, static value => new ConductorEventClipboardSnapshot(
+                ConductorClipboardEventKind.Tempo, value.Tick, value.BeatsPerMinute, 0, 0, false, null))
+            .Concat(SelectRows(source.TimeSignatures, static value => new ConductorEventClipboardSnapshot(
+                ConductorClipboardEventKind.TimeSignature, value.Tick, 0, value.Numerator, value.Denominator, false, null)))
+            .Concat(SelectRows(source.KeySignatures, static value => new ConductorEventClipboardSnapshot(
+                ConductorClipboardEventKind.KeySignature, value.Tick, 0, value.SharpsFlats, 0, value.IsMinor, null)))
+            .Concat(SelectRows(source.Markers, static value => new ConductorEventClipboardSnapshot(
+                ConductorClipboardEventKind.Marker, value.Tick, 0, 0, 0, false, value.Name))));
+
+        IEnumerable<ConductorEventClipboardSnapshot> SelectRows<T>(ConductorCollection<T> collection,
+            Func<T, ConductorEventClipboardSnapshot> map) where T : class
+        {
+            var frozen = collection.CreateQuerySnapshot();
+            var context = BulkEditPreparationContext.Current!;
+            frozen.PrepareOrdinalLookup(BoundedTimelineOrdinalIndexBuilder.Instance, context.Token);
+            using var ordinals = BoundedEditSort.Sort(Ordinals(), Comparer<int>.Default, context.Resources, context.Token);
+            foreach (int ordinal in ordinals) yield return map(frozen.GetByOrdinal(ordinal));
+            IEnumerable<int> Ordinals()
+            {
+                foreach (MidoraId id in requested)
+                {
+                    context.Token.ThrowIfCancellationRequested();
+                    if (frozen.TryFindOrdinalById(id, out int ordinal)) yield return ordinal;
+                }
+            }
+        }
         if (snapshots.Count != requested.Count)
             throw new ArgumentException(
                 "Every copied ID must identify an ordinary Conductor event; the Project End Marker is excluded.", nameof(eventIds));
@@ -281,75 +296,19 @@ public static partial class ProjectDomainEditCommands
         });
 
     internal static IProjectEditCommand PasteConductorEventsClipboard(
-        IReadOnlyList<ConductorEventClipboardSnapshot> snapshots,
-        long editCursorTick) =>
-        Command("Paste conductor events", project =>
+        IReadOnlyList<ConductorEventClipboardSnapshot> snapshots, long editCursorTick) =>
+        ConductorMutation("Paste conductor events", incoming: _ =>
         {
             ArgumentNullException.ThrowIfNull(snapshots);
-            if (snapshots.Count == 0 || editCursorTick < 0)
+            if (snapshots.Count == 0) throw new ArgumentException("At least one Conductor event must be pasted.", nameof(snapshots));
+            ValidateConductorTick(editCursorTick, nameof(editCursorTick));
+            return snapshots.Select(snapshot =>
             {
-                throw new ArgumentOutOfRangeException(
-                    snapshots.Count == 0 ? nameof(snapshots) : nameof(editCursorTick));
-            }
-            using var scope = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default, project: project);
-            using var collisions = BoundedEditSort.Sort(CollisionRows(),
-                Comparer<ConductorClipboardCollision>.Create((a, b) =>
-                {
-                    int order = a.Kind.CompareTo(b.Kind);
-                    if (order == 0) order = a.Tick.CompareTo(b.Tick);
-                    return order == 0 ? a.Incoming.CompareTo(b.Incoming) : order;
-                }), scope.Resources, scope.Token);
-            ConductorClipboardCollision? previous = null;
-            foreach (var row in collisions)
-            {
-                scope.Token.ThrowIfCancellationRequested();
-                if (previous is { } old && old.Kind == row.Kind && old.Tick == row.Tick && (old.Incoming || row.Incoming))
-                    throw new InvalidOperationException($"Pasted {row.Kind} events would create duplicate ticks.");
-                previous = row;
-            }
-            long firstId = 0, nextId = 0;
-            return Prepared(true, ConductorChange(), owner =>
-            {
-                firstId = owner.NextStableId;
-                long processed = 0;
-                foreach (ConductorEventClipboardSnapshot snapshot in snapshots)
-                {
-                    BulkEditPreparationContext.Current?.Checkpoint(processed++, snapshots.Count, TimelineEditPreparationPhase.BuildingResult);
-                    ConductorClipboardValue value = ValidateConductorClipboardValue(snapshot, editCursorTick);
-                    switch (value.Kind)
-                    {
-                        case ConductorClipboardEventKind.Tempo:
-                            owner.Conductor.Tempos.Add(new(owner, value.Tick, value.BeatsPerMinute)); break;
-                        case ConductorClipboardEventKind.TimeSignature:
-                            owner.Conductor.TimeSignatures.Add(new(owner, value.Tick, value.Primary, value.Secondary)); break;
-                        case ConductorClipboardEventKind.KeySignature:
-                            owner.Conductor.KeySignatures.Add(new(owner, value.Tick, value.Primary, value.Flag)); break;
-                        case ConductorClipboardEventKind.Marker:
-                            owner.Conductor.Markers.Add(new(owner, value.Tick, value.Text ?? string.Empty)); break;
-                    }
-                }
-                nextId = owner.NextStableId;
-            }, owner =>
-            {
-                owner.Conductor.Tempos.RemoveAll(value => value.Id.Value >= firstId && value.Id.Value < nextId);
-                owner.Conductor.TimeSignatures.RemoveAll(value => value.Id.Value >= firstId && value.Id.Value < nextId);
-                owner.Conductor.KeySignatures.RemoveAll(value => value.Id.Value >= firstId && value.Id.Value < nextId);
-                owner.Conductor.Markers.RemoveAll(value => value.Id.Value >= firstId && value.Id.Value < nextId);
+                ConductorClipboardValue value = ValidateConductorClipboardValue(snapshot, editCursorTick);
+                return new ConductorRequest((ConductorKind)value.Kind, value.Tick, value.BeatsPerMinute,
+                    value.Primary, value.Secondary, value.Flag, value.Text);
             });
-
-            IEnumerable<ConductorClipboardCollision> CollisionRows()
-            {
-                foreach (var value in project.Conductor.Tempos) yield return new(ConductorClipboardEventKind.Tempo, value.Tick, false);
-                foreach (var value in project.Conductor.TimeSignatures) yield return new(ConductorClipboardEventKind.TimeSignature, value.Tick, false);
-                foreach (var value in project.Conductor.KeySignatures) yield return new(ConductorClipboardEventKind.KeySignature, value.Tick, false);
-                foreach (var snapshot in snapshots)
-                {
-                    scope.Token.ThrowIfCancellationRequested();
-                    ConductorClipboardValue value = ValidateConductorClipboardValue(snapshot, editCursorTick);
-                    if (value.Kind != ConductorClipboardEventKind.Marker) yield return new(value.Kind, value.Tick, true);
-                }
-            }
-        });
+        }, incomingCount: snapshots?.Count);
 
     private static ConductorClipboardValue ValidateConductorClipboardValue(
         ConductorEventClipboardSnapshot snapshot,
@@ -396,7 +355,6 @@ public static partial class ProjectDomainEditCommands
             snapshot.Text);
     }
 
-    private readonly record struct ConductorClipboardCollision(ConductorClipboardEventKind Kind, long Tick, bool Incoming);
 
     private readonly record struct ConductorClipboardValue(
         ConductorClipboardEventKind Kind,

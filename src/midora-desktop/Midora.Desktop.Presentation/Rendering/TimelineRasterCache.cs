@@ -13,6 +13,7 @@ internal enum TimelineRasterLayer
     ArrangementSegmentNotePreview,
     ArrangementSegmentEventPreview,
     ArrangementConductorPreview,
+    ConductorMeta,
     PianoNotes,
     PianoSelection,
     PianoDragPreview,
@@ -1721,6 +1722,10 @@ public static class TimelineEventPointTileRasterizer
         {
             throw new ArgumentOutOfRangeException(nameof(devicePixelsPerValue));
         }
+        if (snapshot.IsTempoProjection)
+            return TimelineTempoTileRasterizer.Rasterize(snapshot, selection,
+                devicePixelsPerTick, devicePixelsPerValue, tileX, tileY, dpiScaleX, dpiScaleY,
+                normalColor, primaryColor, borderColor, selectionOnly, cancellationToken);
         int gutterX = GetGutter(dpiScaleX);
         int gutterY = GetGutter(dpiScaleY);
         int width = checked(TileSize + gutterX * 2);
@@ -1853,7 +1858,7 @@ public static class TimelineEventPointTileRasterizer
         void Collect(TimelineRenderItem item)
         {
             if (item.Kind is not (
-                TimelineItemKind.LogicalParameterPoint
+                TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
                     or TimelineItemKind.DirectMidiEvent
                     or TimelineItemKind.OpaqueMidiEvent))
             {
@@ -1916,7 +1921,7 @@ public static class TimelineEventPointTileRasterizer
         List<TimelineRenderItem> materialized = [];
         snapshot.QueryMaterializedInto(startTick, endTick, 0, 1, materialized);
         materialized.RemoveAll(item => item.Kind is not (
-            TimelineItemKind.LogicalParameterPoint
+            TimelineItemKind.TempoPoint or TimelineItemKind.LogicalParameterPoint
                 or TimelineItemKind.DirectMidiEvent
                 or TimelineItemKind.OpaqueMidiEvent));
         ulong content = TimelineContentFingerprint.Combine(
@@ -2085,14 +2090,12 @@ public static class TimelineConductorTileRasterizer
         long endTick = Math.Max(
             startTick + 1,
             CeilingToLong(worldRight / devicePixelsPerTick));
-        List<TimelineRenderItem> candidates = [];
-        snapshot.QueryInto(startTick, endTick, 0, 1, candidates);
         Dictionary<(long DeviceColumn, int Type), ConductorTilePoint> aggregated = [];
-        foreach (TimelineRenderItem item in candidates)
+        snapshot.VisitConductorPreview(startTick, endTick, item =>
         {
             if (item.Kind is not (TimelineItemKind.ConductorEvent or TimelineItemKind.Marker))
             {
-                continue;
+                return;
             }
             long deviceColumn = checked((long)Math.Round(
                 item.StartTick * devicePixelsPerTick,
@@ -2100,7 +2103,7 @@ public static class TimelineConductorTileRasterizer
             if (deviceColumn + PointRadius * dpiScaleX < worldLeft
                 || deviceColumn - PointRadius * dpiScaleX >= worldRight)
             {
-                continue;
+                return;
             }
             (long, int) key = (deviceColumn, item.ZIndex);
             ConductorTilePoint point = new(deviceColumn, item.ZIndex, item.AccentColor);
@@ -2109,7 +2112,7 @@ public static class TimelineConductorTileRasterizer
             {
                 aggregated[key] = point;
             }
-        }
+        });
         return aggregated.Values
             .OrderBy(value => value.Type)
             .ThenBy(value => value.DeviceColumn)

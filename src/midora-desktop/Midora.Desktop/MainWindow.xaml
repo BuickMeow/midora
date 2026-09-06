@@ -674,7 +674,7 @@
           <TabControl.Style><Style TargetType="TabControl" BasedOn="{StaticResource {x:Type TabControl}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TabControl.Style>
           <TabItem Header="Velocity">
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <ui:TimelineSurface x:Name="SegmentVelocityTimeline" Tag="Velocity" Snapshot="{Binding VelocitySnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" SurfaceMode="Velocity"
+            <ui:TimelineSurface x:Name="SegmentVelocityTimeline" Tag="Velocity" Snapshot="{Binding VelocitySnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" SurfaceMode="Velocity" ContextMenu="{StaticResource TimelineContextMenu}"
                                 CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                 StartTick="{Binding StartTick, Mode=TwoWay}" TickSpan="{Binding TickSpan, Mode=TwoWay}"
                                 FirstLane="0" LaneHeight="160" GridStepTicks="{Binding GridStepTicks}" GridVisible="{Binding GridVisible}"
@@ -940,7 +940,7 @@
                                     Visibility="{Binding IsLowerEditorVisible, Converter={StaticResource BooleanToVisibility}}"/>
                       <TabControl Grid.Row="3" SelectedIndex="{Binding ActiveLowerEditorIndex, Mode=TwoWay}" SelectionChanged="OnSubVoiceLowerEditorSelectionChanged"
                                   Visibility="{Binding IsLowerEditorVisible, Converter={StaticResource BooleanToVisibility}}">
-                        <TabItem Header="Velocity"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ui:TimelineSurface x:Name="SubVoiceVelocityTimeline" Tag="SubVoiceVelocity" Snapshot="{Binding SubVoiceVelocitySnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" SurfaceMode="Velocity" ValueScrollOffset="{Binding VelocityValueScrollOffset, Mode=TwoWay}" IsTimeRangeSelectionEnabled="False"
+                        <TabItem Header="Velocity"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ui:TimelineSurface x:Name="SubVoiceVelocityTimeline" Tag="SubVoiceVelocity" Snapshot="{Binding SubVoiceVelocitySnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" SurfaceMode="Velocity" ContextMenu="{StaticResource TimelineContextMenu}" ValueScrollOffset="{Binding VelocityValueScrollOffset, Mode=TwoWay}" IsTimeRangeSelectionEnabled="False"
                           CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                           StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
                           FirstLane="0" LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"

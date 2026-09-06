@@ -948,6 +948,110 @@ public sealed class PagedTimelineCollectionTests
     }
 
     [Fact]
+    public void BulkAppendKeepsObjectIdentityAndPreviouslyPublishedSnapshotsImmutable()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 100_000 };
+        LogicalNote existing = new(project)
+        {
+            StartTick = 1,
+            LengthTicks = 2,
+            Note = 60,
+            Velocity = 100
+        };
+        segment.Notes.Add(existing);
+        LogicalNoteQuerySnapshot before = segment.Notes.CreateQuerySnapshot();
+        long generation = segment.Notes.Generation;
+        LogicalNote[] appended = Enumerable.Range(0, 8_193)
+            .Select(index => new LogicalNote(project)
+            {
+                StartTick = index + 10,
+                LengthTicks = 3,
+                Note = index & 127,
+                Velocity = 90
+            })
+            .ToArray();
+
+        segment.Notes.AddRange(appended);
+
+        Assert.Equal(generation + 1, segment.Notes.Generation);
+        Assert.Equal(3, segment.Notes.PageCount);
+        Assert.Same(existing, segment.Notes[0]);
+        Assert.All(appended.Select((value, index) => (value, index)), pair =>
+            Assert.Same(pair.value, segment.Notes[pair.index + 1]));
+        Assert.Equal([existing.Id], before.EnumerateAll().Select(static value => value.Id));
+
+        LogicalNoteQuerySnapshot published = segment.Notes.CreateQuerySnapshot();
+        appended[4_200].Velocity = 47;
+        Assert.Equal(90, Assert.Single(published.ResolveByIds([appended[4_200].Id])).Velocity);
+        Assert.Equal(47, Assert.Single(segment.Notes.CreateQuerySnapshot()
+            .ResolveByIds([appended[4_200].Id])).Velocity);
+    }
+
+    [Fact]
+    public void BulkTemplateAppendKeepsIdentityMappingsAndOldSnapshotExact()
+    {
+        using MidoraProject project = new(192);
+        SubVoice voice = new(project);
+        TemplateEvent existing = TemplateEvent.Note(project, 1, 2, 60, 100);
+        voice.Events.Add(existing);
+        TemplateEventQuerySnapshot before = voice.Events.CreateQuerySnapshot();
+        long generation = voice.Events.Generation;
+        TemplateEvent[] appended = Enumerable.Range(0, 8_193)
+            .Select(index => TemplateEvent.Note(project, index + 10, 3, index & 127, 90))
+            .ToArray();
+
+        voice.Events.AddRange(appended);
+
+        Assert.Equal(generation + 1, voice.Events.Generation);
+        Assert.Equal(3, voice.Events.PageCount);
+        Assert.Same(existing, voice.Events[0]);
+        Assert.All(appended.Select((value, index) => (value, index)), pair =>
+            Assert.Same(pair.value, voice.Events[pair.index + 1]));
+        Assert.Equal([existing.Id], before.EnumerateAll().Select(static value => value.Id));
+        Assert.Contains(voice.EventMappings, mapping =>
+            mapping.Target.EventKind == TemplateEventKind.Note
+            && mapping.Target.Parameter == TemplateEventMappingParameter.Number);
+        Assert.Contains(voice.EventMappings, mapping =>
+            mapping.Target.EventKind == TemplateEventKind.Note
+            && mapping.Target.Parameter == TemplateEventMappingParameter.Value);
+
+        TemplateEventQuerySnapshot published = voice.Events.CreateQuerySnapshot();
+        appended[4_200].Value = 47;
+        Assert.Equal(90, Assert.Single(published.ResolveByIds([appended[4_200].Id])).Value);
+        Assert.Equal(47, Assert.Single(voice.Events.CreateQuerySnapshot()
+            .ResolveByIds([appended[4_200].Id])).Value);
+    }
+
+    [Fact]
+    public void BulkTemplateAppendValidatesAllIdsBeforeAttachingAnyEvent()
+    {
+        using MidoraProject project = new(192);
+        SubVoice destination = new(project);
+        TemplateEvent existing = TemplateEvent.Note(project, 1, 2, 60, 100);
+        destination.Events.Add(existing);
+        int mappingsBefore = destination.EventMappings.Count;
+        TemplateEvent valid = TemplateEvent.Note(project, 10, 2, 61, 100);
+        TemplateEvent duplicate = new(project, existing.Id)
+        {
+            Kind = TemplateEventKind.Note,
+            Tick = 20,
+            LengthTicks = 2,
+            Number = 62,
+            Value = 100
+        };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            destination.Events.AddRange([valid, duplicate]));
+
+        Assert.Equal([existing], destination.Events);
+        Assert.Equal(mappingsBefore, destination.EventMappings.Count);
+        SubVoice other = new(project);
+        other.Events.Add(valid);
+        Assert.Same(valid, Assert.Single(other.Events));
+    }
+
+    [Fact]
     public void ExactCollisionRestoreSurvivesInterveningPageSplitsAndRestoresFingerprint()
     {
         using MidoraProject project = new(192);

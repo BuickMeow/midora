@@ -7,6 +7,70 @@ namespace Midora.Application.Tests;
 public sealed class BulkTimelineEditScalabilityTests(ITestOutputHelper output)
 {
     [Fact]
+    public void SixtyThousandPublishedLogicalAndSubVoiceAppendsAvoidPerItemRootPublication()
+    {
+        const int count = 60_000;
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 1_000_000 };
+        segment.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 0,
+            LengthTicks = 1,
+            Note = 60,
+            Velocity = 100
+        });
+        _ = segment.Notes.CreateQuerySnapshot();
+        LogicalNote[] logical = Enumerable.Range(0, count)
+            .Select(index => new LogicalNote(project)
+            {
+                StartTick = index + 1,
+                LengthTicks = 1,
+                Note = index & 127,
+                Velocity = 100
+            })
+            .ToArray();
+
+        SubVoice voice = new(project);
+        voice.Events.Add(TemplateEvent.Note(project, 0, 1, 60, 100));
+        _ = voice.Events.CreateQuerySnapshot();
+        TemplateEvent[] template = Enumerable.Range(0, count)
+            .Select(index => TemplateEvent.Note(project, index + 1, 1, index & 127, 100))
+            .ToArray();
+
+        (TimeSpan logicalTime, long logicalBytes) = Measure(() => segment.Notes.AddRange(logical));
+        (TimeSpan templateTime, long templateBytes) = Measure(() => voice.Events.AddRange(template));
+
+        Assert.Equal(count + 1, segment.Notes.Count);
+        Assert.Equal(count + 1, voice.Events.Count);
+        // This guards cumulative allocation in collection publication. It is
+        // intentionally not the detached transaction's separate 64 MiB live
+        // resident-memory contract, which requires a production root owner.
+        Assert.True(logicalBytes < 256L * 1024 * 1024,
+            $"Logical append allocated {logicalBytes / 1048576d:F1} MiB.");
+        Assert.True(templateBytes < 256L * 1024 * 1024,
+            $"SubVoice append allocated {templateBytes / 1048576d:F1} MiB.");
+        Assert.True(logicalTime < TimeSpan.FromSeconds(20),
+            $"Logical append took {logicalTime}.");
+        Assert.True(templateTime < TimeSpan.FromSeconds(20),
+            $"SubVoice append took {templateTime}.");
+        output.WriteLine(
+            $"count={count}; logical={logicalTime}/{logicalBytes / 1048576d:F1} MiB; "
+            + $"subVoice={templateTime}/{templateBytes / 1048576d:F1} MiB");
+
+        static (TimeSpan Time, long Bytes) Measure(Action action)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            Stopwatch elapsed = Stopwatch.StartNew();
+            action();
+            elapsed.Stop();
+            return (elapsed.Elapsed, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+    }
+
+    [Fact]
     public void MillionLogicalNotesKeepSparseAndFarRegionSnapshotsBounded()
     {
         using MidoraProject project = new(192);

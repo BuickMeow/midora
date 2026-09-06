@@ -6,6 +6,43 @@ namespace Midora.Compiler.Tests;
 public sealed class BoundedCanonicalSmfEventSorterTests
 {
     [Fact]
+    public void SpillMergeOrdersDirectNoteOffEndpointsBeforeOtherMessagesAtEqualOrder()
+    {
+        MidoraId trackId = MidoraId.FromSequence(1);
+        using BoundedCanonicalSmfEventSorter sorter = new(
+            sortRunRecordCount: 2,
+            maximumMergeFanIn: 2);
+        CanonicalSmfTrackChannelEvent[] source =
+        [
+            new(trackId, 10, 0, 0, MidiMessage.NoteOn(0, 61, 100),
+                CanonicalEventRole.DirectMidi, long.MaxValue, MidoraId.FromSequence(2)),
+            new(trackId, 10, 0, 0, MidiMessage.ControlChange(0, 11, 64),
+                CanonicalEventRole.DirectMidi, long.MaxValue, MidoraId.FromSequence(1)),
+            new(trackId, 10, 0, 0, MidiMessage.NoteOff(0, 60, 7),
+                CanonicalEventRole.DirectMidi, long.MaxValue, MidoraId.FromSequence(100)),
+            new(trackId, 10, 0, 0, MidiMessage.NoteOn(0, 62, 0),
+                CanonicalEventRole.DirectMidi, long.MaxValue, MidoraId.FromSequence(99))
+        ];
+        foreach (CanonicalSmfTrackChannelEvent value in source)
+        {
+            sorter.Add(value);
+        }
+
+        CanonicalSmfTrackChannelEvent[] actual = sorter.ReadPages(CancellationToken.None)
+            .SelectMany(static page => page.Items)
+            .ToArray();
+
+        Assert.Equal(
+            [
+                MidoraId.FromSequence(99),
+                MidoraId.FromSequence(100),
+                MidoraId.FromSequence(1),
+                MidoraId.FromSequence(2)
+            ],
+            actual.Select(static value => value.SourceObjectId));
+    }
+
+    [Fact]
     public void ReadPagesMergesMultipleDiskRunsInCanonicalSmfOrder()
     {
         const int recordCount = 300_000;

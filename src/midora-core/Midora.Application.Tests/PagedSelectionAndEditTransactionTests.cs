@@ -118,6 +118,56 @@ public sealed class PagedSelectionAndEditTransactionTests
     }
 
     [Fact]
+    public void MillionObjectRangeWithSparseIncludeDoesNotAllocateRangeSizedIdentitySet()
+    {
+        const int objectCount = 1_000_000;
+        SyntheticTimelineObjectSource baselineSource = new(objectCount, pageCapacity: 4_096);
+        TimelineObjectSelectionDescriptor baselineSelection = new(
+            new MidoraId(900),
+            baselineSource.SourceRevision,
+            ranges: [new TimelineOrdinalRange(0, objectCount - 1)]);
+        SyntheticTimelineObjectSource source = new(objectCount, pageCapacity: 4_096);
+        TimelineObjectSelectionDescriptor selection = new(
+            new MidoraId(900),
+            source.SourceRevision,
+            ranges: [new TimelineOrdinalRange(0, objectCount - 1)],
+            includedIds:
+            [
+                new MidoraId(100),
+                new MidoraId(objectCount)
+            ]);
+
+        // Compare against the same paged traversal without sparse exceptions.
+        // Synthetic pages allocate by design; the assertion isolates the
+        // sparse-include overhead and catches a range-sized ID HashSet.
+        _ = baselineSelection.Resolve(baselineSource, static value => value.Id)
+            .Take(1).Single();
+        _ = selection.Resolve(source, static value => value.Id).Take(1).Single();
+        (int baselineCount, long baselineAllocated) = Measure(
+            baselineSelection,
+            baselineSource);
+        (int resolved, long allocated) = Measure(selection, source);
+
+        Assert.Equal(objectCount - 1, baselineCount);
+        Assert.Equal(objectCount, resolved);
+        Assert.Equal(2, source.IdLookupRequests);
+        Assert.True(
+            allocated <= baselineAllocated + (4L * 1024 * 1024),
+            $"Sparse includes added {(allocated - baselineAllocated) / 1048576d:F1} MiB.");
+
+        static (int Count, long Allocated) Measure(
+            TimelineObjectSelectionDescriptor selection,
+            SyntheticTimelineObjectSource source)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            int count = 0;
+            foreach (SyntheticValue _ in selection.Resolve(source, static value => value.Id))
+                count++;
+            return (count, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+    }
+
+    [Fact]
     public void EveryEditableTimelineSnapshotImplementsTheCommonPageContract()
     {
         using MidoraProject project = new(192);

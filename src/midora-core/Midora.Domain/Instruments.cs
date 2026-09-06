@@ -281,6 +281,10 @@ public sealed class TemplateEvent
         return newlyAttached;
     }
 
+    internal bool CanUseBulkAttachPath(SubVoice owner) =>
+        (_owner is null || ReferenceEquals(_owner, owner))
+        && _detachedMappings.Count == 0;
+
     internal void EnsureMappings() => _owner?.EnsureEventMappings(this, createOptional: false);
 
     internal void SetChangeSink(Action<TemplateEvent>? sink) => _changeSink = sink;
@@ -555,23 +559,38 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
     public void AddRange(IEnumerable<TemplateEvent> values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        using IDisposable batch = _store.BeginBatchChange();
-        foreach (TemplateEvent value in values)
-        {
-            Add(value);
-        }
+        IReadOnlyList<TemplateEvent> materialized = values as IReadOnlyList<TemplateEvent>
+            ?? values.ToArray();
+        InsertRange(Count, materialized);
     }
 
     public void InsertRange(int index, IReadOnlyList<TemplateEvent> values)
     {
         ArgumentNullException.ThrowIfNull(values);
         if ((uint)index > (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
-        // Route every value through Collection.Insert so TemplateEvent.AttachTo
-        // and mandatory/shared mapping ownership retain their exact single-item
-        // semantics. The store batch still publishes only one generation.
-        using IDisposable batch = _store.BeginBatchChange();
-        for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
-            Insert(checked(index + valueIndex), values[valueIndex]);
+        if (values.Count == 0) return;
+
+        // Detached events with authored mapping state retain the legacy
+        // item-by-item merge path. Fresh and already-owned events have no
+        // fallible detached merge, so they can publish one structural range
+        // without changing CLR object identity or mapping ownership semantics.
+        if (values.Any(value => value is null || !value.CanUseBulkAttachPath(_owner)))
+        {
+            using IDisposable batch = _store.BeginBatchChange();
+            for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
+                Insert(checked(index + valueIndex), values[valueIndex]);
+            return;
+        }
+
+        _store.ValidateInsertRange(values);
+        foreach (TemplateEvent item in values)
+        {
+            bool newlyAttached = item.AttachTo(_owner);
+            _owner.EnsureEventMappings(
+                item,
+                createOptional: newlyAttached && !_suppressOptionalMappingCreation);
+        }
+        _store.InsertRange(index, values);
     }
 
     public int RemoveRange(IReadOnlyCollection<TemplateEvent> values)
@@ -610,6 +629,23 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
         try
         {
             AddRange(values);
+        }
+        finally
+        {
+            _suppressOptionalMappingCreation = oldValue;
+        }
+    }
+
+    internal void InsertRangeWithoutOptionalMappingCreation(
+        int index,
+        IReadOnlyList<TemplateEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        bool oldValue = _suppressOptionalMappingCreation;
+        _suppressOptionalMappingCreation = true;
+        try
+        {
+            InsertRange(index, values);
         }
         finally
         {

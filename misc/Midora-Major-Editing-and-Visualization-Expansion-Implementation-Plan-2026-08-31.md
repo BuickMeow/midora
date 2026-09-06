@@ -1,7 +1,7 @@
 # Midora 大型编辑与可视化扩展实施方案（已定案记录）
 
 - 日期：2026-08-31
-- 状态：**非规范性决策记录与实施计划；阶段 1～3 已完成并经产品所有者验收；阶段 4 已获授权实施；阶段 5～8 尚未授权实施**
+- 状态：**非规范性决策记录与实施计划；阶段 1～3 已完成并经产品所有者验收；阶段 4 功能与 UI 已于 2026-09-06 验收通过，百万对象资源门仍未关闭；阶段 5～8 尚未授权实施**
 - 适用仓库基线：`b8ed363`
 - 目的：把本轮需求整理为可审查、可逐项定案、可分阶段实施的长期存档。
 
@@ -891,7 +891,7 @@ create Definition
 
 交付给用户的重点测试清单：
 
-- Humanize 相同 seed 重现、各随机模式、Key 越界删除和联合 Tick/Gate 边界；
+- Humanize 相同 seed 重现、各随机模式、Tick 越 owner 硬边界删除和联合 Tick/Gate 边界；
 - Split 三种模式、最大 cuts/results、表达式停止、Direct MIDI 顺序和第一片身份；
 - Join gap、Velocity 策略、未选中重叠 Note 和不同 owner；
 - Quantize Note/Event 的 grid、tie、Start/Start+End、collision 和拍号变化；

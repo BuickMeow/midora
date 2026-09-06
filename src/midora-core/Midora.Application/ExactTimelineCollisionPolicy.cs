@@ -1026,13 +1026,15 @@ internal static class ExactTimelineCollisionPolicy
     private sealed class CollisionResolvingPreparedEdit(
         IPreparedProjectEdit source,
         CollisionBaseline baseline,
-        CollisionScopeSet scopes) : IPreparedProjectEdit
+        CollisionScopeSet scopes) : IPreparedTimelineSelectionEdit, IDisposable
     {
         private IReadOnlyList<CollisionRemoval>? _lastRemovals;
         private bool _applyStarted;
 
         public bool HasChanges => source.HasChanges;
         public ProjectChangeSet Changes => source.Changes;
+        public PreparedTimelineSelection PreparedSelection =>
+            GetPreparedSelection(source);
 
         public void Apply(MidoraProject project)
         {
@@ -1057,6 +1059,11 @@ internal static class ExactTimelineCollisionPolicy
             _lastRemovals = null;
             _applyStarted = false;
         }
+
+        public void Dispose()
+        {
+            if (source is IDisposable disposable) disposable.Dispose();
+        }
     }
 
     private sealed class TargetedCollisionPreparedEdit(
@@ -1067,13 +1074,16 @@ internal static class ExactTimelineCollisionPolicy
         IReadOnlyList<TargetedLogicalParameterPointBaseline> logicalParameterBaselines,
         IReadOnlyList<TargetedTemplateEventPointBaseline> templateEventBaselines,
         IReadOnlyList<TargetedDirectMidiEventBaseline> directEventBaselines,
-        IReadOnlyList<TargetedValueCurvePointBaseline> valueCurveBaselines) : IPreparedProjectEdit
+        IReadOnlyList<TargetedValueCurvePointBaseline> valueCurveBaselines)
+        : IPreparedTimelineSelectionEdit, IDisposable
     {
         private IReadOnlyList<CollisionRemoval>? _lastRemovals;
         private bool _applyStarted;
 
         public bool HasChanges => source.HasChanges;
         public ProjectChangeSet Changes => source.Changes;
+        public PreparedTimelineSelection PreparedSelection =>
+            GetPreparedSelection(source);
 
         public void Apply(MidoraProject project)
         {
@@ -1103,17 +1113,35 @@ internal static class ExactTimelineCollisionPolicy
             _lastRemovals = null;
             _applyStarted = false;
         }
+
+        public void Dispose()
+        {
+            if (source is IDisposable disposable) disposable.Dispose();
+        }
     }
 
     private sealed record CollisionScopedPreparedEdit(
         IPreparedProjectEdit Source,
-        CollisionScopeSet Scopes) : IPreparedProjectEdit
+        CollisionScopeSet Scopes) : IPreparedTimelineSelectionEdit, IDisposable
     {
         public bool HasChanges => Source.HasChanges;
         public ProjectChangeSet Changes => Source.Changes;
+        public PreparedTimelineSelection PreparedSelection =>
+            GetPreparedSelection(Source);
         public void Apply(MidoraProject project) => Source.Apply(project);
         public void Undo(MidoraProject project) => Source.Undo(project);
+        public void Dispose()
+        {
+            if (Source is IDisposable disposable) disposable.Dispose();
+        }
     }
+
+    private static PreparedTimelineSelection GetPreparedSelection(
+        IPreparedProjectEdit source) =>
+        source is IPreparedTimelineSelectionEdit selectionEdit
+            ? selectionEdit.PreparedSelection
+            : throw new InvalidOperationException(
+                "A collision-scoped Timeline selection edit did not expose its frozen selection result.");
 
     private sealed record CollisionScopeSet(
         IReadOnlyCollection<Segment> LogicalNoteSegments,

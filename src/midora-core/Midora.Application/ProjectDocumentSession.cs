@@ -35,6 +35,10 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
         PresentationTrackIds = Array.AsReadOnly(changes.PresentationTrackIds.Order().ToArray());
         PresentationEventInstrumentIds = Array.AsReadOnly(
             changes.PresentationEventInstrumentIds.Order().ToArray());
+        TimelineOwnerChanges = Array.AsReadOnly(changes.TimelineOwnerChanges
+            .OrderBy(static value => value.OwnerId)
+            .ThenBy(static value => value.OwnerKind)
+            .ToArray());
     }
 
     public bool AffectsEverything { get; }
@@ -47,6 +51,7 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
     public IReadOnlyList<MidoraId> PureMidiTrackIds { get; }
     public IReadOnlyList<MidoraId> PresentationTrackIds { get; }
     public IReadOnlyList<MidoraId> PresentationEventInstrumentIds { get; }
+    public IReadOnlyList<ProjectTimelineOwnerChangeSet> TimelineOwnerChanges { get; }
     public bool IsEmpty => !AffectsEverything
         && !AffectsConductor
         && !AffectsAudioPcmCacheGeneration
@@ -56,13 +61,72 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
         && MidiChannelRootIds.Count == 0
         && PureMidiTrackIds.Count == 0
         && PresentationTrackIds.Count == 0
-        && PresentationEventInstrumentIds.Count == 0;
+        && PresentationEventInstrumentIds.Count == 0
+        && TimelineOwnerChanges.Count == 0;
 }
 
 public interface IProjectEditCommand
 {
     string Name { get; }
     IPreparedProjectEdit Prepare(MidoraProject project);
+}
+
+/// <summary>
+/// Optional preparation contract for commands whose detached planning can be
+/// expensive. The cancellation token is observed only before publication;
+/// Apply and Undo remain atomic and non-cancellable.
+/// </summary>
+public interface ICancellableProjectEditCommand : IProjectEditCommand
+{
+    IPreparedProjectEdit Prepare(MidoraProject project, CancellationToken cancellationToken);
+}
+
+public sealed class StagedProjectEdit : IDisposable
+{
+    private IPreparedProjectEdit? _prepared;
+
+    internal StagedProjectEdit(
+        object owner,
+        string name,
+        long expectedStateId,
+        long expectedPublicationRevision,
+        IPreparedProjectEdit prepared,
+        PreparedTimelineSelection? preparedSelection)
+    {
+        Owner = owner;
+        Name = name;
+        ExpectedStateId = expectedStateId;
+        ExpectedPublicationRevision = expectedPublicationRevision;
+        _prepared = prepared ?? throw new ArgumentNullException(nameof(prepared));
+        PreparedSelection = preparedSelection;
+    }
+
+    internal object Owner { get; }
+    internal long ExpectedStateId { get; }
+    internal long ExpectedPublicationRevision { get; }
+    internal IPreparedProjectEdit Prepared => _prepared
+        ?? throw new ObjectDisposedException(
+            nameof(StagedProjectEdit),
+            "The staged Project edit was already published or abandoned.");
+    public string Name { get; }
+    public PreparedTimelineSelection? PreparedSelection { get; }
+
+    internal void TransferToHistory()
+    {
+        if (_prepared is null)
+        {
+            throw new ObjectDisposedException(
+                nameof(StagedProjectEdit),
+                "The staged Project edit was already published or abandoned.");
+        }
+        _prepared = null;
+    }
+
+    public void Dispose()
+    {
+        IPreparedProjectEdit? prepared = Interlocked.Exchange(ref _prepared, null);
+        if (prepared is IDisposable disposable) disposable.Dispose();
+    }
 }
 
 public interface IPreparedProjectEdit
@@ -144,12 +208,14 @@ public sealed class ProjectPropertyEditCommand<T> : IProjectEditCommand
         result.PresentationTrackIds.UnionWith(source.PresentationTrackIds);
         result.PresentationEventInstrumentIds.UnionWith(
             source.PresentationEventInstrumentIds);
+        result.TimelineOwnerChanges.AddRange(source.TimelineOwnerChanges);
         return result;
     }
 }
 
-public sealed class ProjectDocumentSession
+public sealed class ProjectDocumentSession : IDisposable
 {
+    private readonly object _stagedEditOwner = new();
     private readonly object _clipboardSessionIdentity = new();
     private readonly object _sync = new();
     private readonly ProjectCompilationSession _compilation;
@@ -158,6 +224,7 @@ public sealed class ProjectDocumentSession
     private int _cursor;
     private long _currentStateId;
     private long _nextStateId = 1;
+    private long _publicationRevision;
     private long _baselineStateId;
     private bool _hasPersistentOrigin;
     private bool _notifying;
@@ -293,46 +360,184 @@ public sealed class ProjectDocumentSession
         lock (_sync)
         {
             ThrowIfNotifying();
-            string commandName = command.Name;
-            if (string.IsNullOrWhiteSpace(commandName))
-            {
-                throw new ArgumentException(
-                    "A Project edit command name is required.",
-                    nameof(command));
-            }
-            commandName = commandName.Trim();
+            string commandName = ValidateCommandName(command.Name, nameof(command));
             IPreparedProjectEdit sourcePrepared = command.Prepare(Project)
                 ?? throw new InvalidOperationException(
                     "A Project edit command returned no prepared edit.");
-            FrozenPreparedProjectEdit prepared = FreezePreparedEdit(Project, sourcePrepared);
-            if (!prepared.HasChanges)
+            FrozenPreparedProjectEdit? prepared = null;
+            try
             {
-                return new(false, _compilation.LastAttempt);
+                prepared = FreezePreparedEdit(Project, sourcePrepared);
+                sourcePrepared = null!;
+                ProjectEditExecution result = CommitPrepared(commandName, prepared);
+                if (result.Changed) prepared = null;
+                return result;
             }
-            if (_nextStateId == long.MaxValue)
+            finally
             {
-                throw new InvalidOperationException("The Project history state counter is exhausted.");
+                prepared?.Dispose();
+                DisposePrepared(sourcePrepared);
             }
-
-            CanonicalCompiledResult result = _compilation.ApplyReversibleEdit(
-                prepared.Apply,
-                prepared.Undo,
-                prepared.Changes);
-            if (_cursor != _entries.Count)
-            {
-                _entries.RemoveRange(_cursor, _entries.Count - _cursor);
-            }
-            long nextStateId = _nextStateId++;
-            _entries.Add(new(
-                commandName,
-                _currentStateId,
-                nextStateId,
-                prepared));
-            _cursor++;
-            _currentStateId = nextStateId;
-            NotifyEditChanged(prepared.Changes);
-            return new(true, result);
         }
+    }
+
+    /// <summary>
+    /// Builds an immutable edit plan without publishing it. Callers must keep
+    /// ordinary Project editing locked while this method is running. The
+    /// history state and monotonic publication revision are checked both after
+    /// preparation and at publication.
+    /// </summary>
+    public StagedProjectEdit PrepareEdit(
+        IProjectEditCommand command,
+        CancellationToken cancellationToken = default,
+        IProgress<TimelineEditPreparationProgress>? progress = null)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        string commandName = ValidateCommandName(command.Name, nameof(command));
+        long expectedStateId;
+        long expectedPublicationRevision;
+        MidoraProject project;
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            expectedStateId = _currentStateId;
+            expectedPublicationRevision = _publicationRevision;
+            project = Project;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        IPreparedProjectEdit? sourcePrepared = null;
+        try
+        {
+            sourcePrepared = command switch
+            {
+                IProgressReportingProjectEditCommand reporting =>
+                    reporting.Prepare(project, cancellationToken, progress),
+                ICancellableProjectEditCommand cancellable =>
+                    cancellable.Prepare(project, cancellationToken),
+                _ => command.Prepare(project)
+            };
+            if (sourcePrepared is null)
+            {
+                throw new InvalidOperationException(
+                    "A Project edit command returned no prepared edit.");
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+
+            lock (_sync)
+            {
+                ThrowIfNotifying();
+                if (!ReferenceEquals(project, Project)
+                    || expectedStateId != _currentStateId
+                    || expectedPublicationRevision != _publicationRevision)
+                {
+                    throw new InvalidOperationException(
+                        "The Project changed while the edit was being prepared. No changes were applied.");
+                }
+                PreparedTimelineSelection? preparedSelection = command
+                    is ITimelineSelectionResultEditCommand
+                    ? (sourcePrepared as IPreparedTimelineSelectionEdit)?.PreparedSelection
+                        ?? throw new InvalidOperationException(
+                            "A Timeline selection command did not expose its frozen selection result.")
+                    : null;
+                FrozenPreparedProjectEdit prepared = FreezePreparedEdit(Project, sourcePrepared);
+                sourcePrepared = null;
+                return new(
+                    _stagedEditOwner,
+                    commandName,
+                    expectedStateId,
+                    expectedPublicationRevision,
+                    prepared,
+                    preparedSelection);
+            }
+        }
+        finally
+        {
+            DisposePrepared(sourcePrepared);
+        }
+    }
+
+    public ProjectEditExecution ExecutePrepared(StagedProjectEdit staged)
+    {
+        ArgumentNullException.ThrowIfNull(staged);
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            if (!ReferenceEquals(staged.Owner, _stagedEditOwner))
+                throw new ArgumentException("The staged edit belongs to another Project document.", nameof(staged));
+            if (staged.ExpectedStateId != _currentStateId
+                || staged.ExpectedPublicationRevision != _publicationRevision)
+            {
+                staged.Dispose();
+                throw new InvalidOperationException(
+                    "The Project changed after the edit was prepared. No changes were applied.");
+            }
+            IPreparedProjectEdit prepared = staged.Prepared;
+            try
+            {
+                ProjectEditExecution result = CommitPrepared(staged.Name, prepared);
+                if (result.Changed) staged.TransferToHistory();
+                else staged.Dispose();
+                return result;
+            }
+            catch
+            {
+                staged.Dispose();
+                throw;
+            }
+        }
+    }
+
+    private ProjectEditExecution CommitPrepared(string commandName, IPreparedProjectEdit prepared)
+    {
+        if (!prepared.HasChanges) return new(false, _compilation.LastAttempt);
+        if (_nextStateId == long.MaxValue)
+            throw new InvalidOperationException("The Project history state counter is exhausted.");
+        long nextPublicationRevision = GetNextPublicationRevision();
+
+        CanonicalCompiledResult result = _compilation.ApplyReversibleEdit(
+            prepared.Apply,
+            prepared.Undo,
+            prepared.Changes);
+        if (_cursor != _entries.Count)
+        {
+            for (int index = _cursor; index < _entries.Count; index++)
+            {
+                if (_entries[index].Prepared is IDisposable disposable)
+                    disposable.Dispose();
+            }
+            _entries.RemoveRange(_cursor, _entries.Count - _cursor);
+        }
+        long nextStateId = _nextStateId++;
+        _entries.Add(new(commandName, _currentStateId, nextStateId, prepared));
+        _cursor++;
+        _currentStateId = nextStateId;
+        _publicationRevision = nextPublicationRevision;
+        NotifyEditChanged(prepared.Changes);
+        return new(true, result);
+    }
+
+    private static string ValidateCommandName(string? name, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("A Project edit command name is required.", parameterName);
+        return name.Trim();
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            foreach (HistoryEntry entry in _entries)
+                DisposePrepared(entry.Prepared);
+            _entries.Clear();
+            _cursor = 0;
+        }
+    }
+
+    private static void DisposePrepared(IPreparedProjectEdit? prepared)
+    {
+        if (prepared is IDisposable disposable) disposable.Dispose();
     }
 
     public CanonicalCompiledResult Undo()
@@ -344,6 +549,7 @@ public sealed class ProjectDocumentSession
             {
                 throw new InvalidOperationException("There is no Project edit to undo.");
             }
+            long nextPublicationRevision = GetNextPublicationRevision();
             HistoryEntry entry = _entries[_cursor - 1];
             CanonicalCompiledResult result = _compilation.ApplyReversibleEdit(
                 entry.Prepared.Undo,
@@ -351,6 +557,7 @@ public sealed class ProjectDocumentSession
                 entry.Prepared.Changes);
             _cursor--;
             _currentStateId = entry.BeforeStateId;
+            _publicationRevision = nextPublicationRevision;
             NotifyEditChanged(entry.Prepared.Changes);
             return result;
         }
@@ -365,6 +572,7 @@ public sealed class ProjectDocumentSession
             {
                 throw new InvalidOperationException("There is no Project edit to redo.");
             }
+            long nextPublicationRevision = GetNextPublicationRevision();
             HistoryEntry entry = _entries[_cursor];
             CanonicalCompiledResult result = _compilation.ApplyReversibleEdit(
                 entry.Prepared.Apply,
@@ -372,6 +580,7 @@ public sealed class ProjectDocumentSession
                 entry.Prepared.Changes);
             _cursor++;
             _currentStateId = entry.AfterStateId;
+            _publicationRevision = nextPublicationRevision;
             NotifyEditChanged(entry.Prepared.Changes);
             return result;
         }
@@ -482,6 +691,7 @@ public sealed class ProjectDocumentSession
         changes.PresentationTrackIds.UnionWith(prepared.Changes.PresentationTrackIds);
         changes.PresentationEventInstrumentIds.UnionWith(
             prepared.Changes.PresentationEventInstrumentIds);
+        changes.TimelineOwnerChanges.AddRange(prepared.Changes.TimelineOwnerChanges);
         return new(
             ExactTimelineCollisionPolicy.Wrap(project, prepared),
             changes);
@@ -495,11 +705,49 @@ public sealed class ProjectDocumentSession
 
     private sealed class FrozenPreparedProjectEdit(
         IPreparedProjectEdit source,
-        ProjectChangeSet changes) : IPreparedProjectEdit
+        ProjectChangeSet changes) : IPreparedProjectEdit, IDisposable
     {
+        private IPreparedProjectEdit? _source = source;
+
         public bool HasChanges { get; } = source.HasChanges;
         public ProjectChangeSet Changes { get; } = changes;
-        public void Apply(MidoraProject project) => source.Apply(project);
-        public void Undo(MidoraProject project) => source.Undo(project);
+        public void Apply(MidoraProject project) => Current.Apply(project);
+        public void Undo(MidoraProject project) => Current.Undo(project);
+
+        public void Dispose()
+        {
+            IPreparedProjectEdit? current = Interlocked.Exchange(ref _source, null);
+            if (current is IDisposable disposable) disposable.Dispose();
+        }
+
+        private IPreparedProjectEdit Current => _source
+            ?? throw new ObjectDisposedException(nameof(FrozenPreparedProjectEdit));
+    }
+
+    /// <summary>
+    /// Monotonically identifies successful Project state publications in this
+    /// document session. Unlike <see cref="CurrentStateId"/>, Undo and Redo
+    /// advance this value so a staged edit cannot pass its publication gate
+    /// after an intervening edit returns the history cursor to the same state.
+    /// </summary>
+    public long PublicationRevision
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _publicationRevision;
+            }
+        }
+    }
+
+    private long GetNextPublicationRevision()
+    {
+        if (_publicationRevision == long.MaxValue)
+        {
+            throw new InvalidOperationException(
+                "The Project publication revision counter is exhausted.");
+        }
+        return _publicationRevision + 1;
     }
 }

@@ -1,4 +1,3 @@
-using System.Reflection;
 using Midora.Compiler;
 
 namespace Midora.Desktop;
@@ -48,6 +47,19 @@ internal static class BatchExpressionCompletionProvider
         }
         result.Add(new("tr", "Tick relative to the earliest selected object before calculation (double)."));
         return result;
+    }
+
+    public static IReadOnlyList<BatchExpressionVariable> CreateVariables(
+        NumericExpressionProfile profile,
+        string? excludedVariable = null)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        return profile.Variables
+            .Where(variable => !string.Equals(variable.Name, excludedVariable, StringComparison.Ordinal))
+            .Select(variable => new BatchExpressionVariable(
+                variable.Name,
+                DescribeProfileVariable(variable.Name)))
+            .ToArray();
     }
 
     public static IReadOnlyList<BatchExpressionCompletionItem> GetCompletions(
@@ -100,6 +112,7 @@ internal static class BatchExpressionCompletionProvider
         yield return new("Math", "Math", 0, "Type", "System.Math static methods and constants.");
         yield return new("PI", "PI", 0, "Constant", "System.Math.PI.");
         yield return new("E", "E", 0, "Constant", "System.Math.E.");
+        yield return new("Tau", "Tau", 0, "Constant", "System.Math.Tau.");
         yield return new("true", "true", 0, "Keyword", "Boolean true literal.");
         yield return new("false", "false", 0, "Keyword", "Boolean false literal.");
         yield return new("double", "double", 0, "Keyword", "C# double type; only double casts are supported.");
@@ -112,23 +125,16 @@ internal static class BatchExpressionCompletionProvider
 
     private static IReadOnlyList<BatchExpressionCompletionItem> CreateMathMembers()
     {
-        return typeof(Math)
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Where(method => IsNumeric(method.ReturnType)
-                             && method.GetParameters().All(parameter =>
-                                 !parameter.ParameterType.IsByRef
-                                 && IsNumeric(parameter.ParameterType)))
-            .GroupBy(method => method.Name, StringComparer.Ordinal)
-            .Select(group =>
+        return BoundedNumericExpressionCompiler.MathFunctions
+            .Select(function =>
             {
-                string[] signatures = group
-                    .Select(FormatSignature)
+                string[] signatures = function.Signatures
                     .Distinct(StringComparer.Ordinal)
                     .Order(StringComparer.Ordinal)
                     .ToArray();
                 return new BatchExpressionCompletionItem(
-                    group.Key,
-                    group.Key + "()",
+                    function.Name,
+                    function.Name + "()",
                     1,
                     "Method",
                     signatures.Length == 1
@@ -138,50 +144,17 @@ internal static class BatchExpressionCompletionProvider
             })
             .Append(new("PI", "PI", 0, "Constant", "System.Math.PI."))
             .Append(new("E", "E", 0, "Constant", "System.Math.E."))
+            .Append(new("Tau", "Tau", 0, "Constant", "System.Math.Tau."))
             .OrderBy(item => item.Text, StringComparer.Ordinal)
             .ToArray();
     }
 
-    private static string FormatSignature(MethodInfo method)
+    private static string DescribeProfileVariable(string name) => name switch
     {
-        string parameters = string.Join(
-            ", ",
-            method.GetParameters().Select(parameter =>
-                $"{FormatType(parameter.ParameterType)} {parameter.Name}"));
-        return $"{FormatType(method.ReturnType)} Math.{method.Name}({parameters})";
-    }
-
-    private static string FormatType(Type type)
-    {
-        Type effective = type.IsByRef ? type.GetElementType()! : type;
-        return effective == typeof(double) ? "double"
-            : effective == typeof(float) ? "float"
-            : effective == typeof(decimal) ? "decimal"
-            : effective == typeof(int) ? "int"
-            : effective == typeof(long) ? "long"
-            : effective == typeof(short) ? "short"
-            : effective == typeof(byte) ? "byte"
-            : effective == typeof(uint) ? "uint"
-            : effective == typeof(ulong) ? "ulong"
-            : effective == typeof(bool) ? "bool"
-            : effective.Name;
-    }
-
-    private static bool IsNumeric(Type type)
-    {
-        Type effective = type.IsByRef ? type.GetElementType()! : type;
-        return effective == typeof(byte)
-            || effective == typeof(sbyte)
-            || effective == typeof(short)
-            || effective == typeof(ushort)
-            || effective == typeof(int)
-            || effective == typeof(uint)
-            || effective == typeof(long)
-            || effective == typeof(ulong)
-            || effective == typeof(float)
-            || effective == typeof(double)
-            || effective == typeof(decimal);
-    }
+        "i" => "Zero-based operation iteration index (double).",
+        "tr" => "Previous cut position relative to the selection origin (double).",
+        _ => $"Numeric expression variable {name} (double)."
+    };
 
     private static bool TryGetMemberReceiver(string text, int prefixStart, out string receiver)
     {

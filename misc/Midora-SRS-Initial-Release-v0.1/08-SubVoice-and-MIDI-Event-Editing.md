@@ -1502,7 +1502,7 @@ Initial State 不混入普通时间线事件 Lane
 ```text
 Initial State 只支持固定值
 Initial State 不支持图形映射
-Initial State 不支持 C# 映射
+Initial State 不支持 Mapping Function Expression
 ```
 理由：
 ```text
@@ -1710,7 +1710,7 @@ Per-Note Instance Isolation 关闭时，启用映射依赖每音符上下文
 ### 8.63.2 警告
 以下情况不阻止整曲编译，但应在诊断中显示为警告：
 ```text
-未被引用但 C# 编译错误的 Mapping Function
+未被引用但无法通过 ABI v3 验证或绑定的 Mapping Function
 打开项目时发现 Mapping Function 引用断裂
 ```
 具体是否在打开时弹窗、诊断面板合并显示、是否支持跳转，由 第 15 章《音频文件渲染》 / 第 17～20 章的 UI 与交互规格 细化。

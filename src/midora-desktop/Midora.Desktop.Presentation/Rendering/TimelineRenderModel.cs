@@ -859,7 +859,9 @@ public sealed record TimelineMaterializedSelection(
     IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> Metrics,
     bool MetricsAreComplete,
     bool IsUnchanged,
-    TimelineSelectionRenderIndex? RenderIndex = null)
+    TimelineSelectionRenderIndex? RenderIndex = null,
+    int RangeCount = 0,
+    int BaseIntersectionCount = 0)
 {
     public bool IsCurrent(long currentSelectionRevision) =>
         BaseSelectionRevision == currentSelectionRevision;
@@ -1639,6 +1641,7 @@ public sealed class TimelineRenderSnapshot
         SelectionMetricsAccumulator newlyAddedMetrics = new();
         MidoraId? first = null;
         int visited = 0;
+        int baseIntersectionCount = 0;
         VisitInto(startTick, endTick, firstLane, lastLaneExclusive, item =>
         {
             if ((visited++ & 0xfff) == 0)
@@ -1662,6 +1665,8 @@ public sealed class TimelineRenderSnapshot
             rangeMetrics.IncludeWithAliases(item);
             if (!baseSelection.Contains(item.Id))
                 newlyAddedMetrics.IncludeWithAliases(item);
+            else
+                baseIntersectionCount++;
         });
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -1749,7 +1754,9 @@ public sealed class TimelineRenderSnapshot
             metrics,
             metricsAreComplete,
             unchanged,
-            renderIndex);
+            renderIndex,
+            range.Count,
+            baseIntersectionCount);
     }
 
     private static IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>

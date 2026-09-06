@@ -45,12 +45,27 @@ public sealed class CompressedMidoraIdSet : IReadOnlySet<MidoraId>
     }
 
     public static CompressedMidoraIdSet Create(IEnumerable<MidoraId> ids)
+        => Create(ids, CancellationToken.None);
+
+    public static CompressedMidoraIdSet Create(
+        IEnumerable<MidoraId> ids,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ids);
+        cancellationToken.ThrowIfCancellationRequested();
         if (ids is CompressedMidoraIdSet compressed) return compressed;
         Builder builder = new();
-        foreach (MidoraId id in ids) builder.Add(id);
-        return builder.Build();
+        int index = 0;
+        foreach (MidoraId id in ids)
+        {
+            if ((index++ & 0xff) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+            builder.Add(id);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        CompressedMidoraIdSet result = builder.Build();
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
     }
 
     public static Builder CreateBuilder() => new();

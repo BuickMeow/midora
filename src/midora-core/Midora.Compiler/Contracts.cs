@@ -3,6 +3,15 @@ using Midora.Midi;
 
 namespace Midora.Compiler;
 
+internal static class CanonicalMidiOrdering
+{
+    public static int DirectEndpointOrder(MidiMessage message) =>
+        message.MessageType == MidiMessageType.NoteOff
+            || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0
+                ? 0
+                : 1;
+}
+
 public enum DiagnosticSeverity
 {
     Debug,
@@ -793,6 +802,13 @@ public sealed class CanonicalCompiledResult
         if (value != 0) return value;
         value = x.EventOrder.CompareTo(y.EventOrder);
         if (value != 0) return value;
+        if (x.Role == CanonicalEventRole.DirectMidi
+            && y.Role == CanonicalEventRole.DirectMidi)
+        {
+            value = CanonicalMidiOrdering.DirectEndpointOrder(x.Message).CompareTo(
+                CanonicalMidiOrdering.DirectEndpointOrder(y.Message));
+            if (value != 0) return value;
+        }
         value = SmfKindOrder(x.Role).CompareTo(SmfKindOrder(y.Role));
         if (value != 0) return value;
         return x.SourceObjectId.CompareTo(y.SourceObjectId);

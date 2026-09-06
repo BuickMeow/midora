@@ -303,6 +303,20 @@ public sealed class MidoraProject : IDisposable
         _nextStableId = nextStableId;
     }
 
+    /// <summary>
+    /// Advances the allocator high-water mark without ever returning IDs to
+    /// the pool. Detached edit preparation uses preserved IDs and publishes
+    /// the corresponding high-water mark only with its first successful root
+    /// replacement.
+    /// </summary>
+    internal void AdvanceNextStableId(long minimumNextStableId)
+    {
+        if (minimumNextStableId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(minimumNextStableId));
+        if (minimumNextStableId > _nextStableId)
+            _nextStableId = minimumNextStableId;
+    }
+
     public void SetEndMarker(long? tick)
     {
         if (tick is < 0)
@@ -349,4 +363,7 @@ public sealed class ProjectChangeSet
     // without marking canonical compilation or PCM-cache generation affected.
     public HashSet<MidoraId> PresentationTrackIds { get; } = [];
     public HashSet<MidoraId> PresentationEventInstrumentIds { get; } = [];
+    // Optional exact source/range/page traces for timeline root swaps.  An
+    // empty collection preserves the existing coarse invalidation contract.
+    public List<ProjectTimelineOwnerChangeSet> TimelineOwnerChanges { get; } = [];
 }

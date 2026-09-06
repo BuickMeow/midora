@@ -150,7 +150,7 @@ SubVoice 数据
 Event Instrument 内事件与曲线
 Logical Parameters
 Logical Parameter Mapping
-Mapping Function 源码 / 定义入口
+Mapping Function 单行表达式 / 定义入口
 Envelope Presets
 生命周期 / Overlap / Initial State Defaults
 Logical Track
@@ -583,7 +583,7 @@ SubVoice 顺序
 SubVoice 内事件与曲线
 Logical Parameters
 Logical Parameter Mapping
-Mapping Function 源码 / 定义入口
+Mapping Function 单行表达式 / 定义入口
 Envelope Presets
 Per-Note Instance Isolation
 生命周期策略
@@ -592,8 +592,8 @@ Initial State Defaults
 其他属于 Event Instrument 定义的内容
 ```
 SubVoice 不拆独立文件。
-Mapping Function 源码 / 定义保存于对应 Event Instrument `.pb` 内。
-每个 Mapping Function 定义必须保存 `abiVersion`、函数体源码和声明的 Context 字段集合。初版新建函数固定写 `abiVersion = 2`；未知 ABI 可以作为源数据打开和保留，但实际参与编译时按 Mapping Function 编译错误处理。编译产物、参考程序集、AssemblyLoadContext 状态和缓存不得写入 `.midora`。
+Mapping Function 单行表达式 / 定义保存于对应 Event Instrument `.pb` 内。
+每个 Mapping Function 定义必须保存 `abiVersion`、单行表达式文本和由正式分析器推导的 Context 字段集合。初版新建函数固定写 `abiVersion = 3`；未知 ABI 可以作为源数据打开和保留，但实际参与编译时必须明确失败。自由 C# ABI v1/v2 同样只可识别和保留，绝不执行或自动改写为 ABI v3。`System.Linq.Expressions` 委托、语法/绑定缓存及任何编译产物不得写入 `.midora`。
 Logical Parameter Definition 保存于对应 Event Instrument `.pb` 内。
 ### 16.9.3 Event Instrument Definition 与 Usage Index
 Event Instrument 的集合级信息保存于 `project.json`，包括：

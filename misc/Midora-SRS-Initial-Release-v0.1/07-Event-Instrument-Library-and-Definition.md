@@ -111,7 +111,7 @@ Event Instrument 3
 唯一性比较大小写不敏感，并去除首尾空白
 重命名不改变 Event Instrument 稳定 ID
 重命名不破坏 Logical Track 绑定
-重命名不改变编译语义，除非后续某些用户代码显式读取名称且被允许这样做
+重命名不改变编译语义；Mapping Function Expression ABI v3 不向表达式暴露名称
 重命名属于项目可撤销编辑行为
 重命名应使 Project 进入已修改状态
 ```
@@ -232,7 +232,7 @@ Event Instrument 可能因为以下原因处于无效状态：
 内部事件值非法
 SubVoice 结构非法
 Mapping Function 缺失或命名冲突
-C# 映射源码无法编译
+Mapping Function Expression 无法通过 ABI v3 验证或绑定
 生命周期策略不完整
 Reset 配置非法
 ```
@@ -349,7 +349,7 @@ Event Instrument 预览 / 试听能力属于播放系统和 UI 工作流的交�
 ```text
 Event Instrument Editor / Arrangement Header 应提供 Event Instrument 预览或导航入口
 具体预览行为由 第 13 章《播放与预览》 / 第 17～20 章的 UI 与交互规格 细化
-预览必须仍遵守 SoundFont 可用性、编译规则、资源分配规则和 C# 映射错误处理规则
+预览必须仍遵守 SoundFont 可用性、编译规则、资源分配规则和 Mapping Function Expression 错误处理规则
 ```
 具体预览触发方式、默认试听音高、试听长度、是否创建临时 Logical Track / Segment，由 第 13 章《播放与预览》 和 第 17～20 章的 UI 与交互规格 细化。
 ---
@@ -413,7 +413,7 @@ Event Instrument 名称为空
 Event Instrument 名称与当前 Project 内其他 Event Instrument 冲突
 Event Instrument 名称经过去除首尾空白后为空
 被实际编译使用的 Event Instrument 定义非法
-被实际编译使用的 Event Instrument 中 C# 映射无法编译
+被实际编译使用的 Event Instrument 中 Mapping Function Expression 无法通过 ABI v3 验证或绑定
 用户尝试跨项目导入 / 导出 Event Instrument，初版不支持
 用户尝试创建程序级全局 Event Instrument Library，初版不支持
 ```
@@ -485,7 +485,7 @@ Event Instrument 颜色只作为 UI 主色，不影响 MIDI 语义
 | 创建或重命名 Event Instrument 时名称为空 | 操作失败 |
 | 创建或重命名 Event Instrument 时名称与现有名称冲突 | 操作失败 |
 | 被实际编译使用的 Event Instrument 定义非法 | 编译失败 |
-| 被实际编译使用的 Event Instrument 中 C# 映射无法编译 | 编译失败 |
+| 被实际编译使用的 Event Instrument 中 Mapping Function Expression 无法通过 ABI v3 验证或绑定 | 编译失败 |
 | 用户尝试跨项目导入 / 导出 Event Instrument | 操作失败 |
 | 用户尝试创建程序级全局 Event Instrument Library | 操作失败 |
 | 删除仍被 Usage 引用的 Event Instrument | 操作失败，不修改 Project |
@@ -957,14 +957,13 @@ Event Instrument 定义应包含 Mapping Function 集合入口。
 ```text
 Mapping Function 名称必填。
 Mapping Function 名称在单个 Event Instrument 内不可重复。
-初版允许完整自由 C#。
-不做沙箱。
-不做安全确认。
-Context 默认只读。
-用户代码以源码文本形式保存在 .midora 项目文件中。
-编译时动态编译。
-编译错误导致 Midora 编译失败。
-运行时异常会中止当前播放 / 渲染 / 导出流程。
+初版新建项固定使用受限 Mapping Function Expression ABI v3。
+表达式只能使用第 9.6 节的单行数值/枚举白名单；不允许自由 C#、语句、循环、对象创建或任意 API。
+Context 为只读，且表达式只能访问 ABI v3 明确批准的数值/枚举字段。
+单行表达式文本、`abiVersion = 3` 和经复核的 Context 依赖保存在 `.midora` 项目文件中。
+正式路径只绑定 `System.Linq.Expressions` 委托，不 Emit 或加载 Project 源码程序集。
+被实际使用的表达式无法通过 ABI v3 验证/绑定，或求值产生 NaN / Infinity / 非法结果时，当前编译 / 播放 / 渲染 / 导出流程失败。
+自由 C# ABI v1/v2 只可识别并明确拒绝，绝不执行。
 ```
 本章只确认归属：
 ```text
@@ -1021,7 +1020,7 @@ Logical Parameter Lane / Point / Curve
 Logical Parameter 稀疏状态继承
 Logical Parameter Mapping 执行语义
 Logical Parameter 与 SubVoice 原始事件值的合成方式
-C# 自定义 Logical Parameter Mapping Context
+Mapping Function Expression 的 Logical Parameter Context
 越界、除零、重绑定转换和诊断细则
 ```
 ## 7.38 Envelope Preset 集合入口
@@ -1159,7 +1158,7 @@ Template Length 小于等于 0
 Template Length 小于最后事件时间
 缺少必要 SubVoice
 Mapping Function 名称冲突
-Mapping Function 源码无法编译
+Mapping Function Expression 无法通过 ABI v3 验证或绑定
 Logical Parameter 名称冲突或缺失
 Logical Parameter 类型、defaultValue 或合法范围非法
 Logical Parameter Mapping 引用断裂、目标非法或顺序非法

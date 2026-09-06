@@ -4202,7 +4202,8 @@ public sealed partial class MidoraCompiler : IDisposable
             {
                 value = x.SmfEventOrder.CompareTo(y.SmfEventOrder);
                 if (value != 0) return value;
-                value = DirectEndpointOrder(x.Message).CompareTo(DirectEndpointOrder(y.Message));
+                value = CanonicalMidiOrdering.DirectEndpointOrder(x.Message).CompareTo(
+                    CanonicalMidiOrdering.DirectEndpointOrder(y.Message));
                 if (value != 0) return value;
             }
             value = x.StableOrder.CompareTo(y.StableOrder);
@@ -4250,12 +4251,6 @@ public sealed partial class MidoraCompiler : IDisposable
             value = x.Source.Tick.CompareTo(y.Source.Tick);
             if (value != 0) return value;
             return x.Source.Origin.CompareTo(y.Source.Origin);
-
-            static int DirectEndpointOrder(MidiMessage message) =>
-                message.MessageType == MidiMessageType.NoteOff
-                    || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0
-                        ? 0
-                        : 1;
         }
     }
 }

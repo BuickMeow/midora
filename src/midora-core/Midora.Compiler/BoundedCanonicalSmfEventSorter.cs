@@ -321,6 +321,13 @@ internal sealed class BoundedCanonicalSmfEventSorter : IDisposable
             if (value != 0) return value;
             value = x.EventOrder.CompareTo(y.EventOrder);
             if (value != 0) return value;
+            if (x.Role == CanonicalEventRole.DirectMidi
+                && y.Role == CanonicalEventRole.DirectMidi)
+            {
+                value = CanonicalMidiOrdering.DirectEndpointOrder(x.Message).CompareTo(
+                    CanonicalMidiOrdering.DirectEndpointOrder(y.Message));
+                if (value != 0) return value;
+            }
             value = KindOrder(x.Role).CompareTo(KindOrder(y.Role));
             if (value != 0) return value;
             return x.SourceObjectId.CompareTo(y.SourceObjectId);

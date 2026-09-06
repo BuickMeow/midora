@@ -55,11 +55,26 @@ public sealed class SequentialProjectEditCommand : IProjectEditCommand
         }
         catch
         {
-            UndoPrepared(project, prepared);
+            try
+            {
+                UndoPrepared(project, prepared);
+            }
+            finally
+            {
+                DisposePrepared(prepared);
+            }
             throw;
         }
 
-        UndoPrepared(project, prepared);
+        try
+        {
+            UndoPrepared(project, prepared);
+        }
+        catch
+        {
+            DisposePrepared(prepared);
+            throw;
+        }
         ProjectChangeSet changes = MergeChanges(prepared.Select(value => value.Changes));
         IPreparedProjectEdit result = new Prepared(prepared.ToArray(), changes);
         return ExactTimelineCollisionPolicy.CombineScopes(result, prepared);
@@ -73,6 +88,12 @@ public sealed class SequentialProjectEditCommand : IProjectEditCommand
         {
             prepared[index].Undo(project);
         }
+    }
+
+    private static void DisposePrepared(IEnumerable<IPreparedProjectEdit> prepared)
+    {
+        foreach (IPreparedProjectEdit edit in prepared)
+            if (edit is IDisposable disposable) disposable.Dispose();
     }
 
     private static ProjectChangeSet MergeChanges(IEnumerable<ProjectChangeSet> values)
@@ -95,13 +116,14 @@ public sealed class SequentialProjectEditCommand : IProjectEditCommand
             result.PresentationTrackIds.UnionWith(value.PresentationTrackIds);
             result.PresentationEventInstrumentIds.UnionWith(
                 value.PresentationEventInstrumentIds);
+            result.TimelineOwnerChanges.AddRange(value.TimelineOwnerChanges);
         }
         return result;
     }
 
     private sealed class Prepared(
         IReadOnlyList<IPreparedProjectEdit> edits,
-        ProjectChangeSet changes) : IPreparedProjectEdit
+        ProjectChangeSet changes) : IPreparedProjectEdit, IDisposable
     {
         public bool HasChanges => edits.Any(value => value.HasChanges);
         public ProjectChangeSet Changes { get; } = changes;
@@ -124,5 +146,7 @@ public sealed class SequentialProjectEditCommand : IProjectEditCommand
         {
             for (int index = edits.Count - 1; index >= 0; index--) edits[index].Undo(project);
         }
+
+        public void Dispose() => DisposePrepared(edits);
     }
 }

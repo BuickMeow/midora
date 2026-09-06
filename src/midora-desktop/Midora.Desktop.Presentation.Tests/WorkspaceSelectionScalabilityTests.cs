@@ -312,6 +312,40 @@ public sealed class WorkspaceSelectionScalabilityTests
     }
 
     [Fact]
+    public void PreparedSelectionAdoptionIsConstantCostAndAllocationFree()
+    {
+        const int count = 200_000;
+        WorkspaceSelection selection = new();
+        WorkspaceTimelineSelectionSource source = new(
+            WorkspaceTimelineSelectionKind.DirectMidiNote,
+            new MidoraId(9));
+        selection.Replace(new MidoraId(1), source);
+        MidoraId[] resultIds = Enumerable.Range(10, count)
+            .Select(static value => new MidoraId(value))
+            .ToArray();
+        PreparedWorkspaceSelectionProjection projection =
+            selection.PrepareProjection(resultIds);
+
+        // Invoke the publication path once before measuring so the assertion
+        // covers steady-state Dispatcher work rather than first-call JIT cost.
+        selection.AdoptPrepared(projection);
+        selection.Replace(new MidoraId(count + 100L), source);
+        long revision = selection.Revision;
+
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        selection.AdoptPrepared(projection);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(0, allocated);
+        Assert.Equal(revision + 1, selection.Revision);
+        Assert.Equal(count, selection.Ids.Count);
+        Assert.Same(projection.Ids, selection.SharedIds);
+        Assert.Equal(source, selection.HomogeneousTimelineSource);
+        Assert.Equal(source, selection.HomogeneousTimelineQuantizeScope);
+    }
+
+    [Fact]
     public void RangeOperationsPreserveRevisionAndEndpointSemanticsWithoutBeforeSet()
     {
         WorkspaceSelection selection = new();

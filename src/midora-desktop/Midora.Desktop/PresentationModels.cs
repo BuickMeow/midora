@@ -149,6 +149,15 @@ public sealed class DesktopTaskViewModel : ObservableObject, IDisposable
 
     public void SetCancellationAvailable(bool available) => IsCancellationAvailable = available;
 
+    internal void SealCancellationBeforePublication()
+    {
+        // RequestCancel and this transition run on the UI dispatcher. Disable
+        // new requests first, then observe any request that won the race before
+        // a prepared result enters its non-cancellable publication phase.
+        SetCancellationAvailable(false);
+        CancellationToken.ThrowIfCancellationRequested();
+    }
+
     public void Complete(string status, string detail = "")
     {
         Status = status;
@@ -662,15 +671,19 @@ public readonly record struct TimelineSubdivision(
             {
                 throw new ArgumentOutOfRangeException(nameof(barNumerator));
             }
-            return Math.Max(1, checked((long)Math.Ceiling(
-                ticksPerQuarterNote * 4d * barNumerator / barDenominator)));
+            return ProjectTimelineGrid.ResolveWholeNoteFractionStep(
+                ticksPerQuarterNote,
+                barNumerator,
+                barDenominator);
         }
         if (Numerator <= 0 || Denominator <= 0)
         {
             throw new InvalidOperationException("Timeline subdivisions must be positive.");
         }
-        return Math.Max(1, checked((long)Math.Ceiling(
-            ticksPerQuarterNote * 4d * Numerator / Denominator)));
+        return ProjectTimelineGrid.ResolveWholeNoteFractionStep(
+            ticksPerQuarterNote,
+            Numerator,
+            Denominator);
     }
 
     public override string ToString() => ShortLabel;
@@ -1476,22 +1489,38 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         return true;
     }
 
-    public bool SetObjectSelectionFromTimeRange()
+    public bool SetObjectSelectionFromTimeRange() =>
+        SetObjectSelectionFromTimeRange(Snapshot, null);
+
+    public bool SetObjectSelectionFromTimeRange(
+        TimelineRenderSnapshot? sourceSnapshot,
+        WorkspaceTimelineSelectionSource? source)
     {
-        if (Snapshot is null || TimeRangeStartTick is not long start || TimeRangeEndTick is not long end)
+        if (sourceSnapshot is null
+            || TimeRangeStartTick is not long start
+            || TimeRangeEndTick is not long end)
         {
             return false;
         }
         List<TimelineRenderItem> candidates = [];
-        int laneCount = Math.Max(1, Snapshot.LaneLabels.Count);
-        Snapshot.QueryInto(start, end, 0, laneCount, candidates);
+        int laneCount = Math.Max(1, sourceSnapshot.LaneLabels.Count);
+        sourceSnapshot.QueryInto(start, end, 0, laneCount, candidates);
         MidoraId[] ids = candidates
             .Where(item => (item.State & TimelineItemState.HitTestDisabled) == 0)
             .Select(item => item.Id)
             .Distinct()
             .ToArray();
-        Selection.Clear();
-        foreach (MidoraId id in ids) Selection.Add(id, makePrimary: false);
+        if (source is WorkspaceTimelineSelectionSource timelineSource)
+        {
+            Selection.ApplyRange(
+                ids,
+                WorkspaceSelectionRangeMode.Replace,
+                timelineSource);
+        }
+        else
+        {
+            Selection.ApplyRange(ids, WorkspaceSelectionRangeMode.Replace);
+        }
         return ids.Length != 0;
     }
 

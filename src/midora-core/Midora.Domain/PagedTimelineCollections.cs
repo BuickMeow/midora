@@ -499,8 +499,9 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
     public void AddRange(IEnumerable<LogicalNote> values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        using IDisposable batch = _store.BeginBatchChange();
-        foreach (LogicalNote value in values) Add(value);
+        IReadOnlyList<LogicalNote> materialized = values as IReadOnlyList<LogicalNote>
+            ?? values.ToArray();
+        _store.InsertRange(Count, materialized);
     }
 
     public void InsertRange(int index, IReadOnlyList<LogicalNote> values) =>
@@ -573,8 +574,9 @@ public sealed class CurvePointCollection : Collection<CurvePoint>, IReadOnlyList
     public void AddRange(IEnumerable<CurvePoint> values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        using IDisposable batch = _store.BeginBatchChange();
-        foreach (CurvePoint value in values) Add(value);
+        IReadOnlyList<CurvePoint> materialized = values as IReadOnlyList<CurvePoint>
+            ?? values.ToArray();
+        _store.InsertRange(Count, materialized);
     }
 
     public void InsertRange(int index, IReadOnlyList<CurvePoint> values) =>
@@ -850,20 +852,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         ArgumentNullException.ThrowIfNull(values);
         if ((uint)index > (uint)_count) throw new ArgumentOutOfRangeException(nameof(index));
         if (values.Count == 0) return;
-        Dictionary<MidoraId, T> batchIds = new(values.Count);
-        foreach (T value in values)
-        {
-            ArgumentNullException.ThrowIfNull(value);
-            EnsureInsertable(value);
-            MidoraId id = _getId(_toValue(value));
-            if (batchIds.TryGetValue(id, out T? existing)
-                && !ReferenceEquals(existing, value))
-            {
-                throw new InvalidOperationException(
-                    "A paged timeline insertion cannot contain distinct objects with duplicate Stable IDs.");
-            }
-            batchIds.TryAdd(id, value);
-        }
+        ValidateInsertRange(values);
 
         PublishPendingValueChanges();
         TValue[] publishedValues = _publishedSequence is null
@@ -932,6 +921,25 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         InvalidatePageDirectory();
         ApplyPublishedMutation(_publishedSequence?.InsertRange(index, publishedValues));
         Touch();
+    }
+
+    internal void ValidateInsertRange(IReadOnlyList<T> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        Dictionary<MidoraId, T> batchIds = new(values.Count);
+        foreach (T value in values)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            EnsureInsertable(value);
+            MidoraId id = _getId(_toValue(value));
+            if (batchIds.TryGetValue(id, out T? existing)
+                && !ReferenceEquals(existing, value))
+            {
+                throw new InvalidOperationException(
+                    "A paged timeline insertion cannot contain distinct objects with duplicate Stable IDs.");
+            }
+            batchIds.TryAdd(id, value);
+        }
     }
 
     public bool Remove(T item)

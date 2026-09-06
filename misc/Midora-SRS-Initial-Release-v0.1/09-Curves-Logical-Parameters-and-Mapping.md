@@ -314,14 +314,14 @@ Infinity
 ---
 ## 9.5 图形映射
 ### 9.5.1 图形映射是 Mapping Step
-图形映射和 C# 映射都是 Mapping Step。
+图形映射和 Mapping Function Expression 都是 Mapping Step。
 规则：
 ```text
 二者可在同一映射链中任意排序
 二者由用户手动排序
 从上到下执行
 ```
-不固定“图形先执行”或“C# 先执行”。
+不固定“图形先执行”或“Expression 先执行”。
 ### 9.5.2 输入源
 图形映射 X 轴输入源可选择 MappingContext 中的内置输入源。
 允许输入源包括：
@@ -349,7 +349,7 @@ templateVelocity
 ```text
 UI 显示文本
 自由字符串
-C# 表达式
+自由表达式文本
 ```
 ### 9.5.4 不允许引用其他事件参数
 初版图形映射不允许选择“另一个事件参数”作为输入源。
@@ -461,7 +461,7 @@ Mapping Function Expression 缓存键固定包含：
 ```text
 ABI version
 固定 compiler profile
-函数体精确 UTF-8 SHA-256
+单行表达式精确 UTF-8 SHA-256
 ```
 
 推导的 Context 字段参与 Project/source fingerprint 和兼容性检查，但不改变表达式代码缓存键。
@@ -501,7 +501,7 @@ Project 允许打开
 规则：
 ```text
 未被任何映射链引用的 Mapping Function 不产生诊断
-未被引用但 C# 编译错误的 Mapping Function 不阻止整曲编译，但在诊断中显示为警告
+未被引用但无法通过 ABI v3 验证或绑定的 Mapping Function 不阻止整曲编译，但在诊断中显示为警告
 被实际参与编译的 Mapping Function 编译错误导致编译失败
 被禁用 Mapping Step 引用的 Mapping Function 编译错误不影响编译
 Mapping Function 运行时异常导致当前编译 / 播放 / 渲染 / 导出流程失败
@@ -510,32 +510,27 @@ Mapping Function 返回 NaN / Infinity 视为运行失败
 ---
 ## 9.7 MappingContext
 ### 9.7.1 初版字段范围
-初版 MappingContext 至少包含：
+初版 Mapping Function Expression ABI v3 精确允许访问的数值字段为：
 ```text
-triggerNote
-triggerVelocity
-effectiveRootNote
-pitchDelta
-templateNote
-templateVelocity
-templateTick
-projectTick
-gateLength
-当前事件对象 ID
-当前参数 key
-当前事件类型
-Logical Parameter ID / 名称（仅 Logical Parameter Mapping 场景）
-Logical Parameter 当前有效值 x（仅 Logical Parameter Mapping 场景）
-目标原始有效值 c（仅 Logical Parameter Mapping 场景）
-segmentLocalTick（仅 Segment / Logical Parameter 场景）
-SubVoice ID
-SubVoice 名称
-SubVoice 索引
-SubVoice Effective Root Note
-Event Instrument ID
-Event Instrument 名称
-Event Instrument Root Note
+CurrentValue
+TriggerNote
+TriggerVelocity
+GateLength
+PitchDelta
+TemplateTick
+ProjectTick
+TemplateNote
+TemplateVelocity
+EffectiveRootNote
+LogicalParameterValue
+TargetOriginalValue
+SegmentLocalTick
+SubVoiceIndex
+SubVoiceEffectiveRootNote
+EventInstrumentRootNote
 ```
+
+精确允许的枚举字段为 `CurrentParameter` 与 `CurrentEventKind`。ID、名称、对象引用与其他 MappingContext 成员不在 ABI v3 表达式可访问面中；扩展上述列表必须增加 ABI version。
 ### 9.7.2 字段命名
 逻辑轨触发音 velocity 命名为：
 ```text
@@ -568,13 +563,7 @@ templateVelocity 仅当前映射目标属于 Note 对象时提供
 映射 Note velocity 时，value 是 velocity，但函数可能需要知道模板 note number
 ```
 ### 9.7.5 当前事件信息
-MappingContext 包含：
-```text
-当前事件对象 ID
-当前参数 key
-当前事件类型
-```
-事件类型示例：
+ABI v3 只通过 `CurrentEventKind` 与 `CurrentParameter` 两个只读枚举表达当前事件类型与目标参数类别。事件类型示例：
 ```text
 Note
 ControlChange
@@ -642,29 +631,24 @@ gateLength = Int64.MaxValue
 ```
 ---
 ### 9.7.9 Logical Parameter Mapping Context
-Logical Parameter Mapping 的 C# 函数可接收 Logical Parameter 专用上下文。
-专用字段至少包括：
+Logical Parameter Mapping 的 Mapping Function Expression 仍只能使用 ABI v3 白名单。该场景的主要专用数值字段为：
 ```text
-c
-x
-projectTick
-segmentLocalTick
-templateTick
-logicalParameterId
-logicalParameterName
-targetSubVoiceId
-targetSubVoiceName
-targetEventType
-targetParameterKey
-triggerNote
-triggerVelocity
+TargetOriginalValue
+LogicalParameterValue
+ProjectTick
+SegmentLocalTick
+TemplateTick
+TriggerNote
+TriggerVelocity
+CurrentEventKind
+CurrentParameter
 ```
 含义：
 ```text
-c = SubVoice 原始目标事件值的当前有效值
-x = Logical Parameter 的当前有效值
+TargetOriginalValue = SubVoice 原始目标事件值的当前有效值
+LogicalParameterValue = Logical Parameter 的当前有效值
 ```
-Logical Parameter Mapping 计算应使用有效 x 与有效 c，而不是只使用用户点所在 tick 的瞬时值。
+Logical Parameter Mapping 计算应使用有效 `LogicalParameterValue` 与 `TargetOriginalValue`，而不是只使用用户点所在 tick 的瞬时值；表达式的 `value` / `context.CurrentValue` 另表示当前累计链值。
 ## 9.8 Logical Parameter 定义、Lane 与 Mapping
 ### 9.8.1 Logical Parameter 的系统级定义
 Logical Parameter 是 Event Instrument 暴露给 Logical Track / Segment 的外部参数接口。
@@ -947,14 +931,14 @@ Initial State 与普通事件冲突规则
 事件展开算法
 曲线离散化的逐整数 tick 参考语义与重复值抑制
 映射链执行缓存
-C# 编译缓存
+Mapping Function Expression 验证/绑定委托缓存
 Channel Group 分配
 Reset 插入
 无输出事件优化
 资源占用计算
 ```
 ### 9.11.2 播放 / 预览 / 渲染关系
-播放、预览、音频渲染过程中，如果映射运行失败、C# 抛异常、产生 NaN / Infinity 或映射结果非法：
+播放、预览、音频渲染过程中，如果映射运行失败、表达式求值失败、产生 NaN / Infinity 或映射结果非法：
 ```text
 当前流程失败
 播放应停止
@@ -991,7 +975,7 @@ Per-Note Instance Isolation 关闭时，启用映射依赖每音符上下文
 ### 9.12.2 警告
 以下情况不阻止整曲编译，但应在诊断中显示为警告：
 ```text
-未被引用但 C# 编译错误的 Mapping Function
+未被引用但无法通过 ABI v3 验证或绑定的 Mapping Function
 打开项目时发现 Mapping Function 引用断裂
 ```
 具体是否在打开时弹窗、诊断面板合并显示、是否支持跳转，由 第 15 章《音频文件渲染》 / 第 17～20 章的 UI 与交互规格 细化。

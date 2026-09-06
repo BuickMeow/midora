@@ -122,7 +122,7 @@ public sealed partial class MidoraCompiler
             PureMidiRootInterval interval)
         {
             using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            AppendText("MIDORA_PURE_MIDI_AUDIO_FRAGMENT_V2");
+            AppendText(PureMidiAudioFragmentFingerprintAbi);
             AppendLong(rootPlan.Root.Id.Value);
             AppendLong((int)rootPlan.Root.ChannelMode);
             AppendLong(interval.GroupId.Value);
@@ -602,44 +602,6 @@ public sealed partial class MidoraCompiler
                     output,
                     port,
                     channel);
-            }
-
-            if (includeStateAtStart && queryContentStart > contentStart)
-            {
-                foreach (DirectMidiNoteValue note in segment.Notes.QueryActiveValues(
-                    queryContentStart))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (note.StartTick < contentStart || note.StartTick >= contentEnd) continue;
-                    long absoluteStart = checked(
-                        segment.ProjectStartTick + note.StartTick - contentStart);
-                    long absoluteEnd = Math.Min(
-                        segmentEnd,
-                        SaturatingAdd(absoluteStart, note.LengthTicks));
-                    if (absoluteStart >= startTick || absoluteEnd <= startTick) continue;
-                    SourceReference source = DirectSource(
-                        root.Id,
-                        trackPlan.Track.Id,
-                        segment.Id,
-                        note.Id,
-                        startTick,
-                        SourceOrigin.RangeRestore);
-                    AddDirect(
-                        startTick,
-                        note.NoteOnOrder,
-                        endpointOrder: 1,
-                        note.Id,
-                        MidiMessage.NoteOn(
-                            channel,
-                            checked((byte)note.Key),
-                            checked((byte)note.NoteOnVelocity)),
-                        source,
-                        trackPlan,
-                        output,
-                        port,
-                        channel,
-                        CanonicalEventRole.RangeRestore);
-                }
             }
 
             long noteEndQueryEnd = endpointQueryEnd;
@@ -1305,7 +1267,11 @@ public sealed partial class MidoraCompiler
             CanonicalEventRole role = CanonicalEventRole.DirectMidi,
             long semanticTarget = long.MinValue)
         {
-            long stableOrder = checked((explicitOrder << 1) + endpointOrder);
+            if (endpointOrder is < 0 or > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(endpointOrder));
+            }
+            long stableOrder = EncodeDirectMidiStableOrder(message, stableId);
             output.Add(new(
                 tick,
                 port,

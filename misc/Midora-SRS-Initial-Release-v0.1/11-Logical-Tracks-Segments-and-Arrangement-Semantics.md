@@ -905,9 +905,9 @@ Clamp 到目标 MIDI 参数合法范围
 用户可手动排序 Mapping
 前一条输出作为后一条的 c
 ```
-如果后一条 Mapping 使用 C#：
+如果后一条 Mapping 使用 Mapping Function Expression：
 ```text
-C# 中的 c 是前一条 Mapping 的输出结果
+其 value 与 context.CurrentValue 是前一条 Mapping 的输出结果；context.TargetOriginalValue 仍是本次目标的原始有效值
 ```
 ### 11.16.9 同一参数映射多个目标
 同一个 Logical Parameter 映射到多个目标时：
@@ -916,30 +916,29 @@ C# 中的 c 是前一条 Mapping 的输出结果
 Mapping 有显式顺序
 不同目标之间顺序通常只用于确定性输出
 ```
-### 11.16.10 C# 自定义映射
-C# 自定义映射形式：
+### 11.16.10 Mapping Function Expression 映射
+Logical Parameter 的受限表达式映射概念形式为：
 ```text
-y = f(c, x, context)
+y = f(value, logicalParameterValue, context)
 ```
-Context 至少应包含以下系统级字段入口：
+ABI v3 中 `value` / `context.CurrentValue` 是当前累计链值，`context.TargetOriginalValue` 是目标原始有效值，`context.LogicalParameterValue` 是当前 Logical Parameter 有效值；可访问的 Context 只能来自第 9.6～9.7 节的精确数值/枚举白名单，包括：
 ```text
-projectTick
-segmentLocalTick
-templateTick
-logicalParameterId / name
-targetSubVoiceId / name
-targetEventType
-targetParameterKey
-triggerNote? / triggerVelocity?
+ProjectTick
+SegmentLocalTick
+TemplateTick
+TargetOriginalValue
+LogicalParameterValue
+CurrentEventKind
+CurrentParameter
+TriggerNote / TriggerVelocity（当场景允许每音符 Context 时）
 ```
-具体函数签名、Context 类型、可访问字段、Mapping Function 复用方式由 第 9 章《曲线、Logical Parameter 与映射》 / 第 12 章《编译系统与 Canonical Compiled Result》 细化。
-Logical Parameter Mapping 可以复用 Event Instrument 内 Mapping Function，也可以单独保存源码；最终方案由第 9 章《曲线、Logical Parameter 与映射》规定。
-C# 编译错误：
+具体签名、白名单、依赖推导和 Mapping Function 复用方式由第 9 章规定。Logical Parameter Mapping 引用 Event Instrument 内的 Mapping Function；不得另存一份自由 C# 方法体或使用不同执行器。
+表达式无法通过 ABI v3 验证或绑定：
 ```text
 Event Instrument 定义错误
 被实际使用时编译失败
 ```
-C# 运行时异常：
+表达式求值失败或产生非法结果：
 ```text
 立即中止当前播放 / 渲染 / 导出流程
 保留位置
@@ -1266,13 +1265,13 @@ Logical Parameter Mapping 目标事件参数非法：
 Event Instrument 定义无效
 被实际使用时编译失败
 ```
-### 11.23.7 C# 错误
-C# 自定义逻辑参数映射编译错误：
+### 11.23.7 Mapping Function Expression 错误
+Logical Parameter Mapping 引用的表达式无法通过 ABI v3 验证或绑定：
 ```text
 Event Instrument 定义错误
 被实际使用时编译失败
 ```
-C# 运行时异常：
+表达式求值失败或产生 NaN / Infinity / 非法结果：
 ```text
 立即中止当前播放 / 渲染 / 导出流程
 保留位置

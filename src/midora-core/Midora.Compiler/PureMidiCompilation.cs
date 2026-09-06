@@ -5,6 +5,9 @@ namespace Midora.Compiler;
 
 public sealed partial class MidoraCompiler
 {
+    internal const string PureMidiAudioFragmentFingerprintAbi =
+        "MIDORA_PURE_MIDI_AUDIO_FRAGMENT_V3";
+
     private sealed record PureMidiPlan(
         PureMidiRootPlan[] Roots,
         CanonicalSmfTrackDescriptor[] TrackDescriptors,
@@ -767,16 +770,16 @@ public sealed partial class MidoraCompiler
                 return value != 0 ? value : left.StableId.CompareTo(right.StableId);
             });
 
-            long stableOrder = 1L << 40;
             foreach (PureMidiPendingEvent value in pending)
             {
+                long stableOrder = EncodeDirectMidiStableOrder(value.Message, value.StableId);
                 result.Add(new(
                     value.Tick,
                     port,
                     channel,
                     value.Message,
                     value.Role,
-                    stableOrder++,
+                    stableOrder,
                     value.SemanticTargetKey,
                     stableOrder,
                     value.Source,
@@ -1227,6 +1230,23 @@ public sealed partial class MidoraCompiler
                 channel, checked((ushort)((value.Data2 << 7) | value.Data1))),
             _ => throw new InvalidDataException($"Unsupported direct MIDI event kind {value.Kind}.")
         };
+
+    private static long EncodeDirectMidiStableOrder(MidiMessage message, MidoraId stableId)
+    {
+        if (stableId == default)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stableId));
+        }
+
+        // SmfEventOrder already carries the complete, non-negative Int64 explicit
+        // order. StableOrder therefore only has to preserve the endpoint class and
+        // the stable-object tie break. Mapping NoteOff endpoints to the negative
+        // half and all other events to the positive half is injective for every
+        // valid MidoraId and cannot overflow, unlike `(explicitOrder << 1)`.
+        return CanonicalMidiOrdering.DirectEndpointOrder(message) == 0
+            ? checked(long.MinValue + stableId.Value)
+            : stableId.Value;
+    }
 
     private static SourceReference DirectSource(
         MidoraId rootId,

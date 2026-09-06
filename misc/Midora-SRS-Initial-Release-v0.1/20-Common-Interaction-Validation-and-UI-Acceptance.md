@@ -272,7 +272,7 @@ One user gesture
 -> one valid batch result
 -> one Project Undo operation
 ```
-任一对象不兼容或结果非法时整体拒绝，不允许部分成功；第 20.4.4 节明确规定的 Note pitch 越界删除属于该移动命令的正式批量结果，不视为静默跳过或部分失败。
+任一对象不兼容或结果非法时整体拒绝，不允许部分成功；第 20.4.4 节的 Note pitch 越界删除、第 20.4.14 节的 Humanize Tick 越 owner 硬边界删除，以及第 20.4.14～20.4.17 节明确规定的 exact-collision reducer，都属于相应命令的正式批量结果，不视为静默跳过或部分失败。
 ### 20.4.2 Primary Selection
 Primary Selection 是 Snap、对齐和直接拖动的参考对象。
 批量 Snap：
@@ -327,7 +327,6 @@ General Batch Rename
 Proportional Stretch
 Normalize
 Randomize
-Humanize
 Independent Snap
 ```
 ### 20.4.8 混合 Segment Properties 与变换
@@ -354,6 +353,102 @@ Follow 是每个新建 Timeline Surface 的默认状态：工具框跟随 Select
 从浮动工具 Move 按钮开始拖动时，若 `Ctrl` 已按下且当前 Surface / 对象类型已有明确 Copy Drag 能力，则执行与普通直接操作相同的 Copy+Move，并按该类型既有规则选择幸存副本；Resize 不响应 Copy。没有既有 Copy Drag 能力的类型在 `Ctrl` 下为 Invalid，不得静默退化成 Move，也不得顺手新增 Conductor 等对象的复制语义。
 
 异类或语义不兼容 Selection 不显示工具框。所有选择规模都必须显示第 20.1.7 节规定的有效 delta 与完整 Selection 变换预览：小选择复用普通 Draw 直接操作的即时矢量路径，大选择复用同一平移或 Resize raster tile 路径。不得因超过即时矢量阈值而只显示 delta、隐藏预览，也不得为每个对象创建 WPF 控件或重新物化完整 Selection。
+
+### 20.4.13 受限数值工具表达式与 Preset
+
+Timeline 批量工具使用独立于 Project Mapping Function 的受限数值表达式系统。非空工具表达式必须以 `=` 开头；8,192 scalar 上限作用于去掉该前缀并按工具规则 Trim 后交给受限编译器的 expression body。每个 profile 只暴露自己明确的变量 schema，不得访问 Project 对象图、文件、网络、进程、线程、环境、时钟或非确定随机源。
+
+所有工具 profile 共用以下固定安全边界：
+
+```text
+Maximum source length: 8,192 Unicode scalars
+Maximum syntax nodes: 512
+Maximum syntax depth: 64
+Result type: finite double
+```
+
+语法只允许数值字面量、profile 变量、批准的算术/比较/布尔运算符、条件表达式以及固定快照的纯数值 `System.Math` 成员。必须拒绝声明、赋值、递增/递减、lambda、delegate、对象/数组创建、索引器、语句、循环、递归、任意 API 与反射。多字段工具的 result-variable 依赖必须形成无环图；每条表达式只编译一次，对象循环中重复调用已建立的委托。
+
+当前固定 profile ID 为：
+
+```text
+midora.tool.batch-note/v1
+midora.tool.batch-event/v1
+midora.tool.note-split/v1
+```
+
+变量 schema 固定为：
+
+```text
+midora.tool.batch-note/v1  : v0/v1, k0/k1, g0/g1, t0/t1, tr
+midora.tool.batch-event/v1 : p0/p1, t0/t1, tr
+midora.tool.note-split/v1  : i, tr
+```
+
+Batch profile 中 `*0` 表示该字段编辑前的值，`*1` 表示同一对象中经依赖图求得的新值，`tr` 是相对本次冻结 Selection 最小 tick 的编辑前相对位置。Note Split 中 `i` 和 `tr` 只有第 20.4.15 节定义的刀序号/上一刀位置语义，不得引入 Batch Edit 字段或其他隐式变量。
+
+Profile ID/version、变量 schema、取整/值域契约与白名单是一个整体兼容边界；任一部分改变必须使用新 profile version。这些 profile 不是 Mapping Function ABI v3，也不进入 Project 或 `.midora`。
+
+Tool Preset 保存在 `<ProgramRoot>\Data\Presets` 的对应工具分类中，每个文件必须包含 `presetSchemaVersion`、`expressionProfileId/version`、`toolKind` 和数值格式契约。加载本机或外部 Preset 时必须用当前 profile 重新执行完整语法、API、依赖和资源上限验证；不得因为 JSON 可成功反序列化就直接执行。Preset 不进入 Project、Undo/Redo 或 canonical fingerprint。
+
+### 20.4.14 Note Humanize
+
+Humanize 只对 Logical Note、Direct MIDI Note 和 Template Note 的 Tick、Gate、Velocity 生效，不包含 Key。Seed 支持 `Auto` 与显式整数值；命令提交时冻结实际 seed 和已生成结果，Undo/Redo 不重新抽样。
+
+每个字段独立选择：
+
+```text
+Disabled
+Add       old + Uniform(min, max)
+Multiply  old * Uniform(min, max)
+Override  Uniform(min, max)
+```
+
+Add/Override 对整数属性使用闭区间均匀整数；Multiply 抽取连续 `double`，最终使用 `AwayFromZero`。`min/max` 必须 finite 且 `min <= max`；Add 可以使用负数范围，Multiply factor 必须大于等于 0（可为 0）。必须先为 Tick/Gate/Velocity 生成全部 raw result，再按固定顺序联合归一化，不得使 UI 字段排列改变结果。
+
+Velocity 夹取到 `1..127`。Gate 最小 1 tick，并以归一化后的 start 执行 checked `start + gate`；无法表示任何正 Gate 时整批失败。Segment 的 crop/当前暴露窗口不是 Note 模型硬边界，仍在正式 owner 模型内但落到 crop 外的结果必须保留。Tick raw result 越过 owner 正式硬边界时删除该 Note；不得扩展 Segment 暴露窗口或 SubVoice Template Length。Gate/Velocity 越界只按各自规则夹取，不因此删除 Note。
+
+抽样必须由 `(seed, owner stable identity, frozen formal ordinal, field kind)` 通过 Midora 版本化、确定性的 PRNG 独立派生；启用或禁用另一字段不得改变已启用字段的抽样。不得依赖 `.NET System.Random` 将来版本的序列。最后按 Note exact start+key 的 later-loses 规则归并。
+
+### 20.4.15 Note Split
+
+Split 只作用于三类 Note。每个 owner 独立计算 `selectionLeft=min(start)` 和 `selectionRight=max(end)`，并在该 owner 中建立严格递增的全局刀线；一条刀线只切开真正穿过该 tick 的已选 Note，落在空隙的刀线仍消耗一次 cut 配额。多个 owner 的结果仍只形成一个 Project Undo。
+
+必须提供：
+
+1. `Fixed Piece Length`：从左边界起每 N ticks 一刀；
+2. `Maximum Piece Count`：将选区 span 分成最多 N 个平衡区间，内部边界使用 `floor(j*span/blockCount)`，去除重复和两端边界；
+3. `Expression`：使用 `midora.tool.note-split/v1`，`i` 为从 0 开始的当前刀序号，`tr` 为上一刀相对 selectionLeft 的 tick（第一刀前为 0）；表达式返回相对上一刀的长度，finite 后 `AwayFromZero` 并夹到最少 1 tick。下一刀到达或越过 selectionRight 时停止，不在右端创建零长度片段。
+
+`Maximum Cuts` 只属于 `Expression` 模式，默认 65,535、可配置范围 `1..16,777,216`；每次表达式求值和每条空隙刀线都计入该安全停止配额。`Fixed Piece Length` 与 `Maximum Piece Count` 不读取、也不得被该字段静默截断，必须按各自参数完整规划刀线；实现须在分配刀线或结果对象前计算理论刀数，若其超过所有模式共用的 16,777,216 刀硬上限，则整批明确失败并保持零发布。刀数不能代替结果记录、working/resident 字节、spill 字节和磁盘剩余空间门限；结果记录硬上限 100,000,000，working 和 resident staging 分别最多 64 MiB，owned spill 最多 16 GiB。
+
+分割算法必须使用单调刀线与按时间排序 Note 的 active-interval sweep，可使用 128 个 key bucket 与有序端点结构；目标复杂度为 `O((N+K) log N + producedFragments)`，禁止每条 Note 重新遍历全部刀线的 `O(N*K)`。
+
+所有片段继承 Key、NoteOn velocity 和共同属性；Direct MIDI Note 的每个片段都继承源 NoteOff velocity。按时间最早的第一片保留源 Stable ID，后续片获得新 ID；NoteOn/NoteOff formal order 由源 order 与片段序号确定，不得依赖新 ID。
+
+### 20.4.16 Join Notes
+
+Join 只处理已选 Note。在每个 `owner + key` 中按 start/formal order 排序，然后使用非负 `Maximum Gap Ticks`（默认 0）做 sweep；当 `next.start - current.end <= MaximumGap` 时并入当前 run。所有 end、差值和最终 length 使用 checked 算术，溢出时整批失败。
+
+合并结果为 `[first.start, max(end))`；NoteOn velocity 取 run 的第一条，Direct MIDI NoteOff velocity 取 run 的最后一条。第一条保留 Stable ID，其余删除。跨过未选同 key Note 时不得删除或改写未选对象；不同 start tick 的重叠继续交给现有 Event Instrument overlap/编译诊断语义。不同 owner 绝不合并。
+
+### 20.4.17 Note / Event Quantize
+
+Quantize UI 复用 Snap 的拍值列表并额外提供 `Custom Ticks`；初版不提供 `Bar` 或 Strength，固定为 100%。计算必须调用同一正式 Grid/Time Signature 服务，不得重新实现近似网格。恰好在两格正中时选择较早格点。
+
+Segment Note 必须先将 content-local tick 经 `ProjectStartTick` / `ContentOffsetTick` 转为 Project absolute tick，在 Conductor Time Signature Map 中选择格点，再确定性投影回内容坐标。SubVoice 没有 Project Conductor 上下文，以 template tick 0 为原点，只使用 TPQN 分数或 Custom Ticks。
+
+Note 必须提供 `Start only`（默认）与 `Start and End`。后者分别吸附 start/end；若 `end <= start`，将 end 饱和为 `start+1`。Gate 最终至少 1 tick。同 start+key 的命中 Note 按冻结的原 formal order later-loses；未被命中的导入重复保持原样。
+
+Event Quantize 只改 Tick，不改 Value、lane target、formal payload 或其他属性。初版范围仅包含 Direct MIDI Channel Event、Logical Parameter Point 和 SubVoice MIDI Event；不包含 opaque SysEx/Meta 或 Conductor 事件。不同 lane 可以在一个命令中处理，但碰撞键必须按各自正式 lane target 隔离。同 tick+同 target 的被命中事件按冻结原 formal order later-wins；该 exact key 中被命中的既有导入重复全部进入本次 reducer，未命中的重复保留。全部 tick 算术必须 checked。
+
+### 20.4.18 命令、取消与选择结果
+
+Humanize、Split、Join 和 Quantize 必须以可取消前台任务准备 detached 结果，并遵循第 20.4.11 节的分页、资源有界、revision gate 和一次 root swap 规则。表达式和 PRNG 只在 staging 中求值；取消、验证错误、资源超限、I/O 错误或 revision race 必须零发布、零 Undo，且清理本次 owned spill。
+
+成功后，Humanize 和 Quantize 选择所有幸存的本次处理结果；Split 选择所有幸存片段；Join 选择所有合并结果。碰撞或越界 reducer 删除的对象不出现在新选择中。Undo 恢复命令前的完整对象与 Selection，Redo 恢复已冻结结果和结果 Selection，不重新计算随机、表达式、Grid 或当前拍号。一次跨 owner 操作仍只形成一个 Undo。
+
+只有当前 Selection 的所有对象属于工具批准类型且共同可编辑时，对应 Context Menu 命令才启用。Note 菜单提供 `Humanize...`、`Split...`、`Join...`、`Quantize...`；正式数值 Event/Parameter Point 菜单只提供 `Quantize...`。不兼容的混合 Selection 必须禁用对应命令，不得静默只处理其中一部分。对话框 Cancel 不改 Project，关闭后按第 20.2 节恢复来源 Timeline 焦点。
 ---
 ## 20.5 Drag and Drop Conventions
 ### 20.5.1 分类

@@ -76,6 +76,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _timelineSelectionMaterialization;
     private long _nextProjectRuntimeInformationRefresh;
     private TimelineSelectionOperationContext? _timelineSelectionOperationContext;
+    private TimelineSelectionOperationContext? _timelineQuantizeOperationContext;
     private TimelineSurface? _lastTimelineCommandSurface;
 
     private enum TimelineSelectionObjectKind
@@ -93,7 +94,7 @@ public partial class MainWindow : Window
 
     private sealed record TimelineSelectionOperationContext(
         TimelineSelectionObjectKind Kind,
-        MidoraId[] Ids,
+        CompressedMidoraIdSet Ids,
         MidoraId? OwnerId = null,
         MidoraId? SecondaryId = null,
         MidiValueTarget? MidiTarget = null,
@@ -1088,9 +1089,25 @@ public partial class MainWindow : Window
     private void SelectCreatedWorkspaceObjects(
         WorkspaceViewModel workspace,
         long firstNewStableId,
-        bool replaceSelectionWhenNoObjectSurvives = false)
+        bool replaceSelectionWhenNoObjectSurvives = false,
+        WorkspaceTimelineSelectionSource? timelineSource = null) =>
+        SelectCreatedWorkspaceObjects(
+            _session,
+            workspace,
+            firstNewStableId,
+            replaceSelectionWhenNoObjectSurvives,
+            timelineSource);
+
+    internal static void SelectCreatedWorkspaceObjects(
+        DesktopSessionController session,
+        WorkspaceViewModel workspace,
+        long firstNewStableId,
+        bool replaceSelectionWhenNoObjectSurvives = false,
+        WorkspaceTimelineSelectionSource? timelineSource = null)
     {
-        if (_session.Project is not MidoraProject project) return;
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (session.Project is not MidoraProject project) return;
         static MidoraId[] NewIds<T>(IEnumerable<T> items, Func<T, MidoraId> id, long first) =>
             items.Select(id).Where(value => value.Value >= first).Distinct().ToArray();
 
@@ -1115,13 +1132,23 @@ public partial class MainWindow : Window
             if (replaceSelectionWhenNoObjectSurvives)
             {
                 workspace.Selection.Clear();
-                _session.RefreshWorkspaceSelection(workspace);
+                session.RefreshWorkspaceSelection(workspace);
             }
             return;
         }
-        workspace.Selection.Clear();
-        foreach (MidoraId id in created) workspace.Selection.Add(id, makePrimary: false);
-        _session.RefreshWorkspaceSelection(workspace);
+        if (timelineSource is WorkspaceTimelineSelectionSource source)
+        {
+            workspace.Selection.ApplyRange(
+                created,
+                WorkspaceSelectionRangeMode.Replace,
+                source);
+        }
+        else
+        {
+            workspace.Selection.Clear();
+            foreach (MidoraId id in created) workspace.Selection.Add(id, makePrimary: false);
+        }
+        session.RefreshWorkspaceSelection(workspace);
         return;
 
         MidoraId[] SegmentSelection(MidoraId segmentId)
@@ -1597,10 +1624,13 @@ public partial class MainWindow : Window
         Add("Invert Selection", OnInvertTimelineSelectionClick, enabled: hasInvertibleItems);
         Separator();
         _timelineSelectionOperationContext = ResolveTimelineSelectionOperationContext(surface);
+        _timelineQuantizeOperationContext = ResolveTimelineQuantizeSelectionOperationContext(
+            surface,
+            _timelineSelectionOperationContext);
         TimelineSelectionOperationContext? operationContext = _timelineSelectionOperationContext;
         if (operationContext is not null)
         {
-            bool hasOperationSelection = operationContext.Ids.Length != 0;
+            bool hasOperationSelection = operationContext.Ids.Count != 0;
             if (operationContext.Kind is TimelineSelectionObjectKind.Segments
                 or TimelineSelectionObjectKind.MidiSegments
                 or TimelineSelectionObjectKind.MixedSegments)
@@ -1660,18 +1690,63 @@ public partial class MainWindow : Window
                 OnBatchEditSelectionClick,
                 "Ctrl+E",
                 enabled: canEdit && hasOperationSelection);
+            if (operationContext.Kind is TimelineSelectionObjectKind.LogicalNotes
+                or TimelineSelectionObjectKind.DirectMidiNotes
+                or TimelineSelectionObjectKind.TemplateNotes)
+            {
+                Separator();
+                Add(
+                    "Humanize…",
+                    OnHumanizeSelectionClick,
+                    enabled: canEdit && hasOperationSelection);
+                Add(
+                    "Split…",
+                    OnSplitNotesClick,
+                    enabled: canEdit && hasOperationSelection);
+                Add(
+                    "Join…",
+                    OnJoinNotesClick,
+                    enabled: canEdit && hasOperationSelection);
+                Add(
+                    "Quantize…",
+                    OnQuantizeSelectionClick,
+                    enabled: canEdit
+                        && _timelineQuantizeOperationContext is { Ids.Count: > 0 });
+            }
             Separator();
         }
-        if (_session.ActiveWorkspace is WorkspaceViewModel activeWorkspace)
+        if (_timelineQuantizeOperationContext is { Ids.Count: > 0 } quantizeContext
+            && quantizeContext.Kind is TimelineSelectionObjectKind.LogicalParameterPoints
+                or TimelineSelectionObjectKind.DirectMidiEventPoints
+                or TimelineSelectionObjectKind.SubVoiceEventPoints)
         {
-            ObjectPropertiesViewModel properties = _session.CreateObjectProperties(activeWorkspace);
+            Add("Quantize…", OnQuantizeSelectionClick, enabled: canEdit);
+            Separator();
+        }
+        else if (hasSelection
+                 && operationContext is null
+                 && surface.SurfaceMode is TimelineSurfaceMode.PianoRoll or TimelineSurfaceMode.Velocity)
+        {
+            Add("Humanize…", OnHumanizeSelectionClick, enabled: false);
+            Add("Split…", OnSplitNotesClick, enabled: false);
+            Add("Join…", OnJoinNotesClick, enabled: false);
+            Add("Quantize…", OnQuantizeSelectionClick, enabled: false);
+            Separator();
+        }
+        else if (hasSelection
+                 && surface.SurfaceMode == TimelineSurfaceMode.EventLanes
+                 && _timelineQuantizeOperationContext is null)
+        {
+            Add("Quantize…", OnQuantizeSelectionClick, enabled: false);
+            Separator();
+        }
+        if (_session.ActiveWorkspace is WorkspaceViewModel)
+        {
             Add(
                 "Properties…",
                 OnEditTimelinePropertiesClick,
                 "Ctrl+P",
-                enabled: ObjectPropertiesProjection.CanEditInPropertiesDialog(
-                    activeWorkspace,
-                    properties));
+                enabled: CanOpenTimelineProperties(surface));
             Separator();
         }
         Add("Set Time Range from Object Selection", OnSetTimeRangeFromObjectsClick);
@@ -3863,7 +3938,34 @@ public partial class MainWindow : Window
     private void OnTimelineItemInvoked(object? sender, TimelineItemEventArgs e)
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
+        // The clicked lane is part of the selection's formal presentation
+        // source. Publish it before deriving the lightweight routing context so
+        // a click that also switches lanes cannot inherit the previous lane.
         workspace.ActiveLane = e.Item.Lane;
+        WorkspaceTimelineSelectionSource? timelineSource = sender is TimelineSurface sourceSurface
+            ? GetTimelineSelectionSource(workspace, sourceSurface, e.Item)
+            : null;
+        void AddSelection(MidoraId id)
+        {
+            if (timelineSource is WorkspaceTimelineSelectionSource source)
+                workspace.Selection.Add(id, source);
+            else
+                workspace.Selection.Add(id);
+        }
+        void ReplaceSelection(MidoraId id)
+        {
+            if (timelineSource is WorkspaceTimelineSelectionSource source)
+                workspace.Selection.Replace(id, source);
+            else
+                workspace.Selection.Replace(id);
+        }
+        void ToggleSelection(MidoraId id)
+        {
+            if (timelineSource is WorkspaceTimelineSelectionSource source)
+                workspace.Selection.Toggle(id, source);
+            else
+                workspace.Selection.Toggle(id);
+        }
         bool replaceDrawSegmentSelection = ShouldReplaceDrawSegmentSelection(
             (sender as TimelineSurface)?.ToolMode,
             e.Item.Kind,
@@ -3872,7 +3974,7 @@ public partial class MainWindow : Window
         if (e.PreserveExistingSelection)
         {
             long selectionRevision = workspace.Selection.Revision;
-            workspace.Selection.Add(e.Item.Id);
+            AddSelection(e.Item.Id);
             if (workspace.Selection.Revision != selectionRevision)
             {
                 _session.RefreshWorkspaceSelection(workspace);
@@ -3881,7 +3983,7 @@ public partial class MainWindow : Window
         else if (replaceDrawSegmentSelection)
         {
             long selectionRevision = workspace.Selection.Revision;
-            workspace.Selection.Replace(e.Item.Id);
+            ReplaceSelection(e.Item.Id);
             if (workspace.Selection.Revision != selectionRevision)
             {
                 _session.RefreshWorkspaceSelection(workspace);
@@ -3890,11 +3992,11 @@ public partial class MainWindow : Window
         else if (!e.PreserveSelectionForPotentialCopyDrag)
         {
             long selectionRevision = workspace.Selection.Revision;
-            if (e.IsCopyDragStart) workspace.Selection.Add(e.Item.Id);
-            else if ((e.Modifiers & ModifierKeys.Control) != 0) workspace.Selection.Toggle(e.Item.Id);
-            else if ((e.Modifiers & ModifierKeys.Shift) != 0) workspace.Selection.Add(e.Item.Id);
-            else if (workspace.Selection.Ids.Contains(e.Item.Id)) workspace.Selection.Add(e.Item.Id);
-            else workspace.Selection.Replace(e.Item.Id);
+            if (e.IsCopyDragStart) AddSelection(e.Item.Id);
+            else if ((e.Modifiers & ModifierKeys.Control) != 0) ToggleSelection(e.Item.Id);
+            else if ((e.Modifiers & ModifierKeys.Shift) != 0) AddSelection(e.Item.Id);
+            else if (workspace.Selection.Ids.Contains(e.Item.Id)) AddSelection(e.Item.Id);
+            else ReplaceSelection(e.Item.Id);
             if (workspace.Selection.Revision != selectionRevision)
             {
                 _session.RefreshWorkspaceSelection(workspace);
@@ -5686,7 +5788,11 @@ public partial class MainWindow : Window
                 .Segments.Select(segment => segment.Id),
             _ => []
         };
-        workspace.Selection.ApplyRange(segmentIds, mode);
+        workspace.Selection.ApplyRange(
+            segmentIds,
+            mode,
+            new WorkspaceTimelineSelectionSource(
+                WorkspaceTimelineSelectionKind.ArrangementSegment));
         _session.RefreshWorkspaceSelection(workspace);
     }
 
@@ -6120,6 +6226,17 @@ public partial class MainWindow : Window
         if ((sender as FrameworkElement)?.DataContext is not WorkspaceViewModel workspace)
             return;
         if (_session.Project is null || !_session.Workspaces.Contains(workspace)) return;
+        if (sender is TimelineSurface surface
+            && GetTimelineSelectionSource(workspace, surface)
+                is WorkspaceTimelineSelectionSource source)
+        {
+            workspace.Selection.RegisterTimelineMaterialization(
+                e.Materialization.Ids,
+                source,
+                TimelineToolPolicy.ResolveMarqueeSelectionMode(e.Modifiers),
+                e.Materialization.RangeCount,
+                e.Materialization.BaseIntersectionCount);
+        }
         _session.TryApplyMaterializedWorkspaceSelection(
             workspace,
             e.Materialization);
@@ -6194,145 +6311,69 @@ public partial class MainWindow : Window
     private TimelineSelectionOperationContext? ResolveTimelineSelectionOperationContext(
         TimelineSurface surface)
     {
-        if (_session.Project is not MidoraProject project
-            || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
+        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace
+            || workspace.Selection.Ids.Count == 0
+            || workspace.Selection.HomogeneousTimelineSource
+                is not WorkspaceTimelineSelectionSource source
+            || !IsTimelineSelectionSourceCompatible(workspace, surface, source))
         {
             return null;
         }
-        IReadOnlySet<MidoraId> selected = workspace.Selection.IdSet;
-        switch (workspace)
+        return CreateTimelineSelectionOperationContext(
+            source,
+            workspace.Selection.SharedIds);
+    }
+
+    private static TimelineSelectionOperationContext?
+        CreateTimelineSelectionOperationContext(
+            WorkspaceTimelineSelectionSource source,
+            CompressedMidoraIdSet ids)
+    {
+        if (ids.Count == 0) return null;
+        return source.Kind switch
         {
-            case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }:
-                {
-                    MidoraId[] logical = project.Tracks
-                        .SelectMany(static track => track.Segments)
-                        .Where(segment => selected.Contains(segment.Id))
-                        .Select(static segment => segment.Id)
-                        .ToArray();
-                    MidoraId[] midi = project.PureMidiTracks
-                        .SelectMany(static track => track.Segments)
-                        .Where(segment => selected.Contains(segment.Id))
-                        .Select(static segment => segment.Id)
-                        .ToArray();
-                    return new(
-                        logical.Length != 0 && midi.Length != 0
-                            ? TimelineSelectionObjectKind.MixedSegments
-                            : midi.Length == 0
-                                ? TimelineSelectionObjectKind.Segments
-                                : TimelineSelectionObjectKind.MidiSegments,
-                        logical.Concat(midi).ToArray());
-                }
-            case TimelineWorkspaceViewModel
-            {
-                Mode: TimelineWorkspaceMode.Segment,
-                ObjectId: MidoraId segmentId
-            } timeline:
-                {
-                    (LogicalTrack Track, Segment Segment)? location =
-                        TimelineWorkspaceViewModel.FindSegment(project, segmentId);
-                    if (location is not null)
-                    {
-                        if (string.Equals(surface.Tag as string, "ParameterLanes", StringComparison.Ordinal))
-                        {
-                            if (timeline.GetActiveParameterLaneOption()?.LaneId is not MidoraId laneId
-                                || location.Value.Segment.ParameterLanes.FirstOrDefault(
-                                    lane => lane.Id == laneId) is not LogicalParameterLane lane)
-                            {
-                                return null;
-                            }
-                            return new(
-                                TimelineSelectionObjectKind.LogicalParameterPoints,
-                                lane.Points.ResolveByIdsInCollectionOrder(selected)
-                                    .Select(static point => point.Id)
-                                    .ToArray(),
-                                segmentId,
-                                laneId,
-                                PointMinimum: timeline.ActiveValueMinimum,
-                                PointMaximum: timeline.ActiveValueMaximum);
-                        }
-                        return new(
-                            TimelineSelectionObjectKind.LogicalNotes,
-                            location.Value.Segment.Notes
-                                .ResolveByIdsInCollectionOrder(selected)
-                                .Select(static note => note.Id)
-                                .ToArray(),
-                            segmentId);
-                    }
-                    if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is not { } midi)
-                        return null;
-                    if (string.Equals(surface.Tag as string, "ParameterLanes", StringComparison.Ordinal))
-                    {
-                        if (timeline.GetActiveParameterLaneOption()?.DirectMidiTarget
-                            is not DirectMidiEventLaneTarget target)
-                        {
-                            return null;
-                        }
-                        return new(
-                            TimelineSelectionObjectKind.DirectMidiEventPoints,
-                            midi.Segment.ChannelEvents
-                                .ResolveByIds(selected)
-                                .Select(static match => match.Value)
-                                .Where(value => TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value) == target)
-                                .Select(static value => value.Id)
-                                .ToArray(),
-                            segmentId,
-                            DirectMidiTarget: target,
-                            PointMinimum: 0,
-                            PointMaximum: target.Kind == DirectMidiChannelEventKind.PitchBend ? 16383 : 127);
-                    }
-                    return new(
-                        TimelineSelectionObjectKind.DirectMidiNotes,
-                        midi.Segment.Notes
-                            .ResolveByIds(selected)
-                            .Select(static match => match.Value.Id)
-                            .ToArray(),
-                        segmentId);
-                }
-            case InstrumentWorkspaceViewModel
-            {
-                ObjectId: MidoraId instrumentId,
-                ActiveSubVoiceId: MidoraId subVoiceId
-            } instrumentWorkspace:
-                {
-                    EventInstrument? instrument = project.EventInstruments.FirstOrDefault(
-                        value => value.Id == instrumentId);
-                    SubVoice? voice = instrument?.SubVoices.FirstOrDefault(value => value.Id == subVoiceId);
-                    if (voice is null) return null;
-                    if (string.Equals(surface.Tag as string, "SubVoiceNotes", StringComparison.Ordinal))
-                    {
-                        return new(
-                            TimelineSelectionObjectKind.TemplateNotes,
-                            voice.Events
-                                .ResolveByIdsInCollectionOrder(selected)
-                                .Where(static value => value.Kind == TemplateEventKind.Note)
-                                .Select(static value => value.Id)
-                                .ToArray(),
-                            instrumentId,
-                            subVoiceId);
-                    }
-                    if (string.Equals(surface.Tag as string, "SubVoiceEvents", StringComparison.Ordinal)
-                        && instrumentWorkspace.GetRenderLane(
-                            instrumentWorkspace.ActiveRenderLaneIndex)?.Target is MidiValueTarget target)
-                    {
-                        return new(
-                            TimelineSelectionObjectKind.SubVoiceEventPoints,
-                            voice.Events
-                                .ResolveByIdsInCollectionOrder(selected)
-                                .Where(value => value.Kind != TemplateEventKind.Note
-                                    && TemplateEventMidiTargets.Enumerate(value).Contains(target))
-                                .Select(static value => value.Id)
-                                .ToArray(),
-                            instrumentId,
-                            subVoiceId,
-                            target,
-                            PointMinimum: instrumentWorkspace.ActiveValueMinimum,
-                            PointMaximum: instrumentWorkspace.ActiveValueMaximum);
-                    }
-                    return null;
-                }
-            default:
-                return null;
-        }
+            WorkspaceTimelineSelectionKind.ArrangementSegment => new(
+                TimelineSelectionObjectKind.MixedSegments,
+                ids),
+            WorkspaceTimelineSelectionKind.LogicalNote => new(
+                TimelineSelectionObjectKind.LogicalNotes,
+                ids,
+                source.OwnerId),
+            WorkspaceTimelineSelectionKind.LogicalParameterPoint => new(
+                TimelineSelectionObjectKind.LogicalParameterPoints,
+                ids,
+                source.OwnerId,
+                source.SecondaryOwnerId,
+                PointMinimum: source.PointMinimum,
+                PointMaximum: source.PointMaximum),
+            WorkspaceTimelineSelectionKind.DirectMidiNote => new(
+                TimelineSelectionObjectKind.DirectMidiNotes,
+                ids,
+                source.OwnerId),
+            WorkspaceTimelineSelectionKind.DirectMidiEventPoint => new(
+                TimelineSelectionObjectKind.DirectMidiEventPoints,
+                ids,
+                source.OwnerId,
+                DirectMidiTarget: source.DirectMidiEventKind is DirectMidiChannelEventKind kind
+                    ? new DirectMidiEventLaneTarget(kind, source.DirectMidiData1)
+                    : null,
+                PointMinimum: source.PointMinimum,
+                PointMaximum: source.PointMaximum),
+            WorkspaceTimelineSelectionKind.TemplateNote => new(
+                TimelineSelectionObjectKind.TemplateNotes,
+                ids,
+                source.OwnerId,
+                source.SecondaryOwnerId),
+            WorkspaceTimelineSelectionKind.SubVoiceEventPoint => new(
+                TimelineSelectionObjectKind.SubVoiceEventPoints,
+                ids,
+                source.OwnerId,
+                source.SecondaryOwnerId,
+                source.MidiTarget,
+                PointMinimum: source.PointMinimum,
+                PointMaximum: source.PointMaximum),
+            _ => null
+        };
     }
 
     private void OnFlipSegmentsExposedContentHorizontalClick(object sender, RoutedEventArgs e) =>
@@ -6346,7 +6387,7 @@ public partial class MainWindow : Window
 
     private void ExecuteHorizontalFlip(SegmentSelectionTransformScope segmentScope)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
         RunSynchronous("Flip Selection Horizontally", () => ExecuteSelectionOperation(context.Kind switch
         {
             TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.FlipSegmentsHorizontal(
@@ -6391,7 +6432,7 @@ public partial class MainWindow : Window
 
     private void OnFlipSelectionVerticalClick(object sender, RoutedEventArgs e)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
         RunSynchronous("Flip Selection Vertically", () => ExecuteSelectionOperation(context.Kind switch
         {
             TimelineSelectionObjectKind.Segments =>
@@ -6417,7 +6458,7 @@ public partial class MainWindow : Window
 
     private void OnScaleSelectionClick(object sender, RoutedEventArgs e)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.Project is not MidoraProject project)
         {
             return;
@@ -6492,7 +6533,7 @@ public partial class MainWindow : Window
 
     private void OnTransposeSelectionClick(object sender, RoutedEventArgs e)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
         TransposeSelectionDialog dialog = new() { Owner = this };
         if (ShowModalDialog(dialog) != true) return;
         RunSynchronous("Transpose Selection", () => ExecuteSelectionOperation(context.Kind switch
@@ -6525,7 +6566,7 @@ public partial class MainWindow : Window
 
     private void OnBatchEditSelectionClick(object sender, RoutedEventArgs e)
     {
-        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context) return;
         bool pointContext = context.Kind is TimelineSelectionObjectKind.LogicalParameterPoints
             or TimelineSelectionObjectKind.DirectMidiEventPoints
             or TimelineSelectionObjectKind.SubVoiceEventPoints;
@@ -6587,6 +6628,428 @@ public partial class MainWindow : Window
                 _ => throw new ArgumentOutOfRangeException()
             }));
         }
+    }
+
+    private TimelineSelectionOperationContext? ResolveTimelineQuantizeSelectionOperationContext(
+        TimelineSurface surface,
+        TimelineSelectionOperationContext? ordinary)
+    {
+        if (ordinary?.Kind is TimelineSelectionObjectKind.LogicalNotes
+            or TimelineSelectionObjectKind.DirectMidiNotes
+            or TimelineSelectionObjectKind.TemplateNotes
+            or TimelineSelectionObjectKind.LogicalParameterPoints
+            or TimelineSelectionObjectKind.DirectMidiEventPoints
+            or TimelineSelectionObjectKind.SubVoiceEventPoints)
+        {
+            return ordinary;
+        }
+        if (surface.SurfaceMode != TimelineSurfaceMode.EventLanes
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace
+            || workspace.Selection.Ids.Count == 0
+            || workspace.Selection.HomogeneousTimelineQuantizeScope
+                is not WorkspaceTimelineSelectionSource source
+            || !IsTimelineSelectionQuantizeScopeCompatible(workspace, surface, source))
+        {
+            return null;
+        }
+        return CreateTimelineSelectionOperationContext(
+            source,
+            workspace.Selection.SharedIds);
+    }
+
+    internal static bool IsSubVoiceNoteOperationSurface(
+        TimelineSurfaceMode surfaceMode,
+        object? tag) =>
+        surfaceMode is TimelineSurfaceMode.PianoRoll or TimelineSurfaceMode.Velocity
+        && tag is string text
+        && (string.Equals(text, "SubVoiceNotes", StringComparison.Ordinal)
+            || string.Equals(text, "SubVoiceVelocity", StringComparison.Ordinal));
+
+    internal static WorkspaceTimelineSelectionSource? GetTimelineSelectionSource(
+        WorkspaceViewModel workspace,
+        TimelineSurface surface,
+        TimelineRenderItem? item = null)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(surface);
+        switch (workspace)
+        {
+            case TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Arrangement
+            } when surface.SurfaceMode == TimelineSurfaceMode.Arrangement
+                && (item is null || item.Value.Kind == TimelineItemKind.Segment):
+                return new(WorkspaceTimelineSelectionKind.ArrangementSegment);
+
+            case TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Segment,
+                ObjectId: MidoraId segmentId
+            } timeline
+                when string.Equals(
+                    surface.Tag as string,
+                    "ParameterLanes",
+                    StringComparison.Ordinal):
+                {
+                    ParameterLaneOption? lane = timeline.GetActiveParameterLaneOption();
+                    if (lane?.LaneId is MidoraId laneId
+                        && (item is null
+                            || item.Value.Kind == TimelineItemKind.LogicalParameterPoint))
+                    {
+                        return new(
+                            WorkspaceTimelineSelectionKind.LogicalParameterPoint,
+                            segmentId,
+                            laneId,
+                            PointMinimum: timeline.ActiveValueMinimum,
+                            PointMaximum: timeline.ActiveValueMaximum);
+                    }
+                    if (lane?.DirectMidiTarget is DirectMidiEventLaneTarget target
+                        && (item is null
+                            || item.Value.Kind == TimelineItemKind.DirectMidiEvent))
+                    {
+                        return new(
+                            WorkspaceTimelineSelectionKind.DirectMidiEventPoint,
+                            segmentId,
+                            DirectMidiEventKind: target.Kind,
+                            DirectMidiData1: target.Data1,
+                            PointMinimum: timeline.ActiveValueMinimum,
+                            PointMaximum: timeline.ActiveValueMaximum);
+                    }
+                    return null;
+                }
+
+            case TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Segment,
+                ObjectId: MidoraId segmentId
+            } timeline
+                when surface.SurfaceMode is TimelineSurfaceMode.PianoRoll
+                    or TimelineSurfaceMode.Velocity:
+                if (timeline.TabIconKind == WorkspaceTabIconKind.PureMidiTrack
+                    && (item is null
+                        || item.Value.Kind is TimelineItemKind.DirectMidiNote
+                            or TimelineItemKind.Velocity))
+                {
+                    return new(
+                        WorkspaceTimelineSelectionKind.DirectMidiNote,
+                        segmentId);
+                }
+                if (timeline.TabIconKind == WorkspaceTabIconKind.LogicalTrack
+                    && (item is null
+                        || item.Value.Kind is TimelineItemKind.LogicalNote
+                            or TimelineItemKind.Velocity))
+                {
+                    return new(
+                        WorkspaceTimelineSelectionKind.LogicalNote,
+                        segmentId);
+                }
+                return null;
+
+            case InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId,
+                ActiveSubVoiceId: MidoraId subVoiceId
+            } instrument
+                when IsSubVoiceNoteOperationSurface(surface.SurfaceMode, surface.Tag)
+                    && (item is null
+                        || item.Value.Kind is TimelineItemKind.TemplateNote
+                            or TimelineItemKind.Velocity):
+                return new(
+                    WorkspaceTimelineSelectionKind.TemplateNote,
+                    instrumentId,
+                    subVoiceId);
+
+            case InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId,
+                ActiveSubVoiceId: MidoraId subVoiceId
+            } instrument
+                when string.Equals(
+                    surface.Tag as string,
+                    "SubVoiceEvents",
+                    StringComparison.Ordinal)
+                    && instrument.GetRenderLane(instrument.ActiveRenderLaneIndex)?.Target
+                        is MidiValueTarget target
+                    && (item is null
+                        || item.Value.Kind is TimelineItemKind.LogicalParameterPoint
+                            or TimelineItemKind.TemplateEvent):
+                return new(
+                    WorkspaceTimelineSelectionKind.SubVoiceEventPoint,
+                    instrumentId,
+                    subVoiceId,
+                    target,
+                    PointMinimum: instrument.ActiveValueMinimum,
+                    PointMaximum: instrument.ActiveValueMaximum);
+
+            default:
+                return null;
+        }
+    }
+
+    private static bool IsTimelineSelectionSourceCompatible(
+        WorkspaceViewModel workspace,
+        TimelineSurface surface,
+        WorkspaceTimelineSelectionSource source) =>
+        GetTimelineSelectionSource(workspace, surface) == source;
+
+    private static bool IsTimelineSelectionQuantizeScopeCompatible(
+        WorkspaceViewModel workspace,
+        TimelineSurface surface,
+        WorkspaceTimelineSelectionSource source) =>
+        GetTimelineSelectionSource(workspace, surface)?.QuantizeScope
+            == source.QuantizeScope;
+
+    private bool CanOpenTimelineProperties(TimelineSurface surface) =>
+        _session.ActiveWorkspace is WorkspaceViewModel workspace
+        && workspace.Selection.Ids.Count != 0
+        && workspace.Selection.HomogeneousTimelineSource
+            is WorkspaceTimelineSelectionSource source
+        && IsTimelineSelectionSourceCompatible(workspace, surface, source);
+
+    private async void OnHumanizeSelectionClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
+        {
+            return;
+        }
+
+        TimelineSurface? sourceSurface = _lastTimelineCommandSurface;
+        HumanizeSelectionDialog dialog = new() { Owner = this };
+        if (ShowModalDialog(dialog) != true || dialog.Options is not TimelineHumanizeOptions options)
+            return;
+
+        ITimelineSelectionResultEditCommand command = context.Kind switch
+        {
+            TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.HumanizeLogicalNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                options),
+            TimelineSelectionObjectKind.DirectMidiNotes => ProjectDomainEditCommands.HumanizeDirectMidiNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                options),
+            TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.HumanizeTemplateNotes(
+                context.OwnerId!.Value,
+                context.SecondaryId!.Value,
+                context.Ids,
+                options),
+            _ => throw new InvalidOperationException(
+                "Humanize is unavailable for the current selection type.")
+        };
+        await ExecuteStagedTimelineSelectionOperationAsync(
+            "Humanize Notes",
+            command,
+            workspace,
+            sourceSurface);
+    }
+
+    private async void OnSplitNotesClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
+        {
+            return;
+        }
+
+        TimelineSurface? sourceSurface = _lastTimelineCommandSurface;
+        SplitNotesDialog dialog = new() { Owner = this };
+        if (ShowModalDialog(dialog) != true || dialog.Options is not NoteSplitOptions options)
+            return;
+
+        try
+        {
+            ITimelineSelectionResultEditCommand command = context.Kind switch
+            {
+                TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.SplitLogicalNotes(
+                    context.OwnerId!.Value,
+                    context.Ids,
+                    options),
+                TimelineSelectionObjectKind.DirectMidiNotes => ProjectDomainEditCommands.SplitDirectMidiNotes(
+                    context.OwnerId!.Value,
+                    context.Ids,
+                    options),
+                TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.SplitTemplateNotes(
+                    context.OwnerId!.Value,
+                    context.SecondaryId!.Value,
+                    context.Ids,
+                    options),
+                _ => throw new InvalidOperationException(
+                    "Split is unavailable for the current selection type.")
+            };
+            await ExecuteStagedTimelineSelectionOperationAsync(
+                "Split Notes",
+                command,
+                workspace,
+                sourceSurface);
+        }
+        finally
+        {
+            options.ExpressionProgram?.Dispose();
+        }
+    }
+
+    private async void OnJoinNotesClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
+        {
+            return;
+        }
+
+        TimelineSurface? sourceSurface = _lastTimelineCommandSurface;
+        JoinNotesDialog dialog = new() { Owner = this };
+        if (ShowModalDialog(dialog) != true || dialog.Options is not NoteJoinOptions options)
+            return;
+
+        ITimelineSelectionResultEditCommand command = context.Kind switch
+        {
+            TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.JoinLogicalNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                options),
+            TimelineSelectionObjectKind.DirectMidiNotes => ProjectDomainEditCommands.JoinDirectMidiNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                options),
+            TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.JoinTemplateNotes(
+                context.OwnerId!.Value,
+                context.SecondaryId!.Value,
+                context.Ids,
+                options),
+            _ => throw new InvalidOperationException(
+                "Join is unavailable for the current selection type.")
+        };
+        await ExecuteStagedTimelineSelectionOperationAsync(
+            "Join Notes",
+            command,
+            workspace,
+            sourceSurface);
+    }
+
+    private async void OnQuantizeSelectionClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineQuantizeOperationContext is not { Ids.Count: > 0 } context
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
+        {
+            return;
+        }
+
+        bool noteSelection = context.Kind is TimelineSelectionObjectKind.LogicalNotes
+            or TimelineSelectionObjectKind.DirectMidiNotes
+            or TimelineSelectionObjectKind.TemplateNotes;
+        bool eventSelection = context.Kind is TimelineSelectionObjectKind.LogicalParameterPoints
+            or TimelineSelectionObjectKind.DirectMidiEventPoints
+            or TimelineSelectionObjectKind.SubVoiceEventPoints;
+        if (!noteSelection && !eventSelection) return;
+
+        TimelineSurface? sourceSurface = _lastTimelineCommandSurface;
+        QuantizeSelectionDialog dialog = new(
+            noteSelection,
+            GetEditorSettingsForSurface(sourceSurface).OperationSubdivision)
+        {
+            Owner = this
+        };
+        if (ShowModalDialog(dialog) != true || dialog.Grid is not TimelineQuantizeGrid grid)
+            return;
+
+        ITimelineSelectionResultEditCommand command = context.Kind switch
+        {
+            TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.QuantizeLogicalNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                dialog.NoteOptions!),
+            TimelineSelectionObjectKind.DirectMidiNotes => ProjectDomainEditCommands.QuantizeDirectMidiNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                dialog.NoteOptions!),
+            TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.QuantizeTemplateNotes(
+                context.OwnerId!.Value,
+                context.SecondaryId!.Value,
+                context.Ids,
+                dialog.NoteOptions!),
+            TimelineSelectionObjectKind.LogicalParameterPoints =>
+                ProjectDomainEditCommands.QuantizeLogicalParameterPoints(
+                    context.OwnerId!.Value,
+                    context.Ids,
+                    grid),
+            TimelineSelectionObjectKind.DirectMidiEventPoints =>
+                ProjectDomainEditCommands.QuantizeDirectMidiEvents(
+                    context.OwnerId!.Value,
+                    context.Ids,
+                    grid),
+            TimelineSelectionObjectKind.SubVoiceEventPoints =>
+                ProjectDomainEditCommands.QuantizeTemplateEvents(
+                    context.OwnerId!.Value,
+                    context.SecondaryId!.Value,
+                    context.Ids,
+                    grid),
+            _ => throw new InvalidOperationException(
+                "Quantize is unavailable for the current selection type.")
+        };
+        await ExecuteStagedTimelineSelectionOperationAsync(
+            noteSelection ? "Quantize Notes" : "Quantize Events",
+            command,
+            workspace,
+            sourceSurface);
+    }
+
+    private async Task ExecuteStagedTimelineSelectionOperationAsync(
+        string title,
+        ITimelineSelectionResultEditCommand command,
+        WorkspaceViewModel workspace,
+        TimelineSurface? sourceSurface)
+    {
+        bool completed = await RunOperationAsync(
+            title,
+            async cancellationToken =>
+            {
+                using DispatcherCoalescingProgress<TimelineEditPreparationProgress> progress = new(
+                    Dispatcher,
+                    TimeSpan.FromMilliseconds(100),
+                    value => _session.ActiveForegroundTask?.Report(
+                        FormatTimelineEditPreparationProgress(value),
+                        value.OverallFraction));
+                using StagedProjectEdit staged = await Task.Run(
+                    () => _session.PrepareProjectEdit(
+                        command,
+                        workspace,
+                        cancellationToken,
+                        progress),
+                    cancellationToken);
+                progress.Flush();
+                if (_session.ActiveForegroundTask is { } activeTask)
+                    activeTask.SealCancellationBeforePublication();
+                else
+                    cancellationToken.ThrowIfCancellationRequested();
+                _session.ActiveForegroundTask?.Report("Publishing prepared edit", 1.00);
+                _session.ExecutePreparedPreservingWorkspaceSelection(
+                    staged,
+                    workspace,
+                    command);
+            },
+            canCancel: true);
+
+        if (completed)
+            _session.RefreshWorkspaceSelection(workspace);
+        RestoreModalCommandFocus(workspace, sourceSurface);
+    }
+
+    private static string FormatTimelineEditPreparationProgress(
+        TimelineEditPreparationProgress value)
+    {
+        string phase = value.Phase switch
+        {
+            TimelineEditPreparationPhase.ResolvingSelection => "Resolving selection",
+            TimelineEditPreparationPhase.Planning => "Planning edit",
+            TimelineEditPreparationPhase.ResolvingCollisions => "Resolving collisions",
+            TimelineEditPreparationPhase.BuildingResult => "Building result",
+            TimelineEditPreparationPhase.Ready => "Prepared",
+            _ => "Preparing edit"
+        };
+        return value.Total > 0
+            ? $"{phase} ({value.Completed:N0}/{value.Total:N0})"
+            : phase;
     }
 
     private void ExecuteSelectionOperation(IProjectEditCommand command)
@@ -6711,8 +7174,12 @@ public partial class MainWindow : Window
 
     private void OnSelectObjectsInTimeRangeClick(object sender, RoutedEventArgs e)
     {
+        TimelineSurface? surface = GetTimelineContextSurface(sender);
         if (_session.ActiveWorkspace is not TimelineWorkspaceViewModel workspace
-            || !workspace.SetObjectSelectionFromTimeRange())
+            || surface?.Snapshot is not TimelineRenderSnapshot snapshot
+            || !workspace.SetObjectSelectionFromTimeRange(
+                snapshot,
+                GetTimelineSelectionSource(workspace, surface)))
         {
             ShowUnavailable("Select Objects in Time Range", "Create a non-empty Time Range that intersects timeline objects first.");
             return;
@@ -7302,7 +7769,10 @@ public partial class MainWindow : Window
                         pitchDelta));
                     SelectCreatedWorkspaceObjects(
                         (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
-                        firstNewStableId);
+                        firstNewStableId,
+                        timelineSource: new(
+                            WorkspaceTimelineSelectionKind.LogicalNote,
+                            segmentId));
                 }
                 else
                 {
@@ -7447,7 +7917,10 @@ public partial class MainWindow : Window
                     SelectCreatedWorkspaceObjects(
                         (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
                         firstNewStableId,
-                        replaceSelectionWhenNoObjectSurvives: true);
+                        replaceSelectionWhenNoObjectSurvives: true,
+                        timelineSource: new(
+                            WorkspaceTimelineSelectionKind.DirectMidiNote,
+                            segmentId));
                 }
                 else
                 {
@@ -7544,9 +8017,20 @@ public partial class MainWindow : Window
             edit.CopyRequested));
         if (edit.CopyRequested)
         {
+            DirectMidiEventLaneTarget target =
+                TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(point);
             SelectCreatedWorkspaceObjects(
                 (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
-                firstNewStableId);
+                firstNewStableId,
+                timelineSource: new(
+                    WorkspaceTimelineSelectionKind.DirectMidiEventPoint,
+                    segmentId,
+                    DirectMidiEventKind: target.Kind,
+                    DirectMidiData1: target.Data1,
+                    PointMinimum: 0,
+                    PointMaximum: target.Kind == DirectMidiChannelEventKind.PitchBend
+                        ? 16383
+                        : 127));
         }
     }
 
@@ -7633,8 +8117,13 @@ public partial class MainWindow : Window
 
     private TimelineEditorSettings GetFocusedEditorSettings()
     {
-        bool eventLaneFocused = Keyboard.FocusedElement is TimelineSurface
-        { SurfaceMode: TimelineSurfaceMode.EventLanes };
+        TimelineSurface? focusedSurface = Keyboard.FocusedElement as TimelineSurface;
+        return GetEditorSettingsForSurface(focusedSurface);
+    }
+
+    private TimelineEditorSettings GetEditorSettingsForSurface(TimelineSurface? surface)
+    {
+        bool eventLaneFocused = surface is { SurfaceMode: TimelineSurfaceMode.EventLanes };
         return _session.ActiveWorkspace switch
         {
             TimelineWorkspaceViewModel timeline when eventLaneFocused => timeline.LaneEditorSettings,
@@ -7703,7 +8192,13 @@ public partial class MainWindow : Window
                 valueDelta));
             SelectCreatedWorkspaceObjects(
                 (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
-                firstNewStableId);
+                firstNewStableId,
+                timelineSource: new(
+                    WorkspaceTimelineSelectionKind.LogicalParameterPoint,
+                    segmentId,
+                    lane.Id,
+                    PointMinimum: definition.Minimum,
+                    PointMaximum: definition.Maximum));
         }
         else
         {
@@ -7853,7 +8348,13 @@ public partial class MainWindow : Window
                             selectedIds,
                             checked(noteMetrics.MinimumStartTick + tickDelta),
                             pitchDelta));
-                        SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+                        SelectCreatedWorkspaceObjects(
+                            workspace,
+                            firstNewStableId,
+                            timelineSource: new(
+                                WorkspaceTimelineSelectionKind.TemplateNote,
+                                instrumentId,
+                                voice.Id));
                     }
                     else
                     {
@@ -7928,7 +8429,16 @@ public partial class MainWindow : Window
                 edit.CopyRequested));
             if (edit.CopyRequested)
             {
-                SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+                SelectCreatedWorkspaceObjects(
+                    workspace,
+                    firstNewStableId,
+                    timelineSource: new(
+                        WorkspaceTimelineSelectionKind.SubVoiceEventPoint,
+                        instrumentId,
+                        voice.Id,
+                        target,
+                        PointMinimum: minimum,
+                        PointMaximum: maximum));
             }
             return;
         }
@@ -9373,7 +9883,7 @@ public partial class MainWindow : Window
 
         _timelineSelectionOperationContext = ResolveTimelineSelectionOperationContext(surface);
         if (!_session.CanEditProject
-            || _timelineSelectionOperationContext is not { Ids.Length: > 0 } context)
+            || _timelineSelectionOperationContext is not { Ids.Count: > 0 } context)
         {
             return true;
         }
@@ -10371,6 +10881,18 @@ public partial class MainWindow : Window
                 return;
             }
             if (result.IsUnchanged) return;
+            if (GetTimelineSelectionSource(workspace, surface)
+                is WorkspaceTimelineSelectionSource source)
+            {
+                workspace.Selection.RegisterTimelineMaterialization(
+                    result.Ids,
+                    source,
+                    invert
+                        ? WorkspaceSelectionRangeMode.Toggle
+                        : WorkspaceSelectionRangeMode.Replace,
+                    result.RangeCount,
+                    result.BaseIntersectionCount);
+            }
             workspace.Selection.AdoptMaterialized(
                 result.Ids,
                 result.Primary,
@@ -10408,11 +10930,11 @@ public partial class MainWindow : Window
         int? lane,
         CancellationToken cancellationToken)
     {
-        ImmutableHashSet<MidoraId>.Builder result = invert
-            ? current.Ids.ToImmutableHashSet().ToBuilder()
-            : ImmutableHashSet.CreateBuilder<MidoraId>();
+        CompressedMidoraIdSet.Builder rangeBuilder =
+            CompressedMidoraIdSet.CreateBuilder();
         MidoraId? first = null;
         int visited = 0;
+        int baseIntersectionCount = 0;
         foreach (TimelineRenderItem item in snapshot.EnumerateAllItems())
         {
             if ((visited++ & 4095) == 0)
@@ -10423,16 +10945,16 @@ public partial class MainWindow : Window
                 continue;
             }
             first ??= item.Id;
-            if (invert)
-            {
-                if (!result.Remove(item.Id)) result.Add(item.Id);
-            }
-            else
-            {
-                result.Add(item.Id);
-            }
+            if (rangeBuilder.Add(item.Id) && current.Contains(item.Id))
+                baseIntersectionCount++;
         }
         cancellationToken.ThrowIfCancellationRequested();
+
+        CompressedMidoraIdSet range = rangeBuilder.Build();
+        CompressedMidoraIdSet currentIds = CompressedMidoraIdSet.Create(current.Ids);
+        CompressedMidoraIdSet materialized = invert
+            ? currentIds.SymmetricExcept(range)
+            : range;
 
         MidoraId? primary;
         MidoraId? anchor;
@@ -10444,24 +10966,31 @@ public partial class MainWindow : Window
         else
         {
             primary = current.Primary is MidoraId currentPrimary
-                && result.Contains(currentPrimary)
+                && materialized.Contains(currentPrimary)
                     ? currentPrimary
-                    : result.Count == 0 ? null : result.Min();
+                    : materialized.TryGetMinimum(out MidoraId minimum) ? minimum : null;
             anchor = primary;
         }
-        ImmutableHashSet<MidoraId> materialized = result.ToImmutable();
         bool unchanged = current.Count == materialized.Count
             && materialized.SetEquals(current.Ids)
             && primary == current.Primary
             && anchor == currentAnchor;
-        return new(materialized, primary, anchor, unchanged);
+        return new(
+            materialized,
+            primary,
+            anchor,
+            unchanged,
+            range.Count,
+            baseIntersectionCount);
     }
 
     private sealed record MaterializedTimelineSelection(
-        ImmutableHashSet<MidoraId> Ids,
+        CompressedMidoraIdSet Ids,
         MidoraId? Primary,
         MidoraId? Anchor,
-        bool IsUnchanged);
+        bool IsUnchanged,
+        int RangeCount,
+        int BaseIntersectionCount);
 
     private void DuplicateFocusedSelection()
     {
@@ -10492,6 +11021,8 @@ public partial class MainWindow : Window
         }
         RunSynchronous("Duplicate Selection", () =>
         {
+            WorkspaceTimelineSelectionSource? timelineSource =
+                workspace.Selection.HomogeneousTimelineSource;
             MidoraId[] ids = workspace.Selection.Ids.ToArray();
             long cursor = (workspace as TimelineWorkspaceViewModel)?.EditCursorTick ?? 0;
             long firstNewStableId = project.NextStableId;
@@ -10601,7 +11132,10 @@ public partial class MainWindow : Window
                 default:
                     throw new InvalidOperationException("The active selection scope does not define Duplicate.");
             }
-            SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+            SelectCreatedWorkspaceObjects(
+                workspace,
+                firstNewStableId,
+                timelineSource: timelineSource);
         });
     }
 

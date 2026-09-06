@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows.Threading;
 using Midora.Application;
@@ -119,6 +120,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _workspaceSelectionHistory = [];
     private readonly Dictionary<WorkspaceKey, CachedWorkspaceSelectionBookmark>
         _workspaceSelectionBookmarkCache = [];
+    private readonly ConditionalWeakTable<StagedProjectEdit, PreparedWorkspaceSelectionPublication>
+        _stagedWorkspaceSelectionProjections = new();
     private readonly Dispatcher? _uiDispatcher =
         SynchronizationContext.Current is DispatcherSynchronizationContext
             ? Dispatcher.FromThread(Thread.CurrentThread)
@@ -1222,6 +1225,182 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         return result;
     }
+
+    public StagedProjectEdit PrepareProjectEdit(
+        IProjectEditCommand command,
+        CancellationToken cancellationToken = default,
+        IProgress<TimelineEditPreparationProgress>? progress = null)
+        => PrepareProjectEditCore(
+            command,
+            selectionWorkspace: null,
+            cancellationToken,
+            progress);
+
+    public StagedProjectEdit PrepareProjectEdit(
+        IProjectEditCommand command,
+        WorkspaceViewModel selectionWorkspace,
+        CancellationToken cancellationToken = default,
+        IProgress<TimelineEditPreparationProgress>? progress = null)
+    {
+        ArgumentNullException.ThrowIfNull(selectionWorkspace);
+        return PrepareProjectEditCore(
+            command,
+            selectionWorkspace,
+            cancellationToken,
+            progress);
+    }
+
+    private StagedProjectEdit PrepareProjectEditCore(
+        IProjectEditCommand command,
+        WorkspaceViewModel? selectionWorkspace,
+        CancellationToken cancellationToken,
+        IProgress<TimelineEditPreparationProgress>? progress)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ProjectDocumentSession document = Document
+            ?? throw new InvalidOperationException("No Project is open.");
+        if (selectionWorkspace is not null && !Workspaces.Contains(selectionWorkspace))
+        {
+            throw new InvalidOperationException(
+                "The selection-preserving edit target is not an open Workspace.");
+        }
+        if (IsPlaybackActive)
+        {
+            throw new InvalidOperationException(
+                "Project editing is locked while playback is active.");
+        }
+        StagedProjectEdit staged = document.PrepareEdit(
+            command,
+            cancellationToken,
+            progress);
+        try
+        {
+            if (staged.PreparedSelection is PreparedTimelineSelection selection)
+            {
+                PreparedWorkspaceSelectionProjection projection =
+                    selectionWorkspace?.Selection.PrepareProjection(
+                        selection.ResultSelectionIds,
+                        cancellationToken)
+                    ?? PreparedWorkspaceSelectionProjection.Create(
+                        selection.ResultSelectionIds,
+                        cancellationToken);
+                _stagedWorkspaceSelectionProjections.Add(
+                    staged,
+                    new(selectionWorkspace?.Selection, projection));
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return staged;
+        }
+        catch
+        {
+            staged.Dispose();
+            throw;
+        }
+    }
+
+    internal bool TryGetPreparedWorkspaceSelectionProjection(
+        StagedProjectEdit staged,
+        out PreparedWorkspaceSelectionProjection? projection)
+    {
+        ArgumentNullException.ThrowIfNull(staged);
+        bool found = _stagedWorkspaceSelectionProjections.TryGetValue(
+            staged,
+            out PreparedWorkspaceSelectionPublication? publication);
+        projection = publication?.Projection;
+        return found;
+    }
+
+    /// <summary>
+    /// Publishes a revision-gated edit prepared by the current foreground
+    /// task. This is the only edit path intentionally allowed while that task
+    /// owns the main-window lock.
+    /// </summary>
+    public ProjectEditExecution ExecutePreparedPreservingWorkspaceSelection(
+        StagedProjectEdit staged,
+        WorkspaceViewModel workspace,
+        ITimelineSelectionResultEditCommand? resultSelectionCommand = null)
+    {
+        ArgumentNullException.ThrowIfNull(staged);
+        ArgumentNullException.ThrowIfNull(workspace);
+        CompletePendingSelectionHistoryCaptureBeforeEdit();
+        ProjectDocumentSession document = Document
+            ?? throw new InvalidOperationException("No Project is open.");
+        if (!Workspaces.Contains(workspace))
+        {
+            throw new InvalidOperationException(
+                "The selection-preserving edit target is not an open Workspace.");
+        }
+        if (IsPlaybackActive || (!CanEditProject && !IsForegroundTaskRunning))
+        {
+            throw new InvalidOperationException(
+                "Project editing is locked while playback or another operation is active.");
+        }
+
+        bool hasPreparedSelection = _stagedWorkspaceSelectionProjections.TryGetValue(
+            staged,
+            out PreparedWorkspaceSelectionPublication? preparedSelectionPublication);
+        _stagedWorkspaceSelectionProjections.Remove(staged);
+        if (resultSelectionCommand is not null && !hasPreparedSelection)
+        {
+            staged.Dispose();
+            throw new InvalidOperationException(
+                "The prepared Timeline edit has no frozen Workspace selection projection.");
+        }
+        if (preparedSelectionPublication?.ExpectedSelection is WorkspaceSelection expectedSelection
+            && !ReferenceEquals(expectedSelection, workspace.Selection))
+        {
+            staged.Dispose();
+            throw new InvalidOperationException(
+                "The prepared Timeline selection belongs to another Workspace.");
+        }
+
+        long beforeStateId = document.CurrentStateId;
+        Dictionary<WorkspaceKey, WorkspaceSelectionBookmark> before =
+            CaptureOpenWorkspaceSelections();
+        bool truncatesRedoBranch = document.CanRedo;
+        if (truncatesRedoBranch)
+        {
+            lock (_modelRefreshGate) _workspaceSelectionHistoryPruneRequested = true;
+        }
+
+        ProjectEditExecution result;
+        try
+        {
+            result = document.ExecutePrepared(staged);
+        }
+        catch
+        {
+            if (truncatesRedoBranch)
+            {
+                lock (_modelRefreshGate) _workspaceSelectionHistoryPruneRequested = false;
+            }
+            throw;
+        }
+        if (!result.Changed)
+        {
+            if (truncatesRedoBranch)
+            {
+                lock (_modelRefreshGate) _workspaceSelectionHistoryPruneRequested = false;
+            }
+            return result;
+        }
+
+        foreach ((WorkspaceKey key, WorkspaceSelectionBookmark bookmark) in before)
+            StoreSelection(beforeStateId, key, bookmark);
+
+        if (preparedSelectionPublication is not null)
+            workspace.Selection.AdoptPrepared(preparedSelectionPublication.Projection);
+
+        if (_uiDispatcher is null)
+            StoreCurrentWorkspaceSelections(document.CurrentStateId, before);
+        else
+            QueueSelectionHistoryCapture(document.CurrentStateId);
+        return result;
+    }
+
+    private sealed record PreparedWorkspaceSelectionPublication(
+        WorkspaceSelection? ExpectedSelection,
+        PreparedWorkspaceSelectionProjection Projection);
 
     public void ApplyObjectProperties(
         WorkspaceViewModel workspace,
@@ -3274,6 +3453,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             Tasks?.Dispose();
             Playback?.Dispose();
+            Document.Dispose();
             Compilation.Dispose();
             await _owner.DisposeAsync();
         }

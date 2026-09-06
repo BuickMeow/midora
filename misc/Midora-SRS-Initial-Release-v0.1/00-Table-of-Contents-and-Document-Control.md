@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-09-02**
+> 最近修订日期：**2026-09-04**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,14 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-09-04 修订摘要
+
+- 初版正式加入三类 piano roll 的 Note Humanize、Note Split / Join 以及 Note/Event Quantize。Humanize 固定只作用于 Tick/Gate/Velocity，提供可复现 seed；Split 使用 owner-local 全局刀线，Join 按 owner+key 合并；Quantize 复用正式 Time Signature/Grid 服务并固定碰撞与中点规则。
+- 新增受限数值工具表达式 profile：`midora.tool.batch-note/v1`、`midora.tool.batch-event/v1`、`midora.tool.note-split/v1`。三者共用 8,192 scalar / 512 syntax node / 64 depth 的语法、API 和资源边界，但变量 schema 互相隔离；工具表达式与 Project 内 Mapping Function ABI v3 是两条独立的版本轴。
+- Split 的 Expression 模式默认最多 65,535 刀；Fixed Piece Length / Maximum Piece Count 不受该可配置安全停止值截断，三种模式共用 16,777,216 刀硬上限。大型工具仍服从 detached paged transaction，结果记录最多 100,000,000、working/resident 各 64 MiB、owned spill 16 GiB。任何取消、超限、算术错误或 revision race 都必须零发布。
+- Tool Preset 只保存于 `<ProgramRoot>\Data\Presets`，携带 schema/profile/tool/数值契约版本，每次加载必须按当前白名单与资源上限严格重验证。
+- 清理第 7、8、9、11、16、21 章中尚未被取代的自由 C# / ABI v2 措辞：当前只有受限 Mapping Function Expression ABI v3，不 Emit/加载 Project 源码程序集；旧 ABI v1/v2 只可识别并明确拒绝。
 
 ## 2026-09-02 修订摘要
 

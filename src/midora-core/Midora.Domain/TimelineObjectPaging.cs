@@ -166,7 +166,6 @@ public sealed class TimelineObjectSelectionDescriptor
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(getId);
         EnsureRevision(source);
-        HashSet<MidoraId>? rangeIds = _includedIds.Count == 0 ? null : [];
         int visited = 0;
         foreach (TimelineOrdinalRange range in _ranges)
         {
@@ -193,7 +192,6 @@ public sealed class TimelineObjectSelectionDescriptor
                         cancellationToken.ThrowIfCancellationRequested();
                     TValue value = page.Values[offset];
                     MidoraId id = getId(value);
-                    rangeIds?.Add(id);
                     if (_excludedIds.Contains(id)) continue;
                     yield return new(
                         new(OwnerId, SourceRevision, checked(first + offset), id),
@@ -206,8 +204,12 @@ public sealed class TimelineObjectSelectionDescriptor
         foreach (MidoraId id in _includedIds.Order())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (rangeIds?.Contains(id) == true) continue;
             if (!source.TryFindOrdinalById(id, out int ordinal)) continue;
+            // Included IDs are sparse exceptions around potentially enormous
+            // ordinal ranges.  Resolve the sparse ID to its ordinal and test
+            // range membership directly instead of retaining every ID yielded
+            // by the ranges in a range-sized HashSet.
+            if (ContainsOrdinal(ordinal)) continue;
             if (!source.TryGetPageByOrdinal(ordinal, 1, out TimelineObjectPage<TValue> page)
                 || page.Count != 1
                 || getId(page.Values[0]) != id)
@@ -218,6 +220,30 @@ public sealed class TimelineObjectSelectionDescriptor
                 new(OwnerId, SourceRevision, ordinal, id),
                 page.Values[0]);
         }
+    }
+
+    private bool ContainsOrdinal(int ordinal)
+    {
+        int low = 0;
+        int high = _ranges.Length - 1;
+        while (low <= high)
+        {
+            int middle = low + ((high - low) >> 1);
+            TimelineOrdinalRange range = _ranges[middle];
+            if (ordinal < range.FirstOrdinal)
+            {
+                high = middle - 1;
+            }
+            else if (ordinal >= range.LastOrdinalExclusive)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     public void EnsureRevision<TValue>(ITimelineObjectSource<TValue> source)

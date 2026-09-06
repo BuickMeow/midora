@@ -322,6 +322,7 @@ internal sealed class BoundedEditRecordStore<T> : IReadOnlyList<T>, IDisposable 
 internal static class BoundedEditSort
 {
     private const int MaximumMergeInputs = 16;
+    private const int InitialBufferCapacity = 64;
 
     public static BoundedEditRecordStore<T> Sort<T>(
         IEnumerable<T> source, IComparer<T> comparer, BoundedEditResources resources,
@@ -339,9 +340,19 @@ internal static class BoundedEditSort
         long visited = 0;
         try
         {
-            using (resources.ReserveWorking(checked((long)capacity * Unsafe.SizeOf<T>())))
+            // Tiny owners are common (e.g. many short Segments). Reserving and
+            // allocating a full 65K run for each of their intermediate sorts
+            // creates gigabytes of garbage even when each input has one value.
+            // Growth changes allocation only: run boundaries and sorting/merge
+            // order remain identical to the fixed-buffer implementation.
+            int initialCapacity = source.TryGetNonEnumeratedCount(out int knownCount)
+                ? Math.Clamp(knownCount, 1, capacity)
+                : Math.Min(InitialBufferCapacity, capacity);
+            IDisposable? bufferLease = null;
+            try
             {
-                T[] buffer = new T[capacity];
+                bufferLease = resources.ReserveWorking(checked((long)initialCapacity * Unsafe.SizeOf<T>()));
+                T[] buffer = new T[initialCapacity];
                 int count = 0;
                 foreach (T value in source)
                 {
@@ -349,6 +360,24 @@ internal static class BoundedEditSort
                         cancellationToken.ThrowIfCancellationRequested();
                     if (visited > resources.Budget.MaximumRecordCount)
                         throw new InvalidOperationException("The edit sort exceeds its candidate-record limit.");
+                    if (count == buffer.Length)
+                    {
+                        int nextCapacity = Math.Min(capacity, checked(buffer.Length * 2));
+                        // Both arrays are live during the copy. Reserve the
+                        // complete new buffer before allocation, not just its
+                        // size delta, and retain the old lease until copied.
+                        IDisposable nextLease = resources.ReserveWorking(checked((long)nextCapacity * Unsafe.SizeOf<T>()));
+                        T[] next;
+                        try
+                        {
+                            next = new T[nextCapacity];
+                            buffer.AsSpan(0, count).CopyTo(next);
+                        }
+                        catch { nextLease.Dispose(); throw; }
+                        buffer = next;
+                        bufferLease.Dispose();
+                        bufferLease = nextLease;
+                    }
                     buffer[count++] = value;
                     if (count != capacity) continue;
                     AddRun(buffer, count);
@@ -356,6 +385,7 @@ internal static class BoundedEditSort
                 }
                 if (count != 0 || runs.Count == 0) AddRun(buffer, count);
             }
+            finally { bufferLease?.Dispose(); }
 
             int passes = 0;
             for (int remaining = runs.Count; remaining > 1;

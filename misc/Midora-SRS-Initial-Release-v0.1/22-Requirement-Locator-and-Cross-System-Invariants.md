@@ -112,10 +112,12 @@
 | INV-101 | Instrument Catalog 是 `<ProgramRoot>\Data\Catalogs` 中独立版本化的程序级名称辅助数据；解析优先级固定为 User Override→Enabled SoundFont 顺序绑定的 Imported Profile→Enabled User Profile 顺序→General MIDI→数值 fallback。Catalog/Profile/名称与 SoundFontEntryId 不进入 Project、canonical、导出、音频配置等价性或缓存身份；损坏只回退名称。 |
 | INV-102 | `Add Event Binding...` 冻结当前目标 SubVoice IDs，并以一个失败原子的 Project command创建一个 Integer Logical Parameter、每 SubVoice 一个正式 Mapping及缺失的空 event owner；不得创建 tick 0 event。All 不动态包含以后新增者；CC91/93拒绝；Append/Replace顺序、Override/Add/Multiply accumulator语义、Round/Clamp及一次Undo/Redo必须确定。 |
 | INV-103 | Pure MIDI Track 新建/SMF导入按最终 global Arrangement位置使用固定八色 palette轮换；Duplicate/Copy/Paste继承，既有 Track 不因排序/删除重染。Logical Track继续使用独立 ColorOverride→Definition color；颜色只发布 presentation change，不得改变 canonical、导出或音频缓存。 |
-| INV-104 | Timeline 工具表达式 profile 固定为 `midora.tool.batch-note/v1`（`v0/v1,k0/k1,g0/g1,t0/t1,tr`）、`midora.tool.batch-event/v1`（`p0/p1,t0/t1,tr`）与 `midora.tool.note-split/v1`（`i,tr`）。非空表达式必须以 `=` 开头，共用 8,192 scalar / 512 syntax node / 64 depth 上限与固定纯数值 Math 白名单；依赖必须无环，结果必须 finite。这些 profile 与 Project Mapping Function ABI v3 互相独立。Preset 只位于 `<ProgramRoot>\Data\Presets`，带 schema/profile/tool/数值契约版本并在每次加载时严格重验证；不进入 Project、Undo 或 canonical。 |
+| INV-104 | Timeline 工具表达式固定使用独立 batch-note/event v1、note-split v1、generate-note/event v1 profile；精确变量 schema 见 §20.4.13。非空表达式必须以 `=` 开头，共用 8,192 scalar / 512 syntax node / 64 depth 上限与固定纯数值 Math 白名单；依赖必须无环，结果必须 finite。Generator 不能扩大旧 Batch profile，工具与 Project Mapping ABI v3 互相独立。Preset 只位于 `<ProgramRoot>\Data\Presets`，带 schema/profile/tool/数值契约版本并在每次加载时严格重验证；不进入 Project、Undo 或 canonical。 |
 | INV-105 | Humanize 只作用于三类 Note 的 Tick/Gate/Velocity，不改 Key。同一显式 seed 必须依据 owner identity、冻结 formal ordinal 和 field kind 得到稳定结果；Undo/Redo 不重抽样。Tick 越 owner 硬边界删除 Note 且不扩展容器，Velocity/Gate 分别 Clamp 到 `1..127` / 最小 1 tick，最后执行 Note later-loses exact-collision reducer。 |
 | INV-106 | Note Split 必须按 owner 的全局选区刀线以 active-interval sweep 生成，提供 Fixed Piece Length、Maximum Piece Count 和受限 Expression；只有 Expression 读取可配置的 Maximum Cuts（默认 65,535），Fixed / Maximum Pieces 必须完整规划且不得被它截断，三种模式共用 16,777,216 刀硬上限。结果记录上限 100,000,000，working/resident 各 64 MiB，owned spill 16 GiB。第一片保留源 ID，Direct MIDI 全片继承 NoteOff velocity。Join 按 owner+key 以非负 Maximum Gap（默认 0）合并，使用第一条 NoteOn velocity、Direct run 最后一条 NoteOff velocity，不改未选 Note。 |
 | INV-107 | Note/Event Quantize 复用正式 Snap/Grid/Time Signature 服务，固定 100%、不提供 Bar，中点选早格。Note 提供 Start only 与 Start+End，后者 `end<=start` 时饱和为 `start+1`，exact start+key 按冻结 formal order later-loses。Event 只覆盖 Direct MIDI Channel Event、Logical Parameter Point 和 SubVoice MIDI Event，只改 Tick，exact tick+target 按冻结 formal order later-wins；未命中的导入重复必须保留。全部命令以 detached paged transaction 可取消准备、零部分发布，成功后形成一次 Undo 和确定选择结果。 |
+| INV-108 | Batch Create 只在有效 Note owner / 数值 Event lane 上生成正式对象。Generator 的 i 为零基，*0 是上一轮正规化结果/Initial，*1 是本轮 DAG 结果，tr=input t0；Initial 首对象开关默认关闭，开启时首对象计 candidate 0。Maximum Candidates 默认 65,535、硬上限 16,777,216，计迭代而非保留对象。负相对 tick Clamp 0，finite/checked 失败零发布，Note 既有/较早候选优先，Event 较晚候选覆盖命中键；任意 Tick 倒退也必须有界归并与安全取消，Undo/Redo 不重新求值。Preset 不保存 Base/owner/lane。 |
+| INV-109 | Logical/MIDI Segment 双向拖动、复制、粘贴共用完整内容转换；保持全局 Track 相对偏移、crop 和 hidden Notes。非共同数据（含空参数 Lane、非零 NoteOff velocity、折叠 exact duplicate）必须冻结类型/数量并一次确认，不按名称推断。Move 的源删除与验证完成的目标属于一个 detached 原子事务；失败、取消、revision race 不改源。成功选择目标并形成一次 Undo，同类型保留全部数据。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -141,7 +143,7 @@
 | 各编辑器工作区、Timeline 精确属性与事务式 Properties | 第 17、18、20、24 章 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、分页 ordinal/range query、detached edit、浮动工具、拖放、验证、快捷键和 UI 验收 | 第 18、20、23、24 章；INV-095～100 |
-| 工具表达式 profile、Preset、Humanize、Note Split/Join、Note/Event Quantize | 第 20 章；INV-104～107 |
+| 工具表达式 profile、Preset、Humanize、Note Split/Join、Note/Event Quantize、Batch Create、Segment 双向转换 | 第 18、20、23 章；INV-104～109 |
 | 初版排除项、实现自由度和变更控制 | 第 21 章 |
 | MIDI Channel Root、Pure MIDI Track、Track Color、Midi Segment、SMF 导入、Running Status、Pure MIDI 导出拓扑 | 第 23、24 章；INV-103 |
 | Arrangement 平铺 Track order、Event Instrument Usage、隐式 Root、独立/共享 Duplicate、共享块、跨类型 Note 剪贴板、Pure MIDI/Conductor 概览缓存 | 第 24 章 |

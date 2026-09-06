@@ -9,6 +9,7 @@ public enum ProjectObjectClipboardKind
     PureMidiTrack,
     Segments,
     MidiSegments,
+    ArrangementSegments,
     LogicalNotes,
     DirectMidiNotes,
     DirectMidiEvents,

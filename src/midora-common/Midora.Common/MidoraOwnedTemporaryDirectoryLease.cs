@@ -3,8 +3,10 @@ using System.Text;
 namespace Midora.Common;
 
 /// <summary>
-/// Owns one versioned direct child of a Midora temporary-data root. Unknown,
-/// unmanifested, active, or reparse-point children are never deleted.
+/// Owns one versioned direct child of a Midora temporary-data root. Creation
+/// touches only the root and the newly owned child; it never scans siblings.
+/// Startup/session recovery explicitly calls <see cref="ClearInactiveDirectories"/>.
+/// Unknown, unmanifested, active, or reparse-point children are never deleted.
 /// </summary>
 public sealed class MidoraOwnedTemporaryDirectoryLease : IDisposable
 {
@@ -24,7 +26,6 @@ public sealed class MidoraOwnedTemporaryDirectoryLease : IDisposable
         {
             Directory.CreateDirectory(_rootPath);
             RequireOrdinaryDirectory(_rootPath);
-            _ = ClearInactiveDirectoriesCore(_rootPath);
 
             string directoryName = purpose + "-" + Guid.NewGuid().ToString("N");
             DirectoryPath = ValidateDirectChild(
@@ -116,7 +117,8 @@ public sealed class MidoraOwnedTemporaryDirectoryLease : IDisposable
                 or InvalidDataException
                 or DirectoryNotFoundException)
             {
-                // Recovery is best effort and retries on the next startup/lease.
+                // Recovery is best effort and retries at the next explicit
+                // startup/session cleanup, never on an ordinary lease creation.
             }
         }
         return removed;
@@ -210,7 +212,8 @@ public sealed class MidoraOwnedTemporaryDirectoryLease : IDisposable
             or InvalidDataException
             or DirectoryNotFoundException)
         {
-            // The next startup/lease retries an owned stale directory.
+            // The next explicit startup/session cleanup retries this owned
+            // stale directory without burdening ordinary lease creation.
         }
     }
 

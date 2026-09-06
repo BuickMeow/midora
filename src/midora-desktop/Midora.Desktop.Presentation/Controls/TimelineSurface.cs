@@ -631,7 +631,6 @@ public sealed class TimelineSurface : Control
     private TimelineSelectionSnapshot? _dragPreviewSelection;
     private long _dragPreviewSelectionRevision = -1;
     private bool _dragPreviewSelectionPrepared;
-    private bool _dragPreviewMixedArrangementSegmentSelection;
     private long _dragPreviewMinimumStartTick;
     private int _dragPreviewMinimumLane;
     private int _dragPreviewMaximumLane;
@@ -2595,7 +2594,6 @@ public sealed class TimelineSurface : Control
                     modifiers);
                 _dragPreviewSelectionPrepared = false;
                 _dragPreviewSelection = null;
-                _dragPreviewMixedArrangementSegmentSelection = false;
                 InvalidateDragPreviewGeometry();
                 PrepareDragPitchPreview(hit);
                 CaptureMouse();
@@ -3347,8 +3345,6 @@ public sealed class TimelineSurface : Control
                     ? Cursors.Arrow
                     : IsValueEditableEventPointKind(dragItem.Kind)
                         ? Cursors.SizeNS
-                        : _dragPreviewMixedArrangementSegmentSelection
-                            ? Cursors.SizeWE
                         : _dragKind == TimelineItemEditKind.Move
                             ? Cursors.SizeAll
                             : Cursors.SizeWE;
@@ -3673,9 +3669,7 @@ public sealed class TimelineSurface : Control
             EndDragPitchPreview();
             if (_dragActivated)
             {
-                int laneDelta = _dragPreviewMixedArrangementSegmentSelection
-                    ? 0
-                    : checked(_dragCurrentLane - _dragOriginLane);
+                int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
                 ItemEditCompleted?.Invoke(
                     this,
                     new TimelineItemEditEventArgs(
@@ -8278,10 +8272,6 @@ public sealed class TimelineSurface : Control
         }
 
         int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
-        if (_dragPreviewMixedArrangementSegmentSelection)
-        {
-            laneDelta = 0;
-        }
         if (_dragCopyRequested
             && anchor.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.DirectMidiNote or TimelineItemKind.TemplateNote)
         {
@@ -8367,8 +8357,6 @@ public sealed class TimelineSurface : Control
             && SelectionSnapshot?.Contains(anchor.Id) == true
                 ? SelectionSnapshot
                 : null;
-        _dragPreviewMixedArrangementSegmentSelection =
-            ComputeMixedArrangementSegmentSelection(anchor);
 
         _dragPreviewMinimumStartTick = anchor.StartTick;
         _dragPreviewMinimumLane = anchor.Lane;
@@ -8443,41 +8431,6 @@ public sealed class TimelineSurface : Control
             or TimelineItemKind.LogicalParameterPoint
             or TimelineItemKind.DirectMidiEvent
             or TimelineItemKind.OpaqueMidiEvent;
-
-    private bool ComputeMixedArrangementSegmentSelection(TimelineRenderItem anchor)
-    {
-        if (SurfaceMode != TimelineSurfaceMode.Arrangement
-            || anchor.Kind != TimelineItemKind.Segment
-            || SelectionSnapshot?.Contains(anchor.Id) != true
-            || Snapshot is not TimelineRenderSnapshot snapshot)
-        {
-            return false;
-        }
-
-        ArrangementLaneKind? selectedKind = null;
-        foreach (MidoraId id in SelectionSnapshot.Ids)
-        {
-            if (!snapshot.TryGetItem(id, out TimelineRenderItem item)
-                || item.Kind != TimelineItemKind.Segment
-                || (uint)item.Lane >= (uint)snapshot.ArrangementLanes.Count)
-            {
-                continue;
-            }
-
-            ArrangementLaneKind laneKind = snapshot.ArrangementLanes[item.Lane].Kind;
-            if (laneKind is not (ArrangementLaneKind.LogicalTrack
-                or ArrangementLaneKind.PureMidiTrack))
-            {
-                continue;
-            }
-            if (selectedKind.HasValue && selectedKind.Value != laneKind)
-            {
-                return true;
-            }
-            selectedKind = laneKind;
-        }
-        return false;
-    }
 
     private static void AppendRectangle(StreamGeometryContext context, Rect bounds)
     {
@@ -10079,14 +10032,10 @@ public sealed class TimelineSurface : Control
         ModifierKeys modifiers = Keyboard.Modifiers;
         bool controlCopyRequested = editKind == TimelineItemEditKind.Move
             && (modifiers & ModifierKeys.Control) != 0;
-        bool mixedArrangementSegments = controlCopyRequested
-            && kind == TimelineItemKind.Segment
-            && ComputeMixedArrangementSegmentSelection(anchor);
         bool copySupported = TimelineToolPolicy.SupportsSelectionFloatingToolCopyDrag(
             SurfaceMode,
             kind,
-            editKind)
-            && !mixedArrangementSegments;
+            editKind);
         if (controlCopyRequested && !copySupported)
         {
             Cursor = Cursors.No;
@@ -10107,7 +10056,6 @@ public sealed class TimelineSurface : Control
         _dragTimeLocked = false;
         _dragPreviewSelectionPrepared = false;
         _dragPreviewSelection = null;
-        _dragPreviewMixedArrangementSegmentSelection = false;
         InvalidateDragPreviewGeometry();
         PrepareDragPitchPreview(anchor);
         CaptureMouse();
@@ -11325,7 +11273,6 @@ public sealed class TimelineSurface : Control
         _dragPreviewSelection = null;
         _dragPreviewSelectionPrepared = false;
         _dragPreviewIdPrefetchSignature = null;
-        _dragPreviewMixedArrangementSegmentSelection = false;
         _resizePreviewCancellation.Cancel();
         _resizePreviewCancellation.Dispose();
         _resizePreviewCancellation = new();

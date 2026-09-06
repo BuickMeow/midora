@@ -58,7 +58,7 @@ internal static class BatchExpressionCompletionProvider
             .Where(variable => !string.Equals(variable.Name, excludedVariable, StringComparison.Ordinal))
             .Select(variable => new BatchExpressionVariable(
                 variable.Name,
-                DescribeProfileVariable(variable.Name)))
+                DescribeProfileVariable(profile, variable.Name)))
             .ToArray();
     }
 
@@ -149,12 +149,34 @@ internal static class BatchExpressionCompletionProvider
             .ToArray();
     }
 
-    private static string DescribeProfileVariable(string name) => name switch
+    private static string DescribeProfileVariable(NumericExpressionProfile profile, string name)
     {
-        "i" => "Zero-based operation iteration index (double).",
-        "tr" => "Previous cut position relative to the selection origin (double).",
-        _ => $"Numeric expression variable {name} (double)."
-    };
+        if (profile.Id == NumericExpressionProfiles.GenerateNote.Id || profile.Id == NumericExpressionProfiles.GenerateEvent.Id)
+        {
+            return name switch
+            {
+                "i" => "Zero-based candidate index; the optional Initial object is candidate 0 (double).",
+                "tr" => "Input t0: previous normalized relative Tick, or normalized Initial Tick on the first iteration (double).",
+                "v0" => "Previous normalized Velocity (first iteration: Initial Velocity).",
+                "k0" => "Previous normalized Key (first iteration: Initial Key).",
+                "g0" => "Previous normalized Gate (first iteration: Initial Gate).",
+                "p0" => "Previous normalized Value (first iteration: Initial Value).",
+                "t0" => "Previous normalized Tick relative to Base Tick (first iteration: Initial Tick).",
+                "v1" => "Current Velocity result before final normalization; dependency cycles are rejected.",
+                "k1" => "Current Key result before final normalization; dependency cycles are rejected.",
+                "g1" => "Current Gate result before final normalization; dependency cycles are rejected.",
+                "p1" => "Current Value result before final normalization; dependency cycles are rejected.",
+                "t1" => "Current relative Tick result before final normalization; dependency cycles are rejected.",
+                _ => $"Numeric expression variable {name} (double)."
+            };
+        }
+        return name switch
+        {
+            "i" => "Zero-based operation iteration index (double).",
+            "tr" => "Previous cut position relative to the selection origin (double).",
+            _ => $"Numeric expression variable {name} (double)."
+        };
+    }
 
     private static bool TryGetMemberReceiver(string text, int prefixStart, out string receiver)
     {

@@ -1,7 +1,7 @@
 # Midora 大型编辑与可视化扩展实施方案（已定案记录）
 
 - 日期：2026-08-31
-- 状态：**非规范性决策记录与实施计划；阶段 1～3 已完成并经产品所有者验收；阶段 4 功能与 UI 已于 2026-09-06 验收通过，百万对象资源门仍未关闭；阶段 5～8 尚未授权实施**
+- 状态：**非规范性决策记录与实施计划；阶段 1～5 及后续有限内存修复已验收；阶段 6 已获授权，待阶段 5 提交推送后实施；阶段 7～8 尚未授权实施**
 - 适用仓库基线：`b8ed363`
 - 目的：把本轮需求整理为可审查、可逐项定案、可分阶段实施的长期存档。
 
@@ -899,6 +899,8 @@ create Definition
 - 1M 对象下的进度、取消、峰值内存/磁盘及结果确定性。
 
 #### 阶段 5：Note/Event Batch Create 与跨类型 Segment 转换
+
+2026-09-06 实施记录：[需求追踪](Midora-Stage5-Generation-and-Segment-Conversion-Requirement-Trace.md)、[架构决定](Midora-Stage5-Generation-and-Segment-Conversion-Architecture-Decisions.md)、[验证与性能报告](Midora-Stage5-Validation-and-Performance-Report.md)、[18 项人工验收清单](Midora-Stage5-Manual-Acceptance-Checklist.md)。用户已确认本阶段验收通过，并显式授权提交推送后进入阶段 6。
 
 覆盖 `WP-08`，以及 `WP-09` 的 Segment conversion slice。两者共用阶段 2/4 已稳定的 detached staging、碰撞归并、结果选择、失败原子和大型结果预算，但在 UI 中仍保持两个独立工具。主要交付：
 

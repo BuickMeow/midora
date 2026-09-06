@@ -1652,6 +1652,14 @@ public partial class MainWindow : Window
         }
 
         bool canEdit = _session.CanEditProject;
+        WorkspaceTimelineSelectionSource? creationSource = _session.ActiveWorkspace is WorkspaceViewModel creationWorkspace
+            ? GetTimelineSelectionSource(creationWorkspace, surface) : null;
+        if (IsTimelineGenerationSource(creationSource))
+        {
+            Add(IsTimelineNoteGenerationSource(creationSource) ? "Batch Create Notes…" : "Batch Create Events…",
+                OnBatchCreateTimelineObjectsClick, enabled: canEdit);
+            Separator();
+        }
         if (surface.SurfaceMode == TimelineSurfaceMode.Arrangement)
         {
             Add("Open", OnOpenWorkspaceSelectionClick);
@@ -7010,12 +7018,17 @@ public partial class MainWindow : Window
             title,
             async cancellationToken =>
             {
+                string? detail = null;
                 using DispatcherCoalescingProgress<TimelineEditPreparationProgress> progress = new(
                     Dispatcher,
                     TimeSpan.FromMilliseconds(100),
-                    value => _session.ActiveForegroundTask?.Report(
-                        FormatTimelineEditPreparationProgress(value),
-                        value.IsIndeterminate ? null : value.OverallFraction));
+                    value =>
+                    {
+                        detail = value.Detail ?? detail;
+                        _session.ActiveForegroundTask?.Report(
+                            FormatTimelineEditPreparationProgress(value with { Detail = detail }),
+                            value.IsIndeterminate ? null : value.OverallFraction);
+                    });
                 using StagedProjectEdit staged = await Task.Run(
                     () => _session.PrepareProjectEdit(
                         command,
@@ -7075,9 +7088,10 @@ public partial class MainWindow : Window
             TimelineEditPreparationPhase.Ready => "Prepared",
             _ => "Preparing edit"
         };
-        return value.Total > 0
+        string text = value.Total > 0
             ? $"{phase} ({value.Completed:N0}/{value.Total:N0})"
             : phase;
+        return string.IsNullOrWhiteSpace(value.Detail) ? text : $"{text} · {value.Detail}";
     }
 
     private static long GetTimelineSelectionSpan(
@@ -7411,6 +7425,7 @@ public partial class MainWindow : Window
     private async void OnTimelineItemEditCompleted(object? sender, TimelineItemEditEventArgs e)
     {
         if (_session.Project is null || _session.ActiveWorkspace is null) return;
+        if (sender is TimelineSurface commandSurface) _lastTimelineCommandSurface = commandSurface;
         try
         {
             if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline)
@@ -7610,6 +7625,19 @@ public partial class MainWindow : Window
             checked(edit.Item.Lane + edit.LaneDelta), 0,
             Math.Max(0, workspace.Snapshot!.ArrangementLanes.Count - 1));
         ArrangementLaneDescriptor? targetLane = workspace.GetArrangementLane(targetLaneIndex);
+        if (edit.EditKind == TimelineItemEditKind.Move
+            && RequiresArrangementSegmentConversion(workspace.Snapshot!, selected, edit))
+        {
+            if (targetLane is not { CanContainSegments: true, ObjectId: MidoraId targetTrackId }) return;
+            long minimumStart = edit.Item.StartTick;
+            foreach (MidoraId id in selected)
+                if (workspace.Snapshot!.TryGetItem(id, out TimelineRenderItem item))
+                    minimumStart = Math.Min(minimumStart, item.StartTick);
+            long primaryTick = checked(edit.Item.StartTick + Math.Max(snappedDelta, -minimumStart));
+            await TransferArrangementSegmentsAsync(workspace, selected, edit.Item.Id,
+                targetTrackId, primaryTick, edit.CopyRequested);
+            return;
+        }
         long endDelta = workspace.EditorSettings.SnapDelta(
             edit.TickDelta, checked(edit.Item.EndTick + edit.TickDelta));
         long firstNewStableId = _session.Project!.NextStableId;
@@ -9937,11 +9965,8 @@ public partial class MainWindow : Window
         {
             if (timeline.Mode == TimelineWorkspaceMode.Arrangement)
             {
-                if (TimelineWorkspaceViewModel.FindSegment(project, primary) is not null)
-                    return new(() => ProjectObjectClipboard.CopySegments(document, ids, primary),
-                        ProjectDomainEditCommands.DeleteSegments(ids));
-                return new(() => ProjectObjectClipboard.CopyMidiSegments(document, ids, primary),
-                    ProjectDomainEditCommands.DeleteMidiSegments(ids));
+                return new(() => ProjectObjectClipboard.CopyArrangementSegments(document, ids, primary),
+                    ProjectDomainEditCommands.DeleteArrangementSegments(ids));
             }
             if (timeline.Mode == TimelineWorkspaceMode.Conductor)
                 return new(() => ProjectObjectClipboard.CopyConductorEvents(document, ids),
@@ -10105,6 +10130,13 @@ public partial class MainWindow : Window
 
         try
         {
+            if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } arrangementPaste
+                && payload.Kind is ProjectObjectClipboardKind.Segments or ProjectObjectClipboardKind.MidiSegments
+                    or ProjectObjectClipboardKind.ArrangementSegments)
+            {
+                await PasteArrangementSegmentsAsync(arrangementPaste, document, project, payload);
+                return;
+            }
             long cursor = workspace is TimelineWorkspaceViewModel timeline
                 ? timeline.EditCursorTick ?? 0
                 : 0;

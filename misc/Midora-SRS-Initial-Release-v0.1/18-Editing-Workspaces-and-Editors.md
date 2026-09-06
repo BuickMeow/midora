@@ -94,7 +94,7 @@ Drag edge  -> change active crop window
 Ctrl+Drag  -> copy Segment when target is valid
 Split Tool -> split at target tick
 ```
-Logical Segment 可纵向移动到其他 Logical Track，保留所有 Note、Lane、Broken / Inapplicable 数据和 crop 外内容；不得自动匹配、修复或删除 Logical Parameter Lane。Midi Segment 可移动到其他 Pure MIDI Track，包括跨 Root，并保留全部 direct/opaque 数据；目标 Track 不得重叠。两类 Segment 之间不允许隐式移动或转换。
+同类型移动保留全部 Note、Lane、Broken / Inapplicable 数据、direct/opaque 数据和 crop 外内容；不得按名称修复参数。Logical/MIDI 跨类型拖动、复制与粘贴遵循第 20.6.14 节的完整内容转换、一次损失确认与失败原子性；目标 Track 不得重叠。
 ### 18.1.7 Timeline
 支持：
 ```text

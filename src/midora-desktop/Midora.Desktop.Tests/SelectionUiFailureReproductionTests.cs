@@ -402,7 +402,8 @@ public sealed class SelectionUiFailureReproductionTests
 
                 byte[] actual = RenderVisual(selected);
                 Stopwatch timeout = Stopwatch.StartNew();
-                while (actual.SequenceEqual(baselinePixels)
+                while ((GetCommittedSelectionTileCount(selected) == 0
+                        || actual.SequenceEqual(baselinePixels))
                     && timeout.Elapsed < TimeSpan.FromSeconds(5))
                 {
                     DrainDispatcher();

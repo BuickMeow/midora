@@ -283,7 +283,7 @@ Snap Primary Selection
 不逐对象独立吸附。
 ### 20.4.3 时间移动
 同一时间坐标系对象可统一移动。
-异类选择通常需要显式 `Move in Time`。唯一直接拖动例外是 Arrangement 中混合选择的 Logical Segment 与 Midi Segment：二者共用 absolute Project tick，因此允许从任一已选 Segment 主体作统一水平移动，也允许从左右边缘作统一长度调整；该手势必须强制 Track delta 为 0，不得造成跨 Track、跨类型或垂直移动。
+异类选择通常需要显式 `Move in Time`。Arrangement 中混合选择的 Logical Segment 与 Midi Segment 共用 absolute Project tick，允许统一时间/Track delta 的移动与复制，以及统一边缘长度调整。跨类型 Track 的放置必须经过第 20.6.14 节的统一转换与损失确认，不得由视图隐式丢弃内容。
 
 Arrangement 多 Segment 边界 Resize 的 transient preview 必须对全部选择应用与正式提交完全相同的 shared edge delta、逐对象最小长度、边界与 overlap 规则；不得只预览指针命中的一个 Segment，也不得以逐帧修改 Project 模型代替矢量预览。
 ### 20.4.4 Piano Roll Notes
@@ -308,7 +308,7 @@ Enum 只支持统一设值，不支持相对数值 Delta。
 Parameter Point 只有同 Definition、同类型、同值域和同语义时才能共同纵向调整。
 ### 20.4.6 Segment 跨 Track
 保持 Track 相对间距，并保留全部内容和 crop 外数据。
-Logical Segment 只可跨 Logical Track；Midi Segment 只可跨 Pure MIDI Track 并可改变 parent Root；二者不得隐式互转。混合类型选择的跨 Track 移动 Disabled。
+同类型跨 Track 保留全部源内容，Midi Segment 可改变 parent Root。跨类型与混合选择的跨 Track 移动/复制遵循第 20.6.14 节；未确认不可转换数据损失时不得提交。
 可能断裂的 Lane：
 - 不自动修复；
 - 不按名称匹配；
@@ -375,6 +375,8 @@ Result type: finite double
 midora.tool.batch-note/v1
 midora.tool.batch-event/v1
 midora.tool.note-split/v1
+midora.tool.generate-note/v1
+midora.tool.generate-event/v1
 ```
 
 变量 schema 固定为：
@@ -383,6 +385,8 @@ midora.tool.note-split/v1
 midora.tool.batch-note/v1  : v0/v1, k0/k1, g0/g1, t0/t1, tr
 midora.tool.batch-event/v1 : p0/p1, t0/t1, tr
 midora.tool.note-split/v1  : i, tr
+midora.tool.generate-note/v1  : i, v0/v1, k0/k1, g0/g1, t0/t1, tr
+midora.tool.generate-event/v1 : i, p0/p1, t0/t1, tr
 ```
 
 Batch profile 中 `*0` 表示该字段编辑前的值，`*1` 表示同一对象中经依赖图求得的新值，`tr` 是相对本次冻结 Selection 最小 tick 的编辑前相对位置。Note Split 中 `i` 和 `tr` 只有第 20.4.15 节定义的刀序号/上一刀位置语义，不得引入 Batch Edit 字段或其他隐式变量。
@@ -449,6 +453,22 @@ Humanize、Split、Join 和 Quantize 必须以可取消前台任务准备 detach
 成功后，Humanize 和 Quantize 选择所有幸存的本次处理结果；Split 选择所有幸存片段；Join 选择所有合并结果。碰撞或越界 reducer 删除的对象不出现在新选择中。Undo 恢复命令前的完整对象与 Selection，Redo 恢复已冻结结果和结果 Selection，不重新计算随机、表达式、Grid 或当前拍号。一次跨 owner 操作仍只形成一个 Undo。
 
 只有当前 Selection 的所有对象属于工具批准类型且共同可编辑时，对应 Context Menu 命令才启用。Note 菜单提供 `Humanize...`、`Split...`、`Join...`、`Quantize...`；正式数值 Event/Parameter Point 菜单只提供 `Quantize...`。不兼容的混合 Selection 必须禁用对应命令，不得静默只处理其中一部分。对话框 Cancel 不改 Project，关闭后按第 20.2 节恢复来源 Timeline 焦点。
+
+### 20.4.19 Batch Create Notes / Events
+
+三类 Piano Roll 提供 `Batch Create Notes...`；Direct MIDI Channel Event、Logical Parameter Point 与 SubVoice MIDI Event 的当前有效数值 lane 提供 `Batch Create Events...`。这些入口不依赖非空 Selection，但无有效 owner/target 或 Project 编辑被锁时不可执行；opaque、Conductor 不属于本工具。
+
+Note 输入为 Velocity / Key / Gate / Tick 的表达式与 Initial（默认 1 / 0 / 1 / 0）；Event 为 Point Value / Tick（默认正式 lane minimum / 0）。Base Tick 默认当前编辑线、允许自定义，Tick 表达式输出是相对 Base 的位置。空表达式是 identity，非空必须以 `=` 开头。
+
+Generator 使用独立 profile。`i` 从 0 开始；`*0` 是上一轮正规化后的结果，首轮来自按正式值域正规化的 Initial；`*1` 是本轮依赖 DAG 算出的新值，全部字段求值后才联合正规化并作为下一轮输入。`tr` 固定等于输入 `t0`，不等于当前输出 `t1`。`Create first object from initial values` 默认关闭：关闭时第 0 轮先执行表达式；开启时 Initial 直接创建 candidate 0、消耗一个候选名额，表达式从 `i=1` 开始。
+
+Maximum Candidates 默认 65,535，范围 `1..16,777,216`，计迭代/候选而非最终保留数量；可选 Maximum Relative Start Tick。每轮先检查候选上限、求值、finite/checked 算术，然后在相对起点超过上限时停止且不创建该候选。负相对 Tick 夹到 0；整数值使用 AwayFromZero 后夹取正式值域，Velocity `1..127`、Key `0..127`、Gate 最少 1 tick，终点不得超过可表示范围。Logical Parameter 仍按实际 Definition 的 Double/Integer/Enum 值域与既有正规化规则处理，不把显示缩放范围当合法值域。
+
+Tick 可倒退。必须使用有界候选页与排序归并，不得以无限集合收集全部结果。Note exact start+key 保留既有对象，候选间保留最小 iteration；Event exact tick+target 用最大 iteration 覆盖该键全部被命中的既有事件，未命中的导入重复保持原样。Direct endpoint/event order 来自冻结 source order 和 iteration，不依赖新 ID 或线程完成顺序。
+
+生成、归并、验证与结果选择均属于第 20.4.11 节可取消事务；错误、预算、磁盘失败或 revision race 零发布。成功选择全部幸存新对象，Undo/Redo 恢复完整 old/new root 与选择，不重跑表达式。进度显示候选数和保留数，归并前尚未知的保留数不得伪造。
+
+Note/Event Generator Preset 分别保存于 `Data\Presets\NoteGenerationPresets` / `EventGenerationPresets`，包含表达式、Initial、首对象复选框、Maximum Candidates、可选 max relative tick 和严格版本元数据。不保存 Base Tick、owner 或 lane target；应用到当前目标并重新验证。Help 必须解释上述递推、DAG、停止及碰撞规则并提供实用示例。
 ---
 ## 20.5 Drag and Drop Conventions
 ### 20.5.1 分类
@@ -584,7 +604,7 @@ Project Settings
 SoundFont
 ```
 
-Logical Note 与 Direct MIDI Note 允许跨类型 Paste，只转换 relative tick、gate、key 和 NoteOn/instance velocity；Logical→Direct 的 NoteOff velocity 为 0，Direct→Logical 丢弃 NoteOff velocity。其他 Segment/Parameter/Event 不做跨类型猜测转换。
+Logical Note 与 Direct MIDI Note 允许跨类型 Paste，只转换 relative tick、gate、key 和 NoteOn/instance velocity；Logical→Direct 的 NoteOff velocity 为 0，Direct→Logical 丢弃 NoteOff velocity。Segment 使用第 20.6.14 节的正式转换；独立 Parameter/Event 不做跨类型猜测转换。
 ### 20.6.6 Segment Payload
 包含：
 ```text
@@ -623,6 +643,14 @@ C# Code Editor 只粘贴 Plain Text 到 Draft Buffer，不自动 Apply。
 外部文本、文件和未知格式不被 Workspace 猜测转换成 Midora 对象。
 ### 20.6.13 播放期间
 允许 Copy；禁止 Cut 和 Project Paste。
+
+### 20.6.14 Logical / MIDI Segment 双向转换
+
+Arrangement 的拖动、Ctrl 复制拖动和 Segment Clipboard Paste 共用一个正式转换流程，允许多项 Logical/MIDI 混合选择。保持全局 Arrangement Track 相对偏移；Paste 使最早源 Segment 对齐编辑线，主源 Track 对齐目标 Track。同类型移动保留原对象及全部内容；同类型复制粘贴保持既有字段、hidden 内容及精确碰撞规则，不按名称修复参数引用。跨类型转换 Segment Project start、length、content offset、全部 Note start/gate/key/NoteOn velocity，包含 crop 外 hidden Notes。它不是编译/渲染 Event Instrument，不保证跨类型后音色或听感相同。
+
+跨类型时按类型统计整个内容中的 Logical Parameter Lane/Point、Direct Channel Event、opaque Meta/SysEx，以及 MIDI→Logical 的非零 NoteOff velocity。空参数 Lane 仍是会丢失的内容。任何损失必须一次汇总确认；全零 NoteOff velocity 不额外警告。Logical→MIDI NoteOff velocity 固定 0。转换的 Note exact start+key 碰撞按冻结 source formal order 保留最早者，并把丢弃数量列入确认；不同 start 的同 key overlap 不折叠。
+
+先在后台冻结来源修订并分析，用户确认后才建立完整 detached target。非法目标 Track、未绑定的 Logical Track、Segment overlap、range/结构错误、取消或修订失效均保持源不变。Move 的源删除与目标发布属于同一事务，不能先删后尝试。成功只产生一个 Undo，选择转换后的目标；Copy/Paste 使用新 ID，Move 保持可保留对象身份并提供确定结果映射，Undo 完整恢复旧模型和选择。
 ---
 ## 20.7 Context Menus
 ### 20.7.1 定位

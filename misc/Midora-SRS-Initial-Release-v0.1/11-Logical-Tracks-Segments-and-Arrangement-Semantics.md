@@ -1337,7 +1337,7 @@ Mute / Solo 的运行时归属
 ```text
 Logical Segment 包含 Logical Note 与 Logical Parameter Lane，并通过 Track 绑定的 Event Instrument 展开。
 MIDI Segment 包含 Direct MIDI Note 与 Direct MIDI Event，不绑定 Event Instrument，也不经过 Mapping / Lifecycle 展开。
-跨类型 Track 不允许直接移动 Segment；复制或粘贴必须经过显式、可诊断的内容转换，初版不提供该转换。
+跨类型 Track 的 Segment 移动、复制或粘贴必须经过第 20.6.14 节的统一显式转换；完整保留共同 Note 字段与隐藏音符，丢失非共同数据前必须一次汇总确认。
 ```
 
 MIDI Segment 的 Root 生命周期、跨 Pure MIDI Track 合并、直接事件排序、SMF 导入/导出及缓存归属以第 23 章为准；本章不得被解释为允许消费者把 Pure MIDI Track 强制转换成 Logical Track。

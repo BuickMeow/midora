@@ -164,7 +164,7 @@ single Project Undo per atomic gesture
 
 同一 Pure MIDI Track 内的 Midi Segment 不得重叠；不同 Pure MIDI Track 的 Segment 可以重叠，包括同一 Root 内的 Track。相邻 Segment 合法，不自动连接。
 
-Midi Segment 可在 Pure MIDI Track 之间移动或复制；目标 Track 不得产生 Segment 重叠。跨 Root 移动会将其直接 MIDI 内容归属到目标 Root 的 Unit，但不得改写事件值或把内容转换成 Logical 数据。Logical Segment 与 Midi Segment 之间不提供隐式移动、粘贴或转换。
+Midi Segment 可在 Pure MIDI Track 之间移动或复制；目标 Track 不得产生 Segment 重叠。同类型跨 Root 移动保留全部直接 MIDI 内容。Logical Segment 与 Midi Segment 之间的移动、复制和粘贴只通过第 20.6.14 节的正式转换与损失确认，不允许隐式丢弃数据或把转换当作编译展开。
 
 ### 23.5.2 Segment 内容
 

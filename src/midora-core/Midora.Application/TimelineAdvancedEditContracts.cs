@@ -113,6 +113,7 @@ public readonly record struct TimelineEditPreparationProgress
     private TimelineEditPreparationProgress(TimelineEditPreparationProgress value, double overallFraction)
     {
         Phase = value.Phase; Completed = value.Completed; Total = value.Total;
+        Detail = value.Detail;
         _overallFractionOverride = Math.Clamp(overallFraction, 0, 1);
     }
     public TimelineEditPreparationProgress InRange(double start, double length)
@@ -154,6 +155,9 @@ public readonly record struct TimelineEditPreparationProgress
     public TimelineEditPreparationPhase Phase { get; }
     public long Completed { get; }
     public long Total { get; }
+    /// <summary>Optional tool-specific work detail. It does not affect progress
+    /// calculation, cancellation, or the meaning of the phase counters.</summary>
+    public string? Detail { get; init; }
     public bool IsIndeterminate => Total == 0 && Phase != TimelineEditPreparationPhase.Ready;
 
     public double OverallFraction

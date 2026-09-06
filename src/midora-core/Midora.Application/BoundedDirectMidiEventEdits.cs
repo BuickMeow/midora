@@ -208,7 +208,8 @@ public static partial class ProjectDomainEditCommands
         patchStore.Seal();
         if (patchStore.Count == 0)
         {
-            var unchanged = Prepared(false, PureMidiTrackChange(location.Track.Id), _ => { }, _ => { });
+            var unchanged = ProjectTimelineOwnerRootReplacement.PrepareDirectMidiSegmentRevisionGate(
+                project, location.Track, location.Segment, PureMidiTrackChange(location.Track.Id), expectedSourceStamp);
             return publisher is null ? unchanged : PublishBoundedNoteSelection(unchanged,
                 selectionBefore ?? planned.Select(static value => value.Value.Id), planned.Select(static value => value.Value.Id), publisher, scope);
         }

@@ -689,6 +689,7 @@ public sealed class WpfInteractionRegressionTests
                 Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.White"]);
                 Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.Black"]);
                 AssertSharedTaskProgressStyleResolvesInPropertiesBamlAndRealMainWindowOverlayMarkup(application);
+                TimelineGenerationDialogTests.VerifyThemeConstructionDraftAndValidation();
             }
             finally
             {

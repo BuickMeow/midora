@@ -1,6 +1,6 @@
 # Midora Timeline Tool Expression Profiles Architecture Decisions
 
-状态：Stage 4 已获产品所有者授权，实施中；本文冻结工具表达式的兼容、安全与资源边界（2026-09-04）
+状态：Stage 4 已验收；Stage 5 已获授权并实施中。本文冻结工具表达式的兼容、安全与资源边界（2026-09-06）。
 
 上位需求：《Midora SRS》§20.4.11、§20.4.13～20.4.18、INV-095～107，以及 `Midora-Major-Editing-and-Visualization-Expansion-Implementation-Plan-2026-08-31.md` 的 WP-07。
 
@@ -12,17 +12,21 @@ Batch Edit 已经提供以 `=` 开头的数值表达式；Note Split 的 Express
 
 ## ADR-TOOL-EXPR-001：固定 profile 身份与变量 schema
 
-当前只存在以下三个正式 profile：
+当前正式 profile：
 
 | Profile ID | 可用变量 |
 |---|---|
 | `midora.tool.batch-note/v1` | `v0`, `v1`, `k0`, `k1`, `g0`, `g1`, `t0`, `t1`, `tr` |
 | `midora.tool.batch-event/v1` | `p0`, `p1`, `t0`, `t1`, `tr` |
 | `midora.tool.note-split/v1` | `i`, `tr` |
+| `midora.tool.generate-note/v1` | `i`, `v0`, `v1`, `k0`, `k1`, `g0`, `g1`, `t0`, `t1`, `tr` |
+| `midora.tool.generate-event/v1` | `i`, `p0`, `p1`, `t0`, `t1`, `tr` |
 
 Batch profile 中，后缀 `0` 表示当前对象编辑前的冻结值，后缀 `1` 表示该字段在本次对象求值中的结果。`tr` 是当前对象编辑前 Tick 减去本次冻结 Selection 的最小 Tick。结果字段可以依赖其他结果字段，但依赖图必须无环；直接或间接依赖自身结果必须拒绝。
 
 Note Split 中，`i` 是从 0 开始的当前刀序号，`tr` 是上一刀相对 owner 内 `selectionLeft` 的 Tick，第一刀前为 0。Split profile 不隐式提供 Note、Batch Edit 或 Project Context 变量。
+
+Generator 中 `i` 是零基候选序号，`*0` 为上一轮正规化结果（首轮为 Initial），`*1` 为本轮 DAG 结果，`tr` 为输入 `t0`。首对象开关开启时 Initial 是计入 Maximum 的 candidate 0，表达式从 i=1 开始；关闭时 candidate 0 也先执行表达式。空输入 identity，Tick 是相对 Base 的偏移；见 SRS 20.4.19。Generator 不改变 Batch profile 的变量或含义。
 
 Profile ID、版本、变量集合、变量语义、运算符/函数白名单、结果类型和数值归一化契约共同构成兼容边界。任一边界改变都必须发布新的 profile version，不得静默改变 `/v1`。
 

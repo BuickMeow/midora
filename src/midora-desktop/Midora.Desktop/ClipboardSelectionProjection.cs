@@ -28,6 +28,7 @@ internal static class ClipboardSelectionProjection
             {
                 case ProjectObjectClipboardKind.Segments:
                 case ProjectObjectClipboardKind.MidiSegments:
+                case ProjectObjectClipboardKind.ArrangementSegments:
                     source = new(WorkspaceTimelineSelectionKind.ArrangementSegment);
                     break;
                 case ProjectObjectClipboardKind.LogicalNotes:

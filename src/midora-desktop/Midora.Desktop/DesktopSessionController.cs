@@ -1284,7 +1284,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     TimelineEditPreparationPhase.BuildingResult, 0, 0).InRange(0.97, 0));
                 cancellationToken.ThrowIfCancellationRequested();
                 PreparedWorkspaceSelectionProjection projection =
-                    command is IProjectClipboardPasteCommand paste
+                    command is TimelineCreationEditCommand creation
+                    ? (selectionWorkspace?.Selection ?? new WorkspaceSelection()).PrepareProjection(
+                        selection.ResultSelectionIds, creation.ResultSource, creation.ResultSource.QuantizeScope,
+                        cancellationToken)
+                    : command is IProjectClipboardPasteCommand paste
                     ? ClipboardSelectionProjection.Prepare(
                         document.Project, paste, selection.ResultSelectionIds,
                         selectionWorkspace?.Selection, cancellationToken)
@@ -1315,7 +1319,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         public void Report(TimelineEditPreparationProgress value) => target.Report(
             value.Phase == TimelineEditPreparationPhase.Ready
                 ? new TimelineEditPreparationProgress(TimelineEditPreparationPhase.BuildingResult,
-                    value.Completed, value.Total).InWorkRange(0.97, 0)
+                    value.Completed, value.Total) { Detail = value.Detail }.InWorkRange(0.97, 0)
                 : value.InRange(0, 0.97));
     }
 

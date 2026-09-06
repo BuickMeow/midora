@@ -154,6 +154,7 @@ public static partial class ProjectDomainEditCommands
         using var patchStore = new BoundedEditRecordStore<BoundedDirectNoteDelta>(scope.Resources);
         using var discarded = discardedStore.GetEnumerator();
         bool hasDiscard = discarded.MoveNext();
+        bool hasSourceChanges = false;
         int patched = 0;
         foreach (var value in planned)
         {
@@ -162,11 +163,18 @@ public static partial class ProjectDomainEditCommands
             {
                 var removed = source.GetByPhysicalOrdinal(discarded.Current);
                 patchStore.Add(new(discarded.Current, true, removed, removed), scope.Token);
+                hasSourceChanges = true;
                 hasDiscard = discarded.MoveNext();
             }
             bool remove = value.Deleted || hasDiscard && discarded.Current == value.Ordinal;
             if (remove || value.Ordinal >= source.FormalExtent || value.Original != value.Value)
+            {
                 patchStore.Add(value with { Deleted = remove }, scope.Token);
+                // A discarded append still needs a physical ordinal tombstone
+                // when other candidates survive. On its own, however, it never
+                // changed the source and must not create a root/history entry.
+                hasSourceChanges |= value.Ordinal < source.FormalExtent || !remove;
+            }
             if (hasDiscard && discarded.Current == value.Ordinal) hasDiscard = discarded.MoveNext();
             if ((++patched & 255) == 0)
                 scope.Checkpoint(patched, planned.Count, TimelineEditPreparationPhase.BuildingResult, 0.725, 0.025);
@@ -175,16 +183,19 @@ public static partial class ProjectDomainEditCommands
         {
             var removed = source.GetByPhysicalOrdinal(discarded.Current);
             patchStore.Add(new(discarded.Current, true, removed, removed), scope.Token);
+            hasSourceChanges = true;
             hasDiscard = discarded.MoveNext();
         }
         patchStore.Seal();
         scope.Checkpoint(planned.Count, planned.Count, TimelineEditPreparationPhase.BuildingResult, 0.725, 0.025);
-        if (patchStore.Count == 0)
+        if (!hasSourceChanges)
         {
-            var unchanged = Prepared(false, PureMidiTrackChange(location.Track.Id), _ => { }, _ => { });
+            var unchanged = ProjectTimelineOwnerRootReplacement.PrepareDirectMidiSegmentRevisionGate(
+                project, location.Track, location.Segment, PureMidiTrackChange(location.Track.Id), expectedSourceStamp);
             return publishResult is null ? unchanged : PublishBoundedNoteSelection(unchanged,
                 selectionBefore ?? planned.Select(static value => value.Value.Id),
-                planned.Select(static value => value.Value.Id), publishResult, scope);
+                planned.Where(value => value.Ordinal < source.FormalExtent && !value.Deleted)
+                    .Select(static value => value.Value.Id), publishResult, scope);
         }
         using var patch = new BoundedImmutableValueSource<BoundedDirectNoteDelta>(patchStore);
         var revisedSource = source.Apply(patch, scope.Resources, scope.Token, formalExtent, reportProgress: true);

@@ -101,6 +101,12 @@ public static class NumericExpressionProfiles
     public static NumericExpressionProfile BatchEvent { get; } =
         new("midora.tool.batch-event/v1", 1, BatchEventVariables);
 
+    public static NumericExpressionProfile GenerateNote { get; } =
+        new("midora.tool.generate-note/v1", 1, [.. BatchNoteVariables, new("i", 9)]);
+
+    public static NumericExpressionProfile GenerateEvent { get; } =
+        new("midora.tool.generate-event/v1", 1, [.. BatchEventVariables, new("i", 5)]);
+
     public static NumericExpressionProfile NoteSplit { get; } =
         new("midora.tool.note-split/v1", 1,
         [

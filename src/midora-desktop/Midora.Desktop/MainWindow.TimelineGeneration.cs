@@ -18,6 +18,7 @@ public partial class MainWindow
 
     private async void OnBatchCreateTimelineObjectsClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (!_session.CanEditProject || _session.ActiveWorkspace is not WorkspaceViewModel workspace
             || _lastTimelineCommandSurface is not { } surface
             || GetTimelineSelectionSource(workspace, surface) is not { } source

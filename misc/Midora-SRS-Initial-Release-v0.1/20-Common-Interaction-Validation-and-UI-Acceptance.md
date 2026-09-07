@@ -32,6 +32,7 @@ Drag ruler  -> create Time Range Selection
 ```
 Playing 时，单击 Ruler 按播放系统规则跳转。
 初版不支持 Scrubbing；拖动 Ruler 不连续试听。
+上述 Time Range 拖选不适用于 SubVoice 的任一 ruler，也不适用于 Logical/MIDI Segment 的底部 Velocity/Event/Parameter ruler；这些位置不创建时间范围。SubVoice 的右键 Time Range 命令亦禁用，对象框选和列表范围选择不受影响。
 ### 20.1.4 Grid 与 Snap
 每个 tick 时间线同时具有相互独立的：
 ```text
@@ -206,7 +207,7 @@ Workspace Context Object 与子对象选择分离。
 ### 20.3.3 祖先与后代
 同一 Selection Set 中不允许同时包含祖先对象与其后代。
 ### 20.3.4 异类对象
-允许异类对象同时选择，但只有所有对象共同支持且语义一致的操作可用。不得静默忽略不兼容对象。
+允许异类对象同时选择，但普通命令只有所有对象共同支持且语义一致的操作可用。Timeline 对象列表的显式类型子菜单按 §20.7.7 冻结子集；不得静默忽略不兼容对象。
 ### 20.3.5 单击
 ```text
 Click unselected object -> replace Selection
@@ -713,6 +714,10 @@ Resolve Broken Reference
 ### 20.7.7 多选
 只显示对全部对象都合法的共同命令。
 初版不采用“处理能执行的对象并跳过其他对象”的隐式部分成功模式。
+
+三种钢琴卷帘的混合 Note/Event 选择提供显式 `For Notes >` 与 `For Events >` 子菜单；这些命令只处理打开菜单时冻结的对应类型子集，不是隐式部分成功。普通 Copy/Cut 及类型专属 Ctrl+E/Q/T 禁用；Delete 对全部选中对象一次原子删除。非音符内部再按共同合法能力开放命令；混合 Lane/数值域或含 Opaque 时不得套用错误的单值解释。
+
+显式类型操作成功后，未处理类型保持选中；结果对象按既有碰撞/删除规则选择。Undo 恢复操作前完整选择，Redo 恢复结果与未处理子集。菜单准备、Properties、复制/剪切、编辑与选择投影都必须在 source/selection 修订边界内，取消或失效时零发布；播放/任务锁下只允许选择、Locate 和只读 Properties。
 ### 20.7.8 Clipboard
 Paste 是否可用由以下共同决定：
 ```text

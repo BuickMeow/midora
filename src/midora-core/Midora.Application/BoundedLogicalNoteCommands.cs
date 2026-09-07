@@ -103,6 +103,7 @@ public static partial class ProjectDomainEditCommands
         bool collisions = true, bool expandWindow = false, SelectionPublisher? publishResult = null,
         bool formalCollisions = false)
     {
+        publishResult ??= RequestedTimelineSelectionPublisher(new(ProjectTimelineOwnerKind.LogicalSegment, location.Segment.Id));
         using var scope = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default, project: project);
         var source = location.Segment.Notes.CreateQuerySnapshot();
         var sourceStamp = ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
@@ -158,6 +159,7 @@ public static partial class ProjectDomainEditCommands
             Func<TemplateEventSnapshotValue, TemplateEventSnapshotValue?>> createTransform,
         bool collisions = true, SelectionPublisher? publishResult = null, bool formalCollisions = false)
     {
+        publishResult ??= RequestedTimelineSelectionPublisher(new(ProjectTimelineOwnerKind.SubVoice, voice.Id, instrument.Id));
         using var scope = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default, project: project);
         var source = voice.Events.CreateQuerySnapshot();
         var sourceStamp = ProjectTimelineOwnerSourceStamp.Capture(instrument, voice);

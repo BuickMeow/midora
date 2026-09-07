@@ -1,11 +1,13 @@
 # Midora 大型编辑与可视化扩展实施方案（已定案记录）
 
 - 日期：2026-08-31
-- 状态：**非规范性决策记录与实施计划；阶段 1～6 及后续修复已验收，阶段 6 于 2026-09-07 获得最终验收；用户已授权提交、推送阶段 6 后实施阶段 7；阶段 8 尚未授权实施**
+- 状态：**非规范性决策记录与实施计划；阶段 1～6 及后续修复已验收，阶段 6 于 2026-09-07 以 `e753fc4` 提交并推送；阶段 7 功能整体验收通过，本轮处理 Pre-Roll 颜色/空白输入与 SubVoice Time Range 三项小调整；阶段 8 尚未授权实施**
 - 适用仓库基线：`b8ed363`
 - 目的：把本轮需求整理为可审查、可逐项定案、可分阶段实施的长期存档。
 
 阶段 6 交付记录：`Midora-Stage6-Conductor-Requirement-Trace.md`、`Midora-Stage6-Conductor-Architecture-Decisions.md`、`Midora-Stage6-Conductor-Validation-Report.md`、`Midora-Stage6-Conductor-Acceptance-Checklist.md`。
+
+阶段 7 交付记录：[需求及实现追踪](Midora-Stage7-Timeline-Object-Lists-Requirement-Trace.md)、[验证报告](Midora-Stage7-Timeline-Object-Lists-Validation-Report.md)、[14 项人工验收清单](Midora-Stage7-Timeline-Object-Lists-Acceptance-Checklist.md)。
 
 > 本文不是 SRS、ADR 或 Project Format 规范，不修改任何既有需求。凡是与现行 SRS 冲突、会改变可听语义、持久化格式、公共交互或性能基础设施的内容，必须先由产品所有者完成本文末尾的决策，再正式更新 SRS、跨系统不变量和 ADR，之后才能进入代码实施。
 

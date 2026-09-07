@@ -138,6 +138,7 @@ public static partial class ProjectDomainEditCommands
         SelectionPublisher? publishResult = null, bool resolveCollisions = true,
         ProjectTimelineOwnerSourceStamp? expectedSourceStamp = null, IEnumerable<MidoraId>? selectionBefore = null)
     {
+        publishResult ??= RequestedTimelineSelectionPublisher(new(ProjectTimelineOwnerKind.DirectMidiSegment, location.Segment.Id));
         // Candidate and incumbent streams use the same target ordering. Keeping
         // the complete operation in this merge prevents cross-chunk collisions.
         using var collisionStore = BoundedEditSort.Sort(CollisionCandidates(),

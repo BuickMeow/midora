@@ -2841,7 +2841,14 @@ public sealed partial class TimelineSurface : Control
         double laneHeaderWidth = GetLaneHeaderWidth();
         double rulerHeight = GetRulerHeight();
         long tick = viewport.XToContainingTick(point.X - laneHeaderWidth);
-        int lane = YToLane(viewport, point.Y - rulerHeight);
+        bool isValuePointLane = SurfaceMode == TimelineSurfaceMode.EventLanes;
+        int lane = isValuePointLane ? 0 : YToLane(viewport, point.Y - rulerHeight);
+        // Freeze the value-axis projection with the target, not just tick/lane.
+        // An event lane is one two-dimensional lane, not a stack of LaneHeight rows.
+        RightClickValuePointProjection? pointProjection = isValuePointLane
+            ? new(viewport, point, laneHeaderWidth, rulerHeight,
+                Math.Max(1, ActualHeight - rulerHeight), _valueViewMinimum, _valueViewMaximum)
+            : null;
         long generation = checked(++_delayedContextMenuGeneration);
         CancellationTokenSource cancellation = new();
         _delayedContextMenuQueryCancellation = cancellation;
@@ -2868,6 +2875,7 @@ public sealed partial class TimelineSurface : Control
                     snapshot,
                     tick,
                     lane,
+                    pointProjection,
                     cancellation.Token),
                 cancellation.Token)
             .ContinueWith(
@@ -2918,13 +2926,52 @@ public sealed partial class TimelineSurface : Control
         TimelineRenderSnapshot snapshot,
         long tick,
         int lane,
+        RightClickValuePointProjection? pointProjection,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (pointProjection is { } projection)
+        {
+            long tolerance = Math.Max(1, CeilingToLong(8 / projection.Viewport.PixelsPerTick));
+            long start = tick - Math.Min(tick, tolerance);
+            long end = tick >= long.MaxValue - tolerance ? long.MaxValue : tick + tolerance + 1;
+            TimelineRenderItem? hit = null;
+            // Stream the exact source in the worker. A zoomed-out eight-DIP range
+            // can contain millions of points; do not materialize/sort that range.
+            snapshot.VisitInto(start, end, 0, 1, candidate =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (candidate.State.HasFlag(TimelineItemState.HitTestDisabled)
+                    || !IsEventPointKind(candidate.Kind)
+                    || !projection.Contains(candidate)) return;
+                if (hit is not { } current
+                    || candidate.ZIndex > current.ZIndex
+                    || candidate.ZIndex == current.ZIndex
+                        && (candidate.Length < current.Length
+                            || candidate.Length == current.Length && candidate.Id.CompareTo(current.Id) < 0))
+                    hit = candidate;
+            });
+            cancellationToken.ThrowIfCancellationRequested();
+            return hit;
+        }
         List<TimelineRenderItem> items = [];
         snapshot.HitTestInto(tick, 0, lane, items);
         cancellationToken.ThrowIfCancellationRequested();
         return items.Count == 0 ? null : items[0];
+    }
+
+    private readonly record struct RightClickValuePointProjection(
+        TimelineViewport Viewport, Point Pointer, double HeaderWidth, double RulerHeight,
+        double ContentHeight, double ValueMinimum, double ValueMaximum)
+    {
+        public bool Contains(TimelineRenderItem item)
+        {
+            double x = HeaderWidth + Viewport.TickToX(item.StartTick);
+            double y = RulerHeight
+                + (ValueMaximum - Math.Clamp(item.Value, ValueMinimum, ValueMaximum))
+                / Math.Max(1d / 256, ValueMaximum - ValueMinimum) * ContentHeight;
+            return Math.Abs(Pointer.X - x) <= 8 && Math.Abs(Pointer.Y - y) <= 8;
+        }
     }
 
     private void CompleteDelayedContextMenuQuery(

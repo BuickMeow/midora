@@ -232,6 +232,16 @@ Pure MIDI 变体打开 Segment 时不得把全部 Direct Note/Event 转换为 `T
 Pure MIDI Segment 的水平 Overview 必须显示 Direct Note 时间密度。对于 paged content，Overview 只能使用页级 minimum/maximum tick、record count 和小型编辑增量聚合到有界 device columns；不得为了生成竖线概览解码或枚举全部 Direct Note。
 
 Logical 与 Pure MIDI Segment Editor 的水平滚动 extent 必须同时覆盖暴露的 Segment content window、Note 范围以及所有 non-Note event / Logical Parameter point 的最晚 tick；专用 Overview source 的 event tick 不得只参与画线而被排除在滚动终点之外。Paged Pure MIDI 必须使用页级范围摘要取得该终点，不得为此全量枚举事件。
+
+### 18.2.8 三种钢琴卷帘的 Timeline 对象列表
+
+Logical Segment、MIDI Segment 与 SubVoice 共享左侧 owner-data 对象列表，开关位于 `Lanes` 左侧、默认隐藏。显隐、宽度与滚动位置仅属于 Workspace Session，不进入 Project、Undo、Modified 或文件格式。
+
+列表按 local tick 和确定性同 tick 顺序合并当前 owner 的所有音符和非音符事件：Logical 包含全部参数 Lane point，MIDI 包含 Channel Event 与 Opaque SysEx/Meta，SubVoice 包含 Template Note/MIDI Event。音符每个对象一行，不拆 NoteOn/NoteOff；展示 Tick、Gate/Length、Key、Velocity，内部 Stable ID 不显示。
+
+列表与图形共用 Selection。单击、Ctrl toggle、Shift 冻结 ordinal 范围及拖动范围遵循 §20.3；双击只针对被双击对象打开 `Properties...`。`Locate` 定位到对象，事件必须自动打开 Lanes 并选择对应 Lane。右键目标在打开时冻结；无效/旧修订后台结果不能恢复旧选区。Opaque payload 仅可读，不得作为普通数值点执行表达式工具。
+
+隐藏列表不得扫描或建立索引；显示时只创建可见行，排序/选区解析在可取消的有界后台任务完成。允许使用可回收的临时 scalar 排序目录，但不得建立百万项 WPF 控件、全量行字符串或第二份常驻对象数组。列表隐藏、Tab 卸载、owner 改变及 Project 关闭必须停止旧请求；图形编辑不得依赖列表目录是否已经生成。
 ---
 ## 18.3 Event Instrument Editor 总体框架
 ### 18.3.1 布局
@@ -329,6 +339,7 @@ SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll G
 从 Velocity 切换到 Event Lane 后，键盘焦点必须在布局更新后进入 Event Lane Timeline Surface，不得停留在 `LANE` 下拉框；因此 `D` / `S` / `E`、Space 及其他焦点敏感 Workspace 快捷键必须立即可用。
 
 SubVoice Note piano roll 复用第 18.2.3～18.2.4 节的 Pitch Ruler 琴键与 C 音名规则、Draw / Select 直接编辑边界、拖动预览和第 20 章的工具互斥、指针及快捷键规则。
+SubVoice 不提供 Time Range 选择：主 piano ruler、Velocity ruler 与 Event Lane ruler 均不得开始时间范围拖选，右键菜单的 Time Range 命令禁用；对象框选、列表范围选择和直接编辑不受影响。
 ### 18.4.3 Initial State
 Initial State 与 tick 0 普通事件严格分离：
 ```text
@@ -340,9 +351,11 @@ A user event at tick 0 may override the corresponding Initial State.
 同一 SubVoice Section 的 `Initial State` 子页还必须提供该 SubVoice 的 Name、Root Note inherited/override 与全部现有 Initial State target 的精确编辑。添加新的 CC/RPN/NRPN target 使用显式选择器；空值表示删除该 Initial State override。提交失败恢复最后合法值。
 ### 18.4.4 Template 与 Root Note
 Template Length 属于 Event Instrument，不是每条 SubVoice 独立长度。
-Configurations 的 Template 区必须提供 `Pre-Roll Ticks` 非负整数编辑，显示范围 `0..当前 Template Length`、默认 0。提交只在 `0 <= value <= Template Length` 时通过一个正式原子 Definition 命令生效；拒绝编辑时恢复打开/提交前的合法值，不进行 Clamp。Properties Dialog 同时修改 Template Length、Pre-Roll Ticks、Loop 边界与 Per-Note Instance Isolation 时，必须按最终 draft 一次验证并作为一个 History edit 提交。帮助文本须说明 Logical Note start 是 Gate anchor、模板 origin 会提前，并提示实例 origin 越过 Segment 左边界将导致编译 Error。
+Configurations 的 Template 区必须提供 `Pre-Roll Ticks` 非负整数编辑，显示范围 `0..当前 Template Length`、默认 0。Configuration 输入留空或仅含空白时，提交前静默将输入框及待提交值归为 `0`；原正式值已为 `0` 时不产生 History edit。提交只在 `0 <= value <= Template Length` 时通过一个正式原子 Definition 命令生效；非空非法输入仍拒绝并恢复打开/提交前的合法值，不进行 Clamp。Properties Dialog 同时修改 Template Length、Pre-Roll Ticks、Loop 边界与 Per-Note Instance Isolation 时，必须按最终 draft 一次验证并作为一个 History edit 提交。帮助文本须说明 Logical Note start 是 Gate anchor、模板 origin 会提前，并提示实例 origin 越过 Segment 左边界将导致编译 Error。
 SubVoice 显示 Root Note 的 inherited / override 状态和 Effective Value。
 Loop 区域可以只读显示，但在 Lifecycle Editor 中编辑。
+
+SubVoice piano roll、Velocity 与 Event Lane 使用同一 local tick 变换绘制只读语义覆盖层：`[0, Pre-Roll Ticks)` 压暗；Loop Start/End 各自为贯穿 panel 的黄色 device-pixel 对齐竖线。仅最上方 piano ruler 显示 Pre-Roll/Loop 的 Tick 标签和完整 Loop 范围带；Pre-Roll 文本为紫色，Loop 文本与范围带仍为黄色，低缩放合并标签时也必须保留各自颜色。单端 Loop 只画存在的端点，不虚构另一端或合法范围。覆盖层不截获输入，配置变化不得使 Note/Event 内容瓦片失效。
 ### 18.4.5 Lane 生命周期
 空 Lane 不持久化。
 必须区分：

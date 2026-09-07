@@ -210,6 +210,10 @@ public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNote
         _values.Query(startTick, endTick, minimumNote, maximumNote);
 
     public IEnumerable<LogicalNoteSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+    /// <summary>Bounded-block candidate stream for an explicitly opened object list.
+    /// It is deliberately unordered and must not be used as a sorted formal sequence.</summary>
+    public IEnumerable<LogicalNoteSnapshotValue> EnumerateListCandidates(long endTick, CancellationToken token = default) =>
+        _values.EnumerateListCandidates(endTick, token);
     public LogicalNoteSnapshotValue GetByOrdinal(int ordinal) => _values.GetByOrdinal(ordinal);
     public void PrepareOrdinalLookup(CancellationToken token = default) => _values.PrepareOrdinalLookup(token);
     public void PrepareOrdinalLookup(IImmutableTimelineOrdinalIndexBuilder builder, CancellationToken token = default) => _values.PrepareOrdinalLookup(builder, token);
@@ -284,6 +288,9 @@ public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNote
 
 public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateEventSnapshotValue>
 {
+    /// <summary>Unordered, bounded-block object-list candidates; no all-match array.</summary>
+    public IEnumerable<TemplateEventSnapshotValue> EnumerateListCandidates(long endTick, CancellationToken token = default) =>
+        _values.EnumerateListCandidates(endTick, token);
     private const ulong NoteCategory = 1UL;
     private const ulong EventCategory = 2UL;
     private readonly PagedTimelineValueSnapshot<TemplateEventSnapshotValue> _values;
@@ -433,6 +440,9 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
 
 public sealed class CurvePointQuerySnapshot : ITimelineObjectSource<CurvePointSnapshotValue>
 {
+    /// <summary>Unordered, bounded-block object-list candidates; no all-match array.</summary>
+    public IEnumerable<CurvePointSnapshotValue> EnumerateListCandidates(long endTick, CancellationToken token = default) =>
+        _values.EnumerateListCandidates(endTick, token);
     public CurvePointSnapshotValue GetByOrdinal(int ordinal) => _values.GetByOrdinal(ordinal);
     public void PrepareOrdinalLookup(CancellationToken token = default) => _values.PrepareOrdinalLookup(token);
     public void PrepareOrdinalLookup(IImmutableTimelineOrdinalIndexBuilder builder, CancellationToken token = default) => _values.PrepareOrdinalLookup(builder, token);
@@ -3386,6 +3396,24 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
         return result;
     }
 
+    internal IEnumerable<TValue> EnumerateListCandidates(long endTick, CancellationToken token)
+    {
+        List<PagedTimelineOrderedValue<TValue>> buffer = [];
+        foreach (var value in Read(_spatialIndex, true)) yield return value;
+        foreach (var value in Read(_spatialOverlayIndex, false)) yield return value;
+        IEnumerable<TValue> Read(PagedTimelineSpatialBlockIndex<TValue> index, bool exclude)
+        {
+            foreach (var candidate in index.EnumerateListBlocks(endTick, token))
+            {
+                token.ThrowIfCancellationRequested(); buffer.Clear();
+                candidate.Page.AppendSpatialRangeValues(buffer, 0, candidate.Block, 0, endTick,
+                    int.MinValue, int.MaxValue, ulong.MaxValue);
+                foreach (var entry in buffer)
+                    if (!exclude || !_spatialValueOverlay.TryGetValue(_getId(entry.Value), out _)) yield return entry.Value;
+            }
+        }
+    }
+
     internal IEnumerable<TValue> EnumerateRangeValues(long start, long end, int minimumLane, int maximumLane,
         ulong requiredCategoryMask = ulong.MaxValue)
     {
@@ -3797,6 +3825,28 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
             requiredCategoryMask,
             result);
         return result;
+    }
+
+    // Object-list-only traversal: stack depth follows the balanced metadata
+    // tree, not the number of matched blocks. Existing raster queries unchanged.
+    public IEnumerable<PagedTimelineSpatialBlockReference<TValue>> EnumerateListBlocks(long endTick, CancellationToken token)
+    {
+        Stack<Node> pending = new();
+        Node? current = _root;
+        while (current is not null || pending.Count != 0)
+        {
+            token.ThrowIfCancellationRequested();
+            while (current is not null)
+            {
+                if (current.MaximumEndTick <= 0 || current.MinimumStartTick >= endTick) { current = null; break; }
+                pending.Push(current); current = current.Left;
+            }
+            if (pending.Count == 0) yield break;
+            current = pending.Pop();
+            var entry = current.Entry;
+            if (entry.Block.MinimumStartTick < endTick && entry.Block.MaximumEndTick > 0) yield return entry;
+            current = current.Right;
+        }
     }
 
     public IReadOnlyList<PagedTimelineSpatialBlockReference<TValue>> QueryStarts(

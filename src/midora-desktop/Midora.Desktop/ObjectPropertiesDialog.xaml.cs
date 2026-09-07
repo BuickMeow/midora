@@ -3,6 +3,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Midora.Application;
+using Midora.Domain;
+using Midora.Desktop.Presentation.Interaction;
 
 namespace Midora.Desktop;
 
@@ -13,6 +15,16 @@ public partial class ObjectPropertiesDialog : Window
     private readonly ObjectPropertiesViewModel _properties;
     private readonly Func<IReadOnlyDictionary<string, string>, bool>? _customSubmit;
     private bool _isSubmitting;
+    private readonly ObjectPropertiesSelectionContext? _frozenSelection;
+    private readonly CompressedMidoraIdSet? _retainedSelectionIds;
+
+    internal ObjectPropertiesDialog(DesktopSessionController session, WorkspaceViewModel workspace,
+        ObjectPropertiesViewModel properties, ObjectPropertiesSelectionContext selection,
+        CompressedMidoraIdSet retainedSelectionIds) : this(session, workspace, properties)
+    {
+        _frozenSelection = selection;
+        _retainedSelectionIds = retainedSelectionIds;
+    }
 
     public ObjectPropertiesDialog(
         DesktopSessionController session,
@@ -77,9 +89,14 @@ public partial class ObjectPropertiesDialog : Window
             }
             else
             {
-                IProjectEditCommand? command = _session!.CreateObjectPropertiesEdit(
-                    _workspace!,
-                    _properties.Fields.Where(property => property.HasPendingChange).ToArray());
+                PropertyField[] pending = _properties.Fields.Where(property => property.HasPendingChange).ToArray();
+                IProjectEditCommand? command = _frozenSelection is not null
+                    ? pending.Length == 0 ? null : ObjectPropertiesProjection.CreateDeferredMultiSelectionEdit(
+                        _frozenSelection, pending.ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal))
+                    : _session!.CreateObjectPropertiesEdit(_workspace!, pending);
+                if (command is not null && _retainedSelectionIds is { Count: > 0 }
+                    && MainWindow.TryGetTimelineObjectOwner(_workspace!, out var owner))
+                    command = ProjectDomainEditCommands.WithTimelineObjectSelection(command, owner, _frozenSelection!.Ids);
                 if (command is not null && !await ApplyPreparedPropertiesAsync(command)) return;
             }
             DialogResult = true;
@@ -104,7 +121,8 @@ public partial class ObjectPropertiesDialog : Window
                 Dispatcher, TimeSpan.FromMilliseconds(100),
                 value => task.Report(MainWindow.FormatTimelineEditPreparationProgress(value), value.IsIndeterminate ? null : value.OverallFraction));
             using StagedProjectEdit staged = await Task.Run(
-                () => _session.PrepareProjectEdit(command, _workspace!, task.CancellationToken, progress),
+                () => _session.PrepareProjectEdit(command, _workspace!, task.CancellationToken, progress,
+                    retainedSelectionIds: _retainedSelectionIds is { Count: > 0 } ? _retainedSelectionIds : null),
                 task.CancellationToken);
             progress.Flush();
             task.SealCancellationBeforePublication();

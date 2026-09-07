@@ -1234,27 +1234,29 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             command,
             selectionWorkspace: null,
             cancellationToken,
-            progress);
+            progress, retainedSelectionIds: null);
 
     public StagedProjectEdit PrepareProjectEdit(
         IProjectEditCommand command,
         WorkspaceViewModel selectionWorkspace,
         CancellationToken cancellationToken = default,
-        IProgress<TimelineEditPreparationProgress>? progress = null)
+        IProgress<TimelineEditPreparationProgress>? progress = null,
+        CompressedMidoraIdSet? retainedSelectionIds = null)
     {
         ArgumentNullException.ThrowIfNull(selectionWorkspace);
         return PrepareProjectEditCore(
             command,
             selectionWorkspace,
             cancellationToken,
-            progress);
+            progress, retainedSelectionIds);
     }
 
     private StagedProjectEdit PrepareProjectEditCore(
         IProjectEditCommand command,
         WorkspaceViewModel? selectionWorkspace,
         CancellationToken cancellationToken,
-        IProgress<TimelineEditPreparationProgress>? progress)
+        IProgress<TimelineEditPreparationProgress>? progress,
+        CompressedMidoraIdSet? retainedSelectionIds)
     {
         ArgumentNullException.ThrowIfNull(command);
         ProjectDocumentSession document = Document
@@ -1269,12 +1271,18 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             throw new InvalidOperationException(
                 "Project editing is locked while playback is active.");
         }
+        long? frozenSelectionRevision = retainedSelectionIds is null ? null : selectionWorkspace?.Selection.Revision;
+        if (retainedSelectionIds is not null && selectionWorkspace is not null
+            && !retainedSelectionIds.IsSubsetOf(selectionWorkspace.Selection.SharedIds))
+            throw new InvalidOperationException("Retained objects must belong to the frozen Workspace selection.");
         StagedProjectEdit staged = document.PrepareEdit(
             command,
             cancellationToken,
             progress is null ? null : new BeforeSelectionProjectionProgress(progress));
         try
         {
+            if (retainedSelectionIds is not null && staged.PreparedSelection is null)
+                throw new InvalidOperationException("A typed selection edit must publish its exact resulting selection.");
             if (staged.PreparedSelection is PreparedTimelineSelection selection)
             {
                 // Project preparation is not the end of the foreground task:
@@ -1284,7 +1292,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     TimelineEditPreparationPhase.BuildingResult, 0, 0).InRange(0.97, 0));
                 cancellationToken.ThrowIfCancellationRequested();
                 PreparedWorkspaceSelectionProjection projection =
-                    command is TimelineCreationEditCommand creation
+                    retainedSelectionIds is not null && selectionWorkspace is not null
+                    ? TimelineObjectSelection.MergeResult(selectionWorkspace.Selection,
+                        selection.ResultSelectionIds, retainedSelectionIds, cancellationToken)
+                    : command is TimelineCreationEditCommand creation
                     ? (selectionWorkspace?.Selection ?? new WorkspaceSelection()).PrepareProjection(
                         selection.ResultSelectionIds, creation.ResultSource, creation.ResultSource.QuantizeScope,
                         cancellationToken)
@@ -1300,7 +1311,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                         cancellationToken);
                 _stagedWorkspaceSelectionProjections.Add(
                     staged,
-                    new(selectionWorkspace?.Selection, projection));
+                    new(selectionWorkspace?.Selection, projection, frozenSelectionRevision));
             }
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new(TimelineEditPreparationPhase.Ready, 1, 1));
@@ -1321,6 +1332,35 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 ? new TimelineEditPreparationProgress(TimelineEditPreparationPhase.BuildingResult,
                     value.Completed, value.Total) { Detail = value.Detail }.InWorkRange(0.97, 0)
                 : value.InRange(0, 0.97));
+    }
+
+    /// <summary>
+    /// Prepares a typed Cut's already-staged deletion selection off-thread,
+    /// before the OS clipboard and Project enter their publication section.
+    /// It uses the same history bookmarks as ordinary prepared edits.
+    /// </summary>
+    internal void PrepareWorkspaceSelectionForStagedEdit(StagedProjectEdit staged,
+        WorkspaceViewModel workspace, CompressedMidoraIdSet retainedSelectionIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(staged);
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(retainedSelectionIds);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!Workspaces.Contains(workspace))
+            throw new InvalidOperationException("The selection edit target is not an open Workspace.");
+        var selection = workspace.Selection;
+        long revision = selection.Revision;
+        if (!retainedSelectionIds.IsSubsetOf(selection.SharedIds))
+            throw new InvalidOperationException("Retained objects must belong to the frozen Workspace selection.");
+        var preparedSelection = staged.PreparedSelection
+            ?? throw new InvalidOperationException("A typed selection edit must publish its exact resulting selection.");
+        var projection = TimelineObjectSelection.MergeResult(selection,
+            preparedSelection.ResultSelectionIds, retainedSelectionIds, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!ReferenceEquals(selection, workspace.Selection) || revision != selection.Revision)
+            throw new InvalidOperationException("The Workspace selection changed during preparation.");
+        _stagedWorkspaceSelectionProjections.Add(staged, new(selection, projection, revision));
     }
 
     internal bool TryGetPreparedWorkspaceSelectionProjection(
@@ -1372,7 +1412,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 "The prepared Timeline edit has no frozen Workspace selection projection.");
         }
         if (preparedSelectionPublication?.ExpectedSelection is WorkspaceSelection expectedSelection
-            && !ReferenceEquals(expectedSelection, workspace.Selection))
+            && (!ReferenceEquals(expectedSelection, workspace.Selection)
+                || preparedSelectionPublication.ExpectedRevision is long revision && revision != workspace.Selection.Revision))
         {
             staged.Dispose();
             throw new InvalidOperationException(
@@ -1435,7 +1476,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private sealed record PreparedWorkspaceSelectionPublication(
         WorkspaceSelection? ExpectedSelection,
-        PreparedWorkspaceSelectionProjection Projection);
+        PreparedWorkspaceSelectionProjection Projection,
+        long? ExpectedRevision = null);
 
     public void ApplyObjectProperties(
         WorkspaceViewModel workspace,

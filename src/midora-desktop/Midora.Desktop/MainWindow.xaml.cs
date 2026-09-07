@@ -100,7 +100,9 @@ public partial class MainWindow : Window
         MidiValueTarget? MidiTarget = null,
         DirectMidiEventLaneTarget? DirectMidiTarget = null,
         double PointMinimum = 0,
-        double PointMaximum = 127);
+        double PointMaximum = 127,
+        CompressedMidoraIdSet? RetainedIds = null,
+        long? FrozenSelectionRevision = null);
 
     public MainWindow()
     {
@@ -1652,6 +1654,14 @@ public partial class MainWindow : Window
         }
 
         bool canEdit = _session.CanEditProject;
+        if (_session.ActiveWorkspace is WorkspaceViewModel mixedWorkspace
+            && mixedWorkspace.Selection.Ids.Count > 1
+            && mixedWorkspace.Selection.HomogeneousTimelineSource is null
+            && TryGetTimelineObjectOwner(mixedWorkspace, out _))
+        {
+            _ = PopulateObjectListMenuAsync(menu, mixedWorkspace);
+            return;
+        }
         WorkspaceTimelineSelectionSource? creationSource = _session.ActiveWorkspace is WorkspaceViewModel creationWorkspace
             ? GetTimelineSelectionSource(creationWorkspace, surface) : null;
         if (IsTimelineGenerationSource(creationSource))
@@ -1803,9 +1813,10 @@ public partial class MainWindow : Window
                 enabled: CanOpenTimelineProperties(surface));
             Separator();
         }
-        Add("Set Time Range from Object Selection", OnSetTimeRangeFromObjectsClick);
-        Add("Select Objects in Time Range", OnSelectObjectsInTimeRangeClick);
-        Add("Clear Time Range", OnClearTimeRangeClick);
+        bool canUseTimeRange = _session.ActiveWorkspace is TimelineWorkspaceViewModel;
+        Add("Set Time Range from Object Selection", OnSetTimeRangeFromObjectsClick, enabled: canUseTimeRange);
+        Add("Select Objects in Time Range", OnSelectObjectsInTimeRangeClick, enabled: canUseTimeRange);
+        Add("Clear Time Range", OnClearTimeRangeClick, enabled: canUseTimeRange);
     }
 
     private async void OnEditTimelinePropertiesClick(object sender, RoutedEventArgs e)
@@ -1822,6 +1833,7 @@ public partial class MainWindow : Window
 
     private async Task OpenWorkspacePropertiesCoreAsync(WorkspaceViewModel workspace)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (!PrepareForModalSurface()) return;
         ObjectPropertiesViewModel? properties = null;
         if (workspace is TimelineWorkspaceViewModel { IsConductor: true }
@@ -2820,6 +2832,12 @@ public partial class MainWindow : Window
         {
             _session.RefreshWorkspace(workspace);
             return;
+        }
+        if (field == "PreRollTicks" && string.IsNullOrWhiteSpace(workspace.InstrumentPreRollTicksText))
+        {
+            // Normalize the draft too: an already-zero value is a command no-op
+            // and therefore does not cause a workspace refresh.
+            workspace.InstrumentPreRollTicksText = "0";
         }
         if (!RunSynchronous("Update Event Instrument configuration", () =>
         {
@@ -6306,6 +6324,10 @@ public partial class MainWindow : Window
     private TimelineSelectionOperationContext? ResolveTimelineSelectionOperationContext(
         TimelineSurface surface)
     {
+        if (_session.ActiveWorkspace is WorkspaceViewModel listWorkspace
+            && FindVisualAncestor<TimelineObjectListPane>(Keyboard.FocusedElement as DependencyObject) is not null
+            && GetCachedObjectListSelection(listWorkspace) is { HomogeneousSource: { } listSource } listSelection)
+            return CreateTimelineSelectionOperationContext(listSource, listSelection.Ids);
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace
             || workspace.Selection.Ids.Count == 0
             || workspace.Selection.HomogeneousTimelineSource
@@ -6382,9 +6404,10 @@ public partial class MainWindow : Window
 
     private async void ExecuteHorizontalFlip(SegmentSelectionTransformScope segmentScope)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
-        await ExecuteStagedProjectOperationAsync("Flip Selection Horizontally", context.Kind switch
+        await ExecuteSelectionOperationAsync(context, "Flip Selection Horizontally", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.FlipSegmentsHorizontal(
                 context.Ids,
@@ -6428,9 +6451,10 @@ public partial class MainWindow : Window
 
     private async void OnFlipSelectionVerticalClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
-        await ExecuteStagedProjectOperationAsync("Flip Selection Vertically", context.Kind switch
+        await ExecuteSelectionOperationAsync(context, "Flip Selection Vertically", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments =>
                 ProjectDomainEditCommands.FlipSegmentsVertical(context.Ids),
@@ -6455,6 +6479,7 @@ public partial class MainWindow : Window
 
     private async void OnScaleSelectionClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.Project is not MidoraProject project
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
@@ -6486,7 +6511,7 @@ public partial class MainWindow : Window
             Owner = this
         };
         if (ShowModalDialog(dialog) != true) return;
-        await ExecuteStagedProjectOperationAsync("Scale Selection", context.Kind switch
+        await ExecuteSelectionOperationAsync(context, "Scale Selection", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.ScaleSegments(
                 context.Ids,
@@ -6539,11 +6564,12 @@ public partial class MainWindow : Window
 
     private async void OnTransposeSelectionClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
         TransposeSelectionDialog dialog = new() { Owner = this };
         if (ShowModalDialog(dialog) != true) return;
-        await ExecuteStagedProjectOperationAsync("Transpose Selection", context.Kind switch
+        await ExecuteSelectionOperationAsync(context, "Transpose Selection", context.Kind switch
         {
             TimelineSelectionObjectKind.Segments =>
                 ProjectDomainEditCommands.TransposeSegments(context.Ids, dialog.Semitones),
@@ -6573,6 +6599,7 @@ public partial class MainWindow : Window
 
     private async void OnBatchEditSelectionClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
         bool pointContext = context.Kind is TimelineSelectionObjectKind.LogicalParameterPoints
@@ -6591,7 +6618,7 @@ public partial class MainWindow : Window
         }
         using (program)
         {
-            await ExecuteStagedProjectOperationAsync("Batch Edit Selection", context.Kind switch
+            await ExecuteSelectionOperationAsync(context, "Batch Edit Selection", context.Kind switch
             {
                 TimelineSelectionObjectKind.Segments =>
                     ProjectDomainEditCommands.BatchEditSegmentExposedNotes(context.Ids, program),
@@ -6819,6 +6846,7 @@ public partial class MainWindow : Window
 
     private async void OnHumanizeSelectionClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
         {
@@ -6848,7 +6876,7 @@ public partial class MainWindow : Window
             _ => throw new InvalidOperationException(
                 "Humanize is unavailable for the current selection type.")
         };
-        await ExecuteStagedTimelineSelectionOperationAsync(
+        await ExecuteSelectionOperationAsync(context,
             "Humanize Notes",
             command,
             workspace,
@@ -6857,6 +6885,7 @@ public partial class MainWindow : Window
 
     private async void OnSplitNotesClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
         {
@@ -6888,7 +6917,7 @@ public partial class MainWindow : Window
                 _ => throw new InvalidOperationException(
                     "Split is unavailable for the current selection type.")
             };
-            await ExecuteStagedTimelineSelectionOperationAsync(
+            await ExecuteSelectionOperationAsync(context,
                 "Split Notes",
                 command,
                 workspace,
@@ -6902,6 +6931,7 @@ public partial class MainWindow : Window
 
     private async void OnJoinNotesClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineSelectionOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
         {
@@ -6931,7 +6961,7 @@ public partial class MainWindow : Window
             _ => throw new InvalidOperationException(
                 "Join is unavailable for the current selection type.")
         };
-        await ExecuteStagedTimelineSelectionOperationAsync(
+        await ExecuteSelectionOperationAsync(context,
             "Join Notes",
             command,
             workspace,
@@ -6940,6 +6970,7 @@ public partial class MainWindow : Window
 
     private async void OnQuantizeSelectionClick(object sender, RoutedEventArgs e)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_timelineQuantizeOperationContext is not { Ids.Count: > 0 } context
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
         {
@@ -6998,7 +7029,7 @@ public partial class MainWindow : Window
             _ => throw new InvalidOperationException(
                 "Quantize is unavailable for the current selection type.")
         };
-        await ExecuteStagedTimelineSelectionOperationAsync(
+        await ExecuteSelectionOperationAsync(context,
             noteSelection ? "Quantize Notes" : "Quantize Events",
             command,
             workspace,
@@ -7012,12 +7043,28 @@ public partial class MainWindow : Window
         TimelineSurface? sourceSurface)
         => ExecuteStagedProjectOperationAsync(title, command, workspace, sourceSurface);
 
+    private Task<bool> ExecuteSelectionOperationAsync(TimelineSelectionOperationContext context,
+        string title, IProjectEditCommand command, WorkspaceViewModel workspace,
+        TimelineSurface? sourceSurface = null)
+    {
+        if (context.FrozenSelectionRevision is long revision && workspace.Selection.Revision != revision)
+        {
+            (command as IDisposable)?.Dispose();
+            return Task.FromResult(false);
+        }
+        if (context.RetainedIds is { Count: > 0 } && TryGetTimelineObjectOwner(workspace, out var owner))
+            command = ProjectDomainEditCommands.WithTimelineObjectSelection(command, owner, context.Ids);
+        return ExecuteStagedProjectOperationAsync(title, command, workspace, sourceSurface,
+            retainedSelectionIds: context.RetainedIds);
+    }
+
     private async Task<bool> ExecuteStagedProjectOperationAsync(
         string title,
         IProjectEditCommand command,
         WorkspaceViewModel workspace,
         TimelineSurface? sourceSurface = null,
-        Action? afterPublication = null)
+        Action? afterPublication = null,
+        CompressedMidoraIdSet? retainedSelectionIds = null)
     {
         using IDisposable? commandLifetime = command as IDisposable;
         bool completed = await RunOperationAsync(
@@ -7040,7 +7087,7 @@ public partial class MainWindow : Window
                         command,
                         workspace,
                         cancellationToken,
-                        progress),
+                        progress, retainedSelectionIds: retainedSelectionIds),
                     cancellationToken);
                 progress.Flush();
                 if (_session.ActiveForegroundTask is { } activeTask)
@@ -9789,6 +9836,12 @@ public partial class MainWindow : Window
     private bool TryOpenActiveProperties()
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return false;
+        if (FindVisualAncestor<TimelineObjectListPane>(Keyboard.FocusedElement as DependencyObject) is not null)
+        {
+            InvokeObjectListShortcut(Key.P, workspace);
+            return true;
+        }
+        if (GetCachedObjectListSelection(workspace) is { IsMixed: true }) return true;
         if (workspace is TimelineWorkspaceViewModel
             {
                 Mode: TimelineWorkspaceMode.Arrangement
@@ -9830,8 +9883,17 @@ public partial class MainWindow : Window
 
     private bool TryInvokeTimelineSelectionOperationShortcut(Key key)
     {
+        if (key is Key.Q or Key.T or Key.E
+            && FindVisualAncestor<TimelineObjectListPane>(Keyboard.FocusedElement as DependencyObject) is not null
+            && _session.ActiveWorkspace is { } listWorkspace)
+        {
+            InvokeObjectListShortcut(key, listWorkspace);
+            return true;
+        }
         if (key is not (Key.Q or Key.T or Key.E)
-            || GetFocusedTimelineSurface() is not TimelineSurface surface)
+            || (GetFocusedTimelineSurface()
+                ?? (FindVisualAncestor<TimelineObjectListPane>(Keyboard.FocusedElement as DependencyObject) is not null
+                    ? _lastTimelineCommandSurface : null)) is not TimelineSurface surface)
         {
             return false;
         }
@@ -9927,6 +9989,7 @@ public partial class MainWindow : Window
 
     private async void CutOrCopyProjectSelection(bool cut)
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (IsArrangementHeaderShortcutContext()) { CopyArrangementHeader(cut); return; }
         if (CutOrCopySelectedLogicalTrack(cut)) return;
         if (!cut && TryGetSelectedEventInstrumentId(out _)) { _ = CopySelectedEventInstrument(); return; }
@@ -9936,6 +9999,8 @@ public partial class MainWindow : Window
             || workspace.Selection.Ids.Count == 0 || cut && !_session.CanEditProject) return;
         try
         {
+            if (IsObjectListSelectionCommandContext(workspace)
+                && await ReadObjectListSelectionAsync(workspace) is { CanCopyOrCut: false }) return;
             ClipboardTransferRequest request = ResolveWorkspaceClipboardRequest(document, project, workspace);
             await RunClipboardTransferAsync(document, workspace, request.Copy, cut ? request.Delete : null);
         }
@@ -9948,12 +10013,13 @@ public partial class MainWindow : Window
     private sealed record ClipboardTransferRequest(Func<ProjectObjectClipboardPayload> Copy, IProjectEditCommand Delete);
 
     private static ClipboardTransferRequest ResolveWorkspaceClipboardRequest(
-        ProjectDocumentSession document, MidoraProject project, WorkspaceViewModel workspace)
+        ProjectDocumentSession document, MidoraProject project, WorkspaceViewModel workspace,
+        CompressedMidoraIdSet? subset = null, MidoraId? subsetPrimary = null)
     {
         // Freeze the immutable ID root. All expensive copying belongs to the background
         // preparation; the Dispatcher only resolves the primary object's owner.
-        IReadOnlyCollection<MidoraId> ids = workspace.Selection.SharedIds;
-        MidoraId primary = workspace.Selection.Primary
+        IReadOnlyCollection<MidoraId> ids = subset ?? workspace.Selection.SharedIds;
+        MidoraId primary = subsetPrimary ?? workspace.Selection.Primary
             ?? throw new InvalidOperationException("The selection has no primary object.");
         if (workspace is TimelineWorkspaceViewModel timeline)
         {
@@ -10045,7 +10111,8 @@ public partial class MainWindow : Window
 
     private async Task<bool> RunClipboardTransferAsync(
         ProjectDocumentSession document, WorkspaceViewModel workspace,
-        Func<ProjectObjectClipboardPayload> copy, IProjectEditCommand? delete = null)
+        Func<ProjectObjectClipboardPayload> copy, IProjectEditCommand? delete = null,
+        CompressedMidoraIdSet? retainedSelectionIds = null)
     {
         bool cut = delete is not null;
         TimelineSurface? sourceSurface = _lastTimelineCommandSurface;
@@ -10057,7 +10124,17 @@ public partial class MainWindow : Window
                     value => _session.ActiveForegroundTask?.Report(
                         FormatTimelineEditPreparationProgress(value), value.IsIndeterminate ? null : value.OverallFraction));
                 using PreparedProjectClipboardTransfer prepared = await Task.Run(
-                    () => ProjectObjectClipboard.PrepareTransfer(document, copy, delete, token, progress), token);
+                    () =>
+                    {
+                        PreparedProjectClipboardTransfer transfer = ProjectObjectClipboard.PrepareTransfer(document, copy, delete, token, progress);
+                        try
+                        {
+                            if (transfer.Deletion is not null && retainedSelectionIds is not null)
+                                _session.PrepareWorkspaceSelectionForStagedEdit(transfer.Deletion, workspace, retainedSelectionIds, token);
+                            return transfer;
+                        }
+                        catch { transfer.Dispose(); throw; }
+                    }, token);
                 progress.Flush();
                 _session.ActiveForegroundTask!.SealCancellationBeforePublication();
                 prepared.ValidatePublication(_session.Document
@@ -10081,7 +10158,7 @@ public partial class MainWindow : Window
                 _clipboardDocument = document;
                 if (cut)
                 {
-                    workspace.Selection.Clear();
+                    if (retainedSelectionIds is null) workspace.Selection.Clear();
                     if (workspace is InstrumentWorkspaceViewModel instrument)
                         ClearInstrumentStructureVisualSelection(instrument);
                     _session.RefreshWorkspaceSelection(workspace);
@@ -10094,6 +10171,7 @@ public partial class MainWindow : Window
 
     private async void PasteProjectSelection()
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (IsArrangementHeaderShortcutContext()
             && TryGetArrangementHeaderContext(out ArrangementLaneDescriptor header)
             && CanPasteArrangementHeader(header))
@@ -10534,6 +10612,13 @@ public partial class MainWindow : Window
 
     private async void SelectAllInFocusedScope()
     {
+        if (FindVisualAncestor<TimelineObjectListPane>(Keyboard.FocusedElement as DependencyObject)
+            is { Source.Count: > 0 } objectList)
+        {
+            await SelectObjectListRangeAsync(objectList,
+                new(0, objectList.Source.Count - 1, ModifierKeys.None, null, forceSingle: true));
+            return;
+        }
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel { IsConductor: true } conductor
             && FindWorkspaceElement<ConductorWorkspaceView>("ConductorWorkspace") is { } conductorView)
         {
@@ -10722,6 +10807,7 @@ public partial class MainWindow : Window
 
     private async void DuplicateFocusedSelection()
     {
+        if (_session.ActiveWorkspace is { } active && GetCachedObjectListSelection(active) is { IsMixed: true }) return;
         if (_session.CanEditProject && IsArrangementHeaderShortcutContext())
         {
             DuplicateArrangementHeader(shareInstrumentState: false);
@@ -10873,6 +10959,7 @@ public partial class MainWindow : Window
 
     private async void DeleteWorkspaceSelection()
     {
+        using IDisposable? objectListFocus = PreserveObjectListCommandFocus();
         if (_session.Project is null || _session.ActiveWorkspace is not WorkspaceViewModel workspace
             || workspace.Selection.Ids.Count == 0)
         {
@@ -10881,6 +10968,13 @@ public partial class MainWindow : Window
         IReadOnlyCollection<MidoraId> ids = workspace.Selection.SharedIds;
         try
         {
+            if (IsObjectListSelectionCommandContext(workspace)
+                && TryGetTimelineObjectOwner(workspace, out var owner))
+            {
+                await ExecuteStagedProjectOperationAsync("Delete timeline objects",
+                    ProjectDomainEditCommands.DeleteTimelineObjects(owner, ids), workspace, _lastTimelineCommandSurface);
+                return;
+            }
             switch (workspace)
             {
                 case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }:

@@ -374,6 +374,7 @@ public abstract class WorkspaceViewModel(
         protected set => Set(ref _tabIconKind, value);
     }
     public WorkspaceSelection Selection { get; } = new();
+    public TimelineObjectListState ObjectList { get; } = new();
     // Document publication and render/selection revisions are different axes.
     // Only the session stamps this after rebuilding from the current Project.
     internal long PresentationDocumentRevision { get; set; } = -1;
@@ -453,6 +454,7 @@ public abstract class WorkspaceViewModel(
     /// </summary>
     public virtual void CancelBackgroundPresentationWork()
     {
+        ObjectList.SetActive(false);
         _selectionPresentationScope = checked(_selectionPresentationScope + 1);
         _selectionPrefetchGeneration = checked(_selectionPrefetchGeneration + 1);
         _selectionPrefetchCancellation.Cancel();
@@ -1549,6 +1551,10 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel
                 break;
             case TimelineWorkspaceMode.Segment:
                 RebuildSegment(project, revision);
+                ObjectList.SetFactory(() => FindSegment(project, ObjectId) is { } logical
+                    ? TimelineObjectListSource.CreateLogical(project, logical.Segment)
+                    : FindMidiSegment(project, ObjectId) is { } midi
+                        ? TimelineObjectListSource.CreateMidi(project, midi.Segment) : null);
                 break;
             case TimelineWorkspaceMode.Conductor:
                 RebuildConductor(project, revision);
@@ -2895,6 +2901,7 @@ public sealed class InstrumentWorkspaceViewModel(
     private long? _loopStartTick;
     private long? _loopEndTick;
     private long _templateLengthTicks = 1;
+    private long _preRollTicks;
     private int _activeRootPitch = 60;
     private long _scenarioGateLengthTicks = 192;
     private int _scenarioPitch = 60;
@@ -3155,6 +3162,7 @@ public sealed class InstrumentWorkspaceViewModel(
     public string InstrumentTemplateLengthText { get => _instrumentTemplateLengthText; set => Set(ref _instrumentTemplateLengthText, value ?? string.Empty); }
     public string InstrumentPreRollTicksText { get => _instrumentPreRollTicksText; set => Set(ref _instrumentPreRollTicksText, value ?? string.Empty); }
     public long? LoopStartTick { get => _loopStartTick; private set => Set(ref _loopStartTick, value); }
+    public long PreRollTicks { get => _preRollTicks; private set => Set(ref _preRollTicks, value); }
     public long? LoopEndTick { get => _loopEndTick; private set => Set(ref _loopEndTick, value); }
     public long TemplateLengthTicks { get => _templateLengthTicks; private set => Set(ref _templateLengthTicks, Math.Max(1, value)); }
     public int ActiveRootPitch { get => _activeRootPitch; private set => Set(ref _activeRootPitch, Math.Clamp(value, 0, 127)); }
@@ -3254,6 +3262,7 @@ public sealed class InstrumentWorkspaceViewModel(
             SubVoiceEventSnapshot = new(revision, $"instrument-events:{ObjectId}", Array.Empty<TimelineRenderItem>());
             SubVoiceVelocitySnapshot = new(revision, $"instrument-velocities:{ObjectId}", Array.Empty<TimelineRenderItem>());
             ActiveSubVoiceId = null;
+            ObjectList.SetFactory(null);
             ActiveSubVoiceName = "Missing SubVoice";
             ActiveSubVoiceContext = "The Event Instrument no longer exists.";
             ActiveSubVoiceFollowsInstanceVelocity = false;
@@ -3267,6 +3276,7 @@ public sealed class InstrumentWorkspaceViewModel(
         InstrumentRootNoteText = instrument.RootNote.ToString(System.Globalization.CultureInfo.InvariantCulture);
         InstrumentTemplateLengthText = instrument.TemplateLengthTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         InstrumentPreRollTicksText = instrument.PreRollTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        PreRollTicks = instrument.PreRollTicks;
         AddInstrumentInitialStateFields(instrument.InitialState);
         Summary = $"Root {MidiNoteName(instrument.RootNote)} · Template {instrument.TemplateLengthTicks} ticks · Pre-Roll {instrument.PreRollTicks} ticks · {instrument.SubVoices.Count} SubVoices";
         RequiresChannelIsolation = instrument.RequiresChannelIsolation;
@@ -3387,6 +3397,8 @@ public sealed class InstrumentWorkspaceViewModel(
             EventLaneEditorSettings.ConfigureProject(project, referenceTick: 0);
         }
         ActiveSubVoiceId = activeVoice?.Id;
+        ObjectList.SetFactory(activeVoice is null ? null
+            : () => TimelineObjectListSource.CreateSubVoice(project, activeVoice, instrument.Id));
         ActiveRootPitch = activeVoice?.RootNoteOverride ?? instrument.RootNote;
         ActiveSubVoiceName = activeVoice is null
             ? "No SubVoice"

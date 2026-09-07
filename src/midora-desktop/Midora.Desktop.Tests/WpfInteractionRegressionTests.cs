@@ -690,6 +690,7 @@ public sealed class WpfInteractionRegressionTests
                 Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.Black"]);
                 AssertSharedTaskProgressStyleResolvesInPropertiesBamlAndRealMainWindowOverlayMarkup(application);
                 TimelineGenerationDialogTests.VerifyThemeConstructionDraftAndValidation();
+                TimelineObjectListIntegrationTests.VerifyActualMainWindowTemplatesAndHandlers();
             }
             finally
             {
@@ -1423,7 +1424,7 @@ public sealed class WpfInteractionRegressionTests
     }
 
     [Fact]
-    public void SubVoiceLowerEditorsDisableTimeRangeSelectionAndSplitUsesOpticalSize()
+    public void AllSubVoiceEditorsDisableTimeRangeSelectionAndSplitUsesOpticalSize()
     {
         string path = Path.Combine(
             FindRepositoryRoot(),
@@ -1434,7 +1435,7 @@ public sealed class WpfInteractionRegressionTests
         XDocument document = XDocument.Load(path);
         XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
 
-        foreach (string name in new[] { "SubVoiceVelocityTimeline", "SubVoiceEventTimeline" })
+        foreach (string name in new[] { "SubVoiceNoteTimeline", "SubVoiceVelocityTimeline", "SubVoiceEventTimeline" })
         {
             XElement timeline = document.Descendants().Single(element =>
                 string.Equals((string?)element.Attribute(x + "Name"), name, StringComparison.Ordinal));
@@ -1609,12 +1610,12 @@ public sealed class WpfInteractionRegressionTests
         XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
 
         Assert.Equal(
-            "pack://application:,,,/Assets/midora.ico",
+            "pack://application:,,,/Midora;component/Assets/midora.ico",
             (string?)windowDocument.Root?.Attribute("Icon"));
         XElement applicationMark = windowDocument.Descendants(presentation + "Image").Single(element =>
             string.Equals(
                 (string?)element.Attribute("Source"),
-                "pack://application:,,,/Assets/midora-note-transparent-256x256.png",
+            "pack://application:,,,/Midora;component/Assets/midora-note-transparent-256x256.png",
                 StringComparison.Ordinal)
             && string.Equals(
                 (string?)element.Attribute("Grid.Column"),

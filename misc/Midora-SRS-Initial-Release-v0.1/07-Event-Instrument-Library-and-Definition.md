@@ -920,6 +920,7 @@ Gate Length 小于 Template Length 时，默认使用 Cut At Note Off。
 ```text
 Gate Length 大于 Template Length 时，如果配置 Loop / Envelope，则使用循环 / 包络规则；否则 Hold Last State Until Note Off。
 ```
+Loop 并非长音专属开关：除短音 One-Shot 外，到 Loop End 且 Gate 尚未结束即可循环，包含短音和等长音；具体优先级及 Pre-Roll 模板时钟见 §10.9.5。
 说明：
 ```text
 Cut At Note Off 更接近普通键盘 / 旋律乐器直觉。

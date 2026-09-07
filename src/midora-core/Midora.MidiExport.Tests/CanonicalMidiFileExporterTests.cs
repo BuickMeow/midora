@@ -8,6 +8,44 @@ namespace Midora.MidiExport.Tests;
 
 public sealed class CanonicalMidiFileExporterTests
 {
+    [Theory]
+    [InlineData(576)]
+    [InlineData(768)]
+    public void ExportsLoopRepeatsBeforeGateExceedsTemplateLength(long gate)
+    {
+        var fixture = CreateProject();
+        using var project = fixture.Project;
+        fixture.Instrument.TemplateLengthTicks = 768;
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.LoopStartTick = 192;
+        fixture.Instrument.LoopEndTick = 384;
+        fixture.Track.Segments[0].LengthTicks = 1920;
+        fixture.Track.Segments[0].Notes[0].LengthTicks = gate;
+        fixture.Voice.Events[0].LengthTicks = 768;
+        fixture.Voice.Events.Add(new(project) { Tick = 192, Kind = TemplateEventKind.PitchBend, Value = -7701 });
+        fixture.Voice.Events.Add(new(project) { Tick = 288, Kind = TemplateEventKind.PitchBend, Value = 8191 });
+        using MidoraCompiler compiler = new();
+        CanonicalCompiledResult compiled = compiler.CompileFull(project, new CompilationRequest
+        {
+            Purpose = CompilationPurpose.MidiExport
+        });
+        Assert.True(compiled.IsConsumable);
+        MidiExportEncodingResult exported = CanonicalMidiFileExporter.EncodeWholeProject(new()
+        {
+            CompiledResult = compiled,
+            ConductorTrackName = "Loop regression",
+            LogicalTracks = [Layout(fixture.Track.Id, 0, "Loop")]
+        });
+        Assert.True(exported.Succeeded);
+        StandardMidiFile.ValidateType1(exported.FileBytes);
+        ParsedTrack track = ParseTracks(exported.FileBytes)[1];
+        var expected = Enumerable.Range(0, checked((int)((gate - 192) / 96)))
+            .Select(i => (192L + i * 96, i % 2 == 0 ? -7701 : 8191));
+        Assert.Equal(expected, track.ChannelEvents
+            .Where(e => (e.Data[0] & 0xf0) == 0xe0 && e.Tick > 0 && e.Tick < gate)
+            .Select(e => (e.Tick, (e.Data[2] << 7 | e.Data[1]) - 8192)));
+    }
+
     [Fact]
     public void ExportsCanonicalType1WithCompatibilityProfileAndEffectsOffInitialization()
     {

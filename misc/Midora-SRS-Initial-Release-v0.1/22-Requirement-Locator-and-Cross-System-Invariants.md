@@ -122,6 +122,7 @@
 | INV-111 | Conductor 的虚拟列表、范围命中与编辑使用不可变修订和有界后台准备；不在 UI 线程整表物化百万事件。Tempo/拍号/调号同 tick 后来编辑者覆盖，Marker 保留同 tick 多项；tick 0 必需 Tempo/拍号不可移动或删除。取消、失败及旧修订结果零发布，Undo/Redo 与列表/时间线共享稳定 ID 选择。 |
 | INV-112 | Logical/MIDI Segment 与 SubVoice 对象列表只创建可见行，排序及范围选择采用冻结修订、有界可取消后台准备。隐藏/卸载停止请求；列表布局不持久化。Note/Event 混合选择仅由显式类型子菜单处理冻结子集，未处理选择保留，Undo/Redo 恢复完整前后选择；普通类型专属快捷键不得隐式跳过对象。 |
 | INV-113 | SubVoice Pre-Roll/Loop 只读覆盖层与三面板共用 tick/device-pixel 变换。Pre-Roll 前缀为半开暗区；Loop 单端只画存在的端点，完整范围只在两端齐全时显示。覆盖层不截获输入，不改变编译语义或内容瓦片身份。 |
+| INV-114 | Event Instrument Loop 的时间映射独立于长 / 短 / 等长音分类：除短音 One-Shot 外，实际实例局部 Gate horizon 超过 Loop End 即允许跳回并重复半开 Loop，不得以 `Gate Length > Template Length` 为前提。原始事件、Value Curve、状态型映射与 Mapping TemplateTick 必须一致；Envelope 不随 Loop 重启，Logical Parameter 按实际内容 Tick 求值。等长音 / EndAtTemplate / Segment 结束仍优先；已循环的短音 Tail 从 Gate End 接模板 `[Loop End, Template Length)`，持续 Note 不重触发。 |
 
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
@@ -136,7 +137,7 @@
 | Event Instrument 定义、Pre-Roll Ticks 与内部索引 | 第 7、9～13、16、18、24 章 |
 | SubVoice、Note/CC/RPN 等事件 | 第 8 章 |
 | Logical Parameter、映射、快捷 Event Binding 和受限 Mapping Function | 第 9、18、20 章；INV-102 |
-| Release、Loop、Envelope、Overlap | 第 10 章 |
+| Release、Loop、Envelope、Overlap | 第 10 章；Loop 进入条件见 §10.9.5、INV-114 |
 | Logical Track、Logical Segment、裁剪与 Logical Note | 第 11 章 |
 | CompileContext、资源分配、Compiled Result | 第 12 章 |
 | 播放、预览、held Preview 因果 Gate、BASSMIDI、程序级 Playback Preferences、输出设备、采样率、buffer、Limiter | 第 9、12、13、17、20 章 |

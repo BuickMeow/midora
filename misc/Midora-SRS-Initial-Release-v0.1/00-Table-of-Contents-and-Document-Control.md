@@ -52,6 +52,7 @@
 
 ## 2026-09-07 修订摘要
 
+- 根据阻塞 BUG 复现澄清 Loop 进入条件：除短音 One-Shot 外，到 Loop End 且 Gate 尚未结束即循环，不再要求 Gate 超过 Template Length；统一原始事件、曲线与 Mapping 的模板时钟，保留既有硬结束并明确循环后 Tail 的时间映射。受影响章节：7、10、22，新增 INV-114；不改变 Project Format。
 - 阶段 7 同步已批准的三种钢琴卷帘虚拟对象列表、显式 Note/Event 类型子菜单和完整选择 Undo/Redo；列表只属于 Session，隐藏停止后台读取，不引入新 Project 格式或音频语义。
 - SubVoice 使用独立 Pre-Roll/Loop 覆盖层：半开前缀暗区、单端/双端黄线、顶部 Tick 标签；不使音符/事件缓存失效。受影响章节：18、20、22，新增 INV-112～113。
 - 阶段 7 验收后的明确调整：Pre-Roll 标签为紫色；Configuration 的 Pre-Roll 空白输入静默归零；SubVoice 禁用 Time Range 拖选及对应菜单，不影响对象选择。受影响章节：18、20。

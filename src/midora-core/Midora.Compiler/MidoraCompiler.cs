@@ -1210,6 +1210,16 @@ public sealed partial class MidoraCompiler : IDisposable
             && mappingGateLength < instrument.TemplateLengthTicks;
         bool longNote = heldPreviewGateOpen
             || mappingGateLength > instrument.TemplateLengthTicks;
+        // Loop entry follows the template clock reaching Loop End with an open
+        // gate, not the short/long classification against Template Length.
+        // Pre-Roll belongs to this clock; a short One-Shot still plays once.
+        bool looping = instrument.LoopStartTick.HasValue
+            && instrument.LoopEndTick is long loopEnd
+            && instanceGateEndLocalTick > loopEnd
+            && !(shortNote && instrument.ShortLifecycle == ShortNoteLifecycle.OneShot);
+        long loopTailLength = looping
+            ? instrument.TemplateLengthTicks - instrument.LoopEndTick!.Value
+            : 0;
         HashSet<MidoraId> usedEnvelopeIds = GetUsedEnvelopeIds(instrument);
         long release = instrument.Envelopes.Where(value => usedEnvelopeIds.Contains(value.Id))
             .Select(value => value.ReleaseTicks).DefaultIfEmpty().Max();
@@ -1235,7 +1245,9 @@ public sealed partial class MidoraCompiler : IDisposable
                     instrument.TemplateLengthTicks,
                     maximumDuration),
                 ShortNoteLifecycle.Tail => Math.Max(
-                    Math.Min(instrument.TemplateLengthTicks, maximumDuration),
+                    looping
+                        ? AddDurationsClamped(instanceGateEndLocalTick, loopTailLength, maximumDuration)
+                        : Math.Min(instrument.TemplateLengthTicks, maximumDuration),
                     AddDurationsClamped(instanceGateEndLocalTick, release, maximumDuration)),
                 _ => instanceGateEndLocalTick
             };
@@ -1246,9 +1258,6 @@ public sealed partial class MidoraCompiler : IDisposable
         }
         else
         {
-            long loopTailLength = instrument.LoopEndTick.HasValue
-                ? instrument.TemplateLengthTicks - instrument.LoopEndTick.Value
-                : 0;
             naturalDuration = AddDurationsClamped(
                 instanceGateEndLocalTick,
                 Math.Max(release, loopTailLength),
@@ -1303,7 +1312,7 @@ public sealed partial class MidoraCompiler : IDisposable
                 voice,
                 instanceStart,
                 instanceGateEndLocalTick,
-                longNote,
+                looping,
                 actualEnd,
                 source,
                 ref sequence);
@@ -1314,7 +1323,7 @@ public sealed partial class MidoraCompiler : IDisposable
                     instrument,
                     templateEvent.Tick,
                     instanceGateEndLocalTick,
-                    longNote,
+                    looping,
                     actualEnd - instanceStart))
                 {
                     if (occurrence.LocalTick >= actualEnd - instanceStart)
@@ -1365,7 +1374,7 @@ public sealed partial class MidoraCompiler : IDisposable
                         bool sustainAcrossLoop = ShouldSustainNoteAcrossLoop(
                             instrument,
                             templateEvent,
-                            longNote);
+                            looping);
                         EmitTemplateEvent(events, eventMappings, templateEvent, tick, gateEnd, actualEnd,
                             releaseTriggered, pitchDelta, note.Velocity,
                             context, parametersAtTick, envelopesAtTick, functions,
@@ -1409,7 +1418,7 @@ public sealed partial class MidoraCompiler : IDisposable
                 instanceGateEndLocalTick,
                 mappingGateLength,
                 shortNote,
-                longNote,
+                looping,
                 releaseStartLocalTick,
                 usedEnvelopeIds,
                 definitions,
@@ -1421,7 +1430,7 @@ public sealed partial class MidoraCompiler : IDisposable
             EmitParameterMappings(events, instrument, segment, instanceStart, actualEnd, note, pitchDelta,
                 instanceGateEndLocalTick,
                 mappingGateLength,
-                longNote,
+                looping,
                 releaseStartLocalTick,
                 usedEnvelopeIds,
                 definitions,
@@ -1585,11 +1594,10 @@ public sealed partial class MidoraCompiler : IDisposable
     private static bool ShouldSustainNoteAcrossLoop(
         EventInstrument instrument,
         TemplateEvent value,
-        bool longNote)
+        bool looping)
     {
         if (value.Kind != TemplateEventKind.Note
-            || !longNote
-            || instrument.LongLifecycle != LongNoteLifecycle.HoldLastState
+            || !looping
             || instrument.LoopStartTick is not long loopStart
             || instrument.LoopEndTick is not long loopEnd
             || value.Tick >= loopStart
@@ -1669,10 +1677,10 @@ public sealed partial class MidoraCompiler : IDisposable
         EventInstrument instrument,
         long eventTick,
         long instanceGateEndLocalTick,
-        bool longNote,
+        bool looping,
         long maximumLocalTick)
     {
-        if (!longNote || !instrument.LoopStartTick.HasValue || !instrument.LoopEndTick.HasValue)
+        if (!looping || !instrument.LoopStartTick.HasValue || !instrument.LoopEndTick.HasValue)
         {
             if (eventTick < maximumLocalTick)
             {
@@ -1820,7 +1828,7 @@ public sealed partial class MidoraCompiler : IDisposable
         SubVoice voice,
         long projectStart,
         long instanceGateEndLocalTick,
-        bool longNote,
+        bool looping,
         long actualEnd,
         SourceReference source,
         ref long sequence)
@@ -1835,11 +1843,11 @@ public sealed partial class MidoraCompiler : IDisposable
             int? previousOutputValue = null;
             for (long localTick = 0; projectStart + localTick < actualEnd; localTick++)
             {
-                long templateTick = MapLongTickToTemplate(
+                long templateTick = MapInstanceTickToTemplate(
                     instrument,
                     localTick,
                     instanceGateEndLocalTick,
-                    longNote);
+                    looping);
                 if (templateTick < points[0].Tick || templateTick >= instrument.TemplateLengthTicks)
                 {
                     continue;
@@ -1877,7 +1885,7 @@ public sealed partial class MidoraCompiler : IDisposable
         long instanceGateEndLocalTick,
         long mappingGateLength,
         bool shortNote,
-        bool longNote,
+        bool looping,
         long? releaseStartLocalTick,
         IReadOnlySet<MidoraId> usedEnvelopeIds,
         IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> definitions,
@@ -1915,7 +1923,7 @@ public sealed partial class MidoraCompiler : IDisposable
                     instrument,
                     templateEvent.Tick,
                     instanceGateEndLocalTick,
-                    longNote,
+                    looping,
                     actualEnd - projectStart))
                 {
                     if (occurrence.LocalTick >= actualEnd - projectStart)
@@ -1968,11 +1976,11 @@ public sealed partial class MidoraCompiler : IDisposable
                     localTick,
                     releaseStartLocalTick,
                     usedEnvelopeIds);
-                long templateTick = MapLongTickToTemplate(
+                long templateTick = MapInstanceTickToTemplate(
                     instrument,
                     localTick,
                     instanceGateEndLocalTick,
-                    longNote);
+                    looping);
                 MappingContextV2 context = new(
                     currentRawValue,
                     note.Note,
@@ -2069,7 +2077,7 @@ public sealed partial class MidoraCompiler : IDisposable
         int pitchDelta,
         long instanceGateEndLocalTick,
         long mappingGateLength,
-        bool longNote,
+        bool looping,
         long? releaseStartLocalTick,
         IReadOnlySet<MidoraId> usedEnvelopeIds,
         IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> definitions,
@@ -2117,11 +2125,11 @@ public sealed partial class MidoraCompiler : IDisposable
                         currentMapping = mapping;
                         double logical = parameters[mapping.ParameterId];
                         long instanceTick = tick - projectStart;
-                        long templateTick = MapLongTickToTemplate(
+                        long templateTick = MapInstanceTickToTemplate(
                             instrument,
                             instanceTick,
                             instanceGateEndLocalTick,
-                            longNote);
+                            looping);
                         MappingContextV2 context = new(
                             current,
                             note.Note,
@@ -2324,13 +2332,13 @@ public sealed partial class MidoraCompiler : IDisposable
             ? end
             : Interpolate(start, end, elapsed, duration - 1);
 
-    private static long MapLongTickToTemplate(
+    private static long MapInstanceTickToTemplate(
         EventInstrument instrument,
         long localTick,
         long instanceGateEndLocalTick,
-        bool longNote)
+        bool looping)
     {
-        if (!longNote
+        if (!looping
             || !instrument.LoopStartTick.HasValue
             || !instrument.LoopEndTick.HasValue
             || localTick < instrument.LoopStartTick.Value)

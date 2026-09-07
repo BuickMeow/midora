@@ -532,7 +532,7 @@ public sealed class PreRollCompilationTests
     }
 
     [Fact]
-    public void GateLengthEqualToTemplateEndsAtTemplateWithoutLongLifecycleOrLoop()
+    public void GateLengthEqualToTemplateLoopsButStillEndsAtTemplateWithoutLongLifecycle()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 600);
         fixture.Instrument.TemplateLengthTicks = 200;
@@ -552,10 +552,10 @@ public sealed class PreRollCompilationTests
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
 
         Assert.True(result.IsConsumable, FormatDiagnostics(result));
-        Assert.Single(result.Events.ToArray(), value =>
+        Assert.Equal(new long[] { 160, 210, 260 }, result.Events.ToArray().Where(value =>
             value.Message.MessageType == MidiMessageType.ControlChange
             && value.Message.Byte1 == 1
-            && value.Message.Byte2 == 77);
+            && value.Message.Byte2 == 77).Select(value => value.Tick));
         CanonicalMidiEvent noteOff = Assert.Single(
             result.Events.ToArray(),
             value => value.Role == CanonicalEventRole.NoteOff);
@@ -563,7 +563,7 @@ public sealed class PreRollCompilationTests
     }
 
     [Fact]
-    public void ShortPreRollHorizonDoesNotActivateLoopForCurvesOrMappingTemplateTick()
+    public void ShortPreRollHorizonLoopsCurvesAndMappingTemplateTickButNotEnvelopeTime()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 600);
         fixture.Instrument.TemplateLengthTicks = 200;
@@ -642,12 +642,12 @@ public sealed class PreRollCompilationTests
             value.Tick == 200
             && value.Message.MessageType == MidiMessageType.ControlChange
             && value.Message.Byte1 == 1
-            && value.Message.Byte2 == 127);
+            && value.Message.Byte2 == 64);
         Assert.Contains(result.Events.ToArray(), value =>
             value.Tick == 200
             && value.Message.MessageType == MidiMessageType.ControlChange
             && value.Message.Byte1 == 2
-            && value.Message.Byte2 == 100);
+            && value.Message.Byte2 == 50);
         Assert.Contains(result.Events.ToArray(), value =>
             value.Tick == 200
             && value.Role == CanonicalEventRole.ControlChange

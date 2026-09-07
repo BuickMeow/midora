@@ -466,13 +466,20 @@ Loop End > Template Length
 编辑操作不被接受或即时修正到合法范围。
 除上述明确允许的不完整 Loop Draft 外，系统不保存非法 Loop 区间。
 ### 10.9.5 Loop 触发条件
-初版 Loop 只用于长音 / 持续场景。
+Loop 的进入条件独立于 §10.2 的长 / 短 / 等长音分类；不得要求 `Gate Length > Template Length` 才启用循环。短音 `One-Shot / Ignore Note Off` 是明确例外，见 §10.9.7.2。
 规则：
 ```text
-播放到 Loop End 后，如果 Gate End 尚未到达，则跳回 Loop Start。
+完整有效 Loop，且模板时钟播放到 Loop End 时 Gate End 尚未到达，则跳回 Loop Start。
+此后按 [Loop Start, Loop End) 重复，直到 Gate End 或已有生命周期 / Segment 硬结束。
 ```
 Loop 不从实例开始立即循环。
-Loop 不在短音中因 Gate End 触发。
+Gate End 本身只负责退出循环，不触发循环；Gate 恰在首轮 Loop End 或之前结束不重复。
+
+对 Logical Instance，模板时钟从 `Instance Start = Logical Gate Start - Pre-Roll` 开始，因此比较的是实例局部 Gate horizon（`Pre-Roll + effective Gate Length`），而不是仅 Logical Gate Length。Pre-Roll 仍不改变 Mapping 的 `gateLength` 或长 / 短 / 等长分类。
+
+Loop 时间映射必须统一用于原始 Template Event、Value Curve、状态型 Event Mapping 的原始事件序列，以及所有 Mapping 的 `TemplateTick`。Envelope 阶段仍按实际实例经过时间及 Release 起点计算，不随 Loop 重启；Logical Parameter 仍按实际 Segment 内容 Tick 求值。
+
+例如 Template=768、Loop=[192,384)、Pre-Roll=0，Loop 内 tick 192 / 288 各有一个事件：Gate=576 时输出在 192 / 288 / 384 / 480；Gate=768 时再输出 576 / 672。Gate=768 仍遵循等长音的模板结束规则，不因此启用长音延长策略；`End At Template Length` 的硬结束同样不因循环延后。
 ### 10.9.6 Gate End 发生在 Loop 中间
 当 Gate End 发生在 Loop 区间中间：
 ```text
@@ -486,21 +493,23 @@ Loop 不在短音中因 Gate End 触发。
 ```text
 Gate End 到达时立即退出实例模板输出，并进入释放 / 结束流程。
 ```
+Gate End 超过 Loop End 时也应正常重复 Loop，直到 Gate End 立即停止新的模板事件；已引用 Envelope 的 Release 按既有规则继续，不追加 Loop 后的模板 Tail。
 #### 10.9.7.2 One-Shot / Ignore Note Off
 当短音策略为 `One-Shot / Ignore Note Off`，且 Gate Length 小于 Template Length：
 ```text
 One-Shot 忽略 Gate End
 实例至少完整播放 Template Length
-若 Loop 仅用于长音，则不因短音进入 Loop
+短音 One-Shot 不进入 Loop，只播放一次模板
 ```
 #### 10.9.7.3 Note Off With Tail Events
 当短音策略为 `Note Off With Tail Events`，且 Gate End 发生在 Loop 区间中：
 ```text
 立即退出 Loop
 保持 / 释放已发音 Note
-继续播放 Gate End 到 Template Length 内的非 Note 尾部事件
+已进入循环时，从 Gate End 起播放模板 [Loop End, Template Length) 内的非 Note 尾部事件
 允许 Envelope Release
 ```
+进入循环后的尾部事件 `templateTick` 映射到实例局部 `Gate horizon + (templateTick - Loop End)`；Tail 时长相应为 `Template Length - Loop End`，不得仍在原未循环模板结束点截断移位后的 Tail。未进入循环时保留普通短音 Tail 规则。无论哪种情况，Segment 硬边界始终优先，Gate End 后不得启动新的 Note。
 ### 10.9.8 Loop 区间内事件重复
 Loop 区间内的事件每轮循环都重新输出。
 包括：
@@ -811,7 +820,7 @@ Envelope 不因 Gate End 进入 Release
 然后进入 Envelope Release / 结束流程
 ```
 ### 10.13.6 Loop
-当长音使用 Loop，Gate End 发生后：
+当实例使用 Loop，且 Gate End 在生命周期硬结束前到达时，按该实例策略：
 ```text
 退出 Loop
 进入 Envelope Release / 结束流程

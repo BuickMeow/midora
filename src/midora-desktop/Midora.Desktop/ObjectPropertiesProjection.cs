@@ -1433,20 +1433,17 @@ internal static partial class ObjectPropertiesProjection
                             DirectMidiEventFields(channelEvent));
                         return;
                     }
-                    if (segment.OpaqueEvents.TryGetById(midiObjectId, out OpaqueMidiEvent? opaque)
-                        && opaque is not null)
+                    if (ProjectTimelineReadPreparation.ReadOpaqueProperties(project,
+                            segment.OpaqueEvents.CreateObjectSource(), midiObjectId) is { } opaque)
                     {
-                        string payloadPreview = Convert.ToHexString(
-                            opaque.Payload.AsSpan(0, Math.Min(opaque.Payload.Length, 256)));
-                        if (opaque.Payload.Length > 256) payloadPreview += "…";
                         properties.Replace(
                             "Imported MIDI Event",
-                            TimelineWorkspaceViewModel.OpaqueMidiEventLabel(opaque),
+                            TimelineWorkspaceViewModel.OpaqueMidiEventLabel(opaque.Kind, opaque.MetaType, opaque.PayloadLength),
                             [Field("opaqueMidi.tick", "TICK", opaque.Tick, false),
                              Field("opaqueMidi.kind", "EVENT KIND", opaque.Kind, false),
                              Field("opaqueMidi.metaType", "META TYPE", $"0x{opaque.MetaType:X2}", false),
-                             Field("opaqueMidi.payloadLength", "PAYLOAD BYTES", opaque.Payload.Length, false),
-                             Field("opaqueMidi.payload", "PAYLOAD HEX PREVIEW", payloadPreview, false)]);
+                             Field("opaqueMidi.payloadLength", "PAYLOAD BYTES", opaque.PayloadLength, false),
+                             Field("opaqueMidi.payload", "PAYLOAD HEX PREVIEW", opaque.PayloadHexPreview, false)]);
                         return;
                     }
                 }

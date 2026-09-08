@@ -57,7 +57,7 @@
 | O39 | Tab 切换 / 关闭、Project 切换 / 取消在途任务 | 不保留旧图与旧 owner；不会僵尸订阅 | SelectionPresentationLifecycleTests、OnionPresentationLifecycleTests、WpfMemoryProbeTests；M02–05 |
 | O40 | Imported Meta / SysEx 的属性、Copy / Cut / Paste / Delete、随 Segment 变换 | payload 原样、正式顺序、只开放现有可编辑属性；不可把 opaque 当数值 point 任意生成 / 量化 | ProjectObjectClipboardPureMidiTests、MixedTimelineSelectionCommandsTests、BoundedDirectMidiSegmentTransformTests；大 payload 计账归 M07 |
 
-阶段 1 只修改 O34 / O37 读取方式及基础设施；公共编辑与 UI 回归用于防止间接退化，不实施 O39 或其他阶段预算重构。
+阶段 1 只修改 O34 / O37 读取方式及基础设施；公共编辑与 UI 回归用于防止间接退化，不实施 O39 或其他阶段预算重构。阶段 2、3 的后续覆盖分别记录在本文末尾，不回写为阶段 1 已完成的工作。
 
 ## 3. M01 只读消费者逐项审计
 
@@ -112,4 +112,22 @@
 | 两层概览与现有图像行为 | TimelineRenderingTests、TimelineOnionTests、OnionProbe | 概览 coarse barrier、三种 Piano/Velocity/Event、高亮、叠层、DPI、Raw/Compiled；生产缓存精度和 256 MiB 预算不变 |
 | 真 WPF 长循环 / 大源对照 | eng/MemoryStage2Probe | 同旧/新 DLL 和模板、每 Project 100 次、两个 Project；18M 大样本、自然/GC 后内存和时间分报 |
 
-本阶段不触及 O01～O30 的编辑算法；对应公共测试用于检查生命周期改动的间接回归，不据此声明所有操作的有限内存预算已收口。阶段 1＋2 的 MEM-A01～A08 已由用户粗略验收通过，精细编曲验收留到发布前；本轮仅补修 All Tracks 激活焦点，不推进阶段 3。
+阶段 2 不触及 O01～O30 的编辑算法；对应公共测试用于检查生命周期改动的间接回归，不据此声明所有操作的有限内存预算已收口。阶段 1＋2 的 MEM-A01～A08 已由用户粗略验收通过，精细编曲验收留到发布前；阶段 2 随后仅补修 All Tracks 激活焦点。当时未自动推进阶段 3，后由用户另行启动。
+
+## 7. 阶段 3：M06 / M07 / M09 / M10 预算补测
+
+实现、旧新测量与最终回归状态见 [阶段 3 报告](Midora-Memory-Stage3-Validation-Report-2026-09-08.md)。不把下列模块预算等同整个应用的统一硬上限，不替代阶段 4 的 M08/M11 或阶段 5 的 History 总预算。
+
+| 所有者 / 边界 | 自动入口 | 核心断言 |
+| --- | --- | --- |
+| 范围 canonical / realtime / sample 三族缓存 | PreparationStorageCacheTests、MemoryStage3Probe `plans` | 共享 128 MiB / 256 项；backing 去重；baseline/active/cache 分列；1,000 范围平台、冷热、超工作集重访；合法大对象返回但不钉住 |
+| Preparing / 替换 / Buffering / Stop / Dispose | PreparationStorageCacheTests、SessionPreparationLifecycleTests、PlaybackControllerTests | Start 前 lease、失败原子释放；Held Preview 替换期间新旧两套保活；不提前 Dispose immutable page；最后 reader 释放；目录高水位与 canonical backing 的弱引用 GC |
+| 跨 Track / Root / shared Usage 状态 | PagedPureMidiAudioPlanTests、PureMidiCompilationTests、PreviewCompilerTests、Midora.Playback.Tests 全套 | 既有中途恢复、Mute/Solo、Seek、loop、边界语义与正式计划不变 |
+| Opaque ID / virtual page / reader | OpaquePayloadBudgetTests、PureMidiSourceIdResolutionCacheTests、ProjectTimelineSelectionReaderTests | 96 × 1 MiB、4 MiB 可变页、合法大单项、sparse/dense 地址映射、旧修订、取消、无 payload identity 常驻 |
+| Opaque Properties / clipboard | OpaquePayloadBudgetTests、ProjectClipboardStorageTests、Desktop 公共测试 | 256-byte 预览与标量完整，零 facade 留存；字节往返、spill、lease、slice backing 实际计费；原 opaque byte-stream int offset 限制没有升级 |
+| Content Pack active/partial/pending | ContentPackBuilderBudgetTests、PureMidiContentPackTests、MemoryStage3Probe `packs` | actual capacity、old+new 扩容、1/100/1000 tails、64 MiB 正常与 9 MiB 压力；spool 复用、损坏、失败、取消；对应旧新完整文件 SHA-256 一致 |
+| Stable ID resident/external | StableIdValidatorV1Tests、MemoryStage3Probe `ids` | dense/sparse/极大值、全包重复及来源顺序；8 MiB 含迁移预留；异常 extent/IO、取消、保存来源不变 |
+| 原型至真实大型项目 | MemoryStage1Probe `roundtrip`（阶段 3 candidate DLL） | 9KX2 导入、60k 编辑及 Undo/Redo、Save/Copy/Open，17,999,999 Note、40 Track、0 damaged；source facade 三表不增长；Project 弱引用释放 |
+| 音频热路径保底 | Run-Regression.ps1 的托管音频过滤 | ring、共享协议、PCM IO、Limiter、WAV 写入、MIDI plan/stream 分页；无新增 callback 分配/锁，未据此宣称设备/原生实机验收 |
+
+本轮 UI 生产变更仅为 Opaque Properties 的等价只读取值；未改变 Piano Roll / Arrangement / Onion 渲染策略、交互与音频算法。公共测试中需要显式环境变量的大样本用例未自动开启；真实大样本证据以本轮明确运行的独立探针为准。人工音乐验收 B 按计划合并至阶段 4 后，不要求用户在阶段 3 重跑全表。

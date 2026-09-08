@@ -154,6 +154,7 @@ internal sealed class OpaqueClipboardList : IReadOnlyList<OpaqueMidiEventClipboa
         foreach (OpaqueMidiEventValue item in source)
         {
             context.Token.ThrowIfCancellationRequested();
+            using var payloadLease = context.Resources.BorrowPayload(item.Payload);
             result._minimumTick = Math.Min(result._minimumTick, item.Tick);
             int offset = result._bytes.Count;
             foreach (byte value in item.Payload.Span) result._bytes.Add(value, context.Token);
@@ -169,6 +170,7 @@ internal sealed class OpaqueClipboardList : IReadOnlyList<OpaqueMidiEventClipboa
         return result;
     }
     public int Count => _records.Count;
+    internal long PayloadBytes => _bytes.Count;
     public long MinimumTick => Count == 0 ? 0 : _minimumTick;
     public OpaqueMidiEventClipboardSnapshot this[int index]
     {
@@ -176,10 +178,13 @@ internal sealed class OpaqueClipboardList : IReadOnlyList<OpaqueMidiEventClipboa
         {
             OpaqueRecord record = _records[index];
             byte[] payload = new byte[record.Length];
+            using var payloadLease = BulkEditPreparationContext.Current?.Resources.BorrowPayload(payload);
+            using var pageLease = BulkEditPreparationContext.Current?.Resources.ReserveWorking(_bytes.PageCapacity);
             byte[] page = new byte[_bytes.PageCapacity];
             int copied = 0;
             while (copied < payload.Length)
             {
+                BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
                 int offset = checked(record.Offset + copied);
                 int withinPage = offset % _bytes.PageCapacity;
                 int take = Math.Min(_bytes.PageCapacity - withinPage, payload.Length - copied);
@@ -192,7 +197,12 @@ internal sealed class OpaqueClipboardList : IReadOnlyList<OpaqueMidiEventClipboa
     }
     public IEnumerator<OpaqueMidiEventClipboardSnapshot> GetEnumerator()
     {
-        for (int index = 0; index < Count; index++) yield return this[index];
+        for (int index = 0; index < Count; index++)
+        {
+            var value = this[index];
+            using var payloadLease = BulkEditPreparationContext.Current?.Resources.BorrowPayload(value.Payload);
+            yield return value;
+        }
     }
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     public void Dispose() { _records.Dispose(); _bytes.Dispose(); }
@@ -264,6 +274,18 @@ public static partial class ProjectObjectClipboard
 {
     private static IEnumerable<T> EnumerateClipboardSource<T>(ITimelineObjectSource<T> source)
     {
+        if (source is OpaqueMidiEventObjectSource opaque)
+        {
+            for (int index = 0; index < opaque.Count; index++)
+            {
+                var context = BulkEditPreparationContext.Current!;
+                context.Token.ThrowIfCancellationRequested();
+                var value = opaque.GetByOrdinal(index);
+                using var payload = context.Resources.BorrowPayload(value.Payload);
+                yield return (T)(object)value;
+            }
+            yield break;
+        }
         for (int ordinal = 0; ordinal < source.Count;)
         {
             BulkEditPreparationContext.Current!.Token.ThrowIfCancellationRequested();

@@ -6,6 +6,23 @@ namespace Midora.Application;
 
 public static partial class ProjectTimelineReadPreparation
 {
+    /// <summary>Read-only property projection. Never materializes a mutable
+    /// facade or lets an arbitrary-size payload escape into a properties VM.</summary>
+    public static OpaqueMidiEventPropertySnapshot? ReadOpaqueProperties(MidoraProject project,
+        OpaqueMidiEventObjectSource source, MidoraId id, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(source);
+        using var context = BulkEditPreparationContext.Enter(cancellationToken, project: project);
+        context.Token.ThrowIfCancellationRequested();
+        if (!source.TryFindOrdinalById(id, out int ordinal)) return null;
+        var value = source.GetByOrdinal(ordinal);
+        using var payload = context.Resources.BorrowPayload(value.Payload);
+        string preview = Convert.ToHexString(value.Payload.Span[..Math.Min(value.Payload.Length, 256)]);
+        if (value.Payload.Length > 256) preview += "…";
+        context.Token.ThrowIfCancellationRequested();
+        return new(value.Tick, value.Kind, value.MetaType, value.Payload.Length, preview);
+    }
     /// <summary>
     /// Reads a frozen selection with bounded storage. Direct MIDI identities are
     /// resolved in page-sized batches, retaining the scalar returned by that
@@ -81,8 +98,9 @@ public static partial class ProjectTimelineReadPreparation
     }
 
     // Opaque payloads contain managed memory and cannot enter scalar sort
-    // storage. Resolve their addresses in batches, then read source pages once
-    // in formal order. Payload ownership stays with the frozen source.
+    // storage. Resolve scalar addresses in batches, then borrow only one
+    // payload at a time in formal order. No selection-sized payload list is
+    // retained. The actual shared backing capacity remains visible in metrics.
     public static IEnumerable<OpaqueMidiEventValue> ReadSelectedOpaqueValues(MidoraProject project,
         OpaqueMidiEventObjectSource source, IReadOnlyCollection<MidoraId> ids,
         CancellationToken cancellationToken = default,
@@ -92,13 +110,22 @@ public static partial class ProjectTimelineReadPreparation
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(ids);
         using var context = BulkEditPreparationContext.Enter(cancellationToken, progress, project: project);
+        using var lease = context.Resources.BeginResourceLease();
         using var frozen = SelectionReadIds.Create(ids, context);
         long revision = source.SourceRevision;
         int sourceCount = source.Count;
         if (TryGetDenseIds(frozen, sourceCount) is { } dense)
         {
-            foreach (var value in ReadDenseSelection(source, dense, static value => value.Id, context, requireAll))
-                yield return value;
+            int found = 0;
+            for (int ordinal = 0; ordinal < sourceCount; ordinal++)
+            {
+                context.Token.ThrowIfCancellationRequested();
+                var value = source.GetByOrdinal(ordinal);
+                using var payload = context.Resources.BorrowPayload(value.Payload);
+                if (dense.Contains(value.Id)) { found++; yield return value; }
+                context.Checkpoint(ordinal + 1, sourceCount, TimelineEditPreparationPhase.ReadingSelection, 0, 1);
+            }
+            if (requireAll && found != frozen.Count) throw UnknownSelectionId();
             if (source.SourceRevision != revision || source.Count != sourceCount)
                 throw new InvalidOperationException("The timeline source changed while its selection was being read.");
             yield break;
@@ -106,7 +133,18 @@ public static partial class ProjectTimelineReadPreparation
         var sortProgress = new SelectionSortProgress(context, 0.65, 0.15);
         using var ordinals = BoundedEditSort.Sort(Resolve(), Comparer<int>.Default,
             context.Resources, context.Token, sortProgress);
-        foreach (var value in ReadOrdinalPages(source, ordinals, context)) yield return value;
+        int previous = -1, visited = 0;
+        foreach (int ordinal in ordinals)
+        {
+            context.Token.ThrowIfCancellationRequested();
+            if (ordinal <= previous || (uint)ordinal >= (uint)sourceCount)
+                throw new InvalidOperationException("The timeline selection resolved to invalid or duplicate addresses.");
+            previous = ordinal;
+            var value = source.GetByOrdinal(ordinal);
+            using var payload = context.Resources.BorrowPayload(value.Payload);
+            context.Checkpoint(++visited, ordinals.Count, TimelineEditPreparationPhase.ReadingSelection, 0.8, 0.2);
+            yield return value;
+        }
         context.Token.ThrowIfCancellationRequested();
         if (source.SourceRevision != revision || source.Count != sourceCount)
             throw new InvalidOperationException("The timeline source changed while its selection was being read.");
@@ -128,7 +166,7 @@ public static partial class ProjectTimelineReadPreparation
             IEnumerable<int> Flush()
             {
                 int found = 0;
-                foreach (var match in source.QueryByIds(batch))
+                foreach (var match in source.QueryAddressesByIds(batch))
                 { context.Token.ThrowIfCancellationRequested(); found++; yield return match.Index; }
                 if (requireAll && found != batch.Count) throw UnknownSelectionId();
                 visited += batch.Count;
@@ -193,7 +231,8 @@ public static partial class ProjectTimelineReadPreparation
     {
         int capacity = Math.Min(4096, source.PageCapacity);
         if (capacity <= 0) throw new InvalidOperationException("The timeline source has an invalid page size.");
-        // Opaque values contain references; their source owns payload buffers.
+        // This path is only for fixed-width values. Opaque uses a payload lease
+        // per yielded event rather than holding 4096 arbitrary-size buffers.
         using var working = context.Resources.ReserveWorking(checked((long)capacity * Unsafe.SizeOf<T>()));
         TimelineObjectPage<T> page = default;
         bool hasPage = false;
@@ -352,3 +391,6 @@ public static partial class ProjectTimelineReadPreparation
         public void Dispose() => _owned?.Dispose();
     }
 }
+
+public sealed record OpaqueMidiEventPropertySnapshot(long Tick, OpaqueMidiEventKind Kind,
+    byte MetaType, int PayloadLength, string PayloadHexPreview);

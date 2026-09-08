@@ -12,6 +12,7 @@
         "type": "Project",
         "dependencies": {
           "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.Common": "[1.0.0-dev, )",
           "Midora.Midi": "[1.0.0-dev, )"
         }
       },

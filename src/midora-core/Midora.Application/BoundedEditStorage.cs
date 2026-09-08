@@ -12,6 +12,8 @@ internal sealed class BoundedEditResources
     private long _resident;
     private long _working;
     private long _spill;
+    private long _borrowedPayload;
+    private readonly Dictionary<byte[], int> _borrowedPayloadArrays = new(ReferenceEqualityComparer.Instance);
 
     public BoundedEditResources(PagedEditResourceBudget budget = default, string? temporaryRoot = null)
     {
@@ -26,6 +28,12 @@ internal sealed class BoundedEditResources
     public long PeakResidentBytes { get; private set; }
     public long PeakWorkingBytes { get; private set; }
     public long PeakSpillBytes { get; private set; }
+    public long PeakBorrowedPayloadBytes { get; private set; }
+    // Active immutable payloads generally borrow source/page-cache storage;
+    // a clipboard/PayloadBank read can instead own one decoded return value.
+    // Count actual backing capacity separately from fixed-width working pages,
+    // across readers of this operation; the same array counts only once.
+    public long BorrowedPayloadBytes { get { lock (_sync) return _borrowedPayload; } }
     public long ResidentBytes { get { lock (_sync) return _resident; } }
     public long WorkingBytes { get { lock (_sync) return _working; } }
     public long SpillBytes { get { lock (_sync) return _spill; } }
@@ -64,6 +72,46 @@ internal sealed class BoundedEditResources
             _working += bytes;
             PeakWorkingBytes = Math.Max(PeakWorkingBytes, _working);
             return new WorkingLease(this, bytes);
+        }
+    }
+
+    public IDisposable BorrowPayload(ReadOnlyMemory<byte> payload)
+    {
+        byte[]? array = MemoryMarshal.TryGetArray(payload, out ArraySegment<byte> segment) ? segment.Array : null;
+        long bytes = array?.LongLength ?? payload.Length;
+        lock (_sync)
+        {
+            bool first = array is null || !_borrowedPayloadArrays.ContainsKey(array);
+            if (array is not null)
+            {
+                _borrowedPayloadArrays.TryGetValue(array, out int existing);
+                _borrowedPayloadArrays[array] = checked(existing + 1);
+            }
+            if (first) _borrowedPayload = checked(_borrowedPayload + bytes);
+            PeakBorrowedPayloadBytes = Math.Max(PeakBorrowedPayloadBytes, _borrowedPayload);
+            return new BorrowedPayloadLease(this, array, bytes);
+        }
+    }
+
+    private sealed class BorrowedPayloadLease(BoundedEditResources owner, byte[]? array, long bytes) : IDisposable
+    {
+        private BoundedEditResources? _owner = owner;
+        private byte[]? _array = array;
+        public void Dispose()
+        {
+            BoundedEditResources? value = Interlocked.Exchange(ref _owner, null);
+            if (value is null) return;
+            lock (value._sync)
+            {
+                byte[]? retained = Interlocked.Exchange(ref _array, null);
+                if (retained is not null)
+                {
+                    int remaining = value._borrowedPayloadArrays[retained] - 1;
+                    if (remaining != 0) { value._borrowedPayloadArrays[retained] = remaining; return; }
+                    value._borrowedPayloadArrays.Remove(retained);
+                }
+                value._borrowedPayload -= bytes;
+            }
         }
     }
 

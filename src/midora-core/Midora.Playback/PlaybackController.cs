@@ -137,8 +137,31 @@ public sealed class PlaybackController : IDisposable
     private Task _prewarmTask = Task.CompletedTask;
     private long _prewarmRequestGeneration;
     private int _knownSampleRate;
-    private CanonicalCompiledResult? _activeResult;
-    private MidiRenderPlan? _activePlan;
+    private CanonicalCompiledResult? _activeResultValue;
+    private MidiRenderPlan? _activePlanValue;
+    private IDisposable? _activeResultStorage;
+    private IDisposable? _activePlanStorage;
+    private CanonicalCompiledResult? _activeResult
+    {
+        get => _activeResultValue;
+        set => ReplaceActiveStorage(ref _activeResultValue, ref _activeResultStorage, value);
+    }
+    private MidiRenderPlan? _activePlan
+    {
+        get => _activePlanValue;
+        set => ReplaceActiveStorage(ref _activePlanValue, ref _activePlanStorage, value);
+    }
+
+    private void ReplaceActiveStorage<T>(ref T? target, ref IDisposable? lease, T? value)
+        where T : class, Midora.Common.IRetainedStorageSource
+    {
+        if (ReferenceEquals(target, value)) return;
+        IDisposable? next = value is null ? null : _session.RetainPreparationStorage(value);
+        IDisposable? previous = lease;
+        target = value;
+        lease = next;
+        previous?.Dispose();
+    }
     private TempoSampleMap? _activeTempoMap;
     private long _taskStartTick;
     private long _cursorTick;
@@ -456,9 +479,9 @@ public sealed class PlaybackController : IDisposable
                 actualSampleRate);
             ConfigureNextBufferingRecovery(compiled, plan);
             SetNextPlaybackCacheMode(RealtimePlaybackCacheMode.Disabled);
-            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeResult = compiled;
             _activePlan = plan;
+            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeTempoMap = new(compiled.TicksPerQuarterNote, compiled.Tempos);
             _heldPreviewOpenCompiler = compileOpen;
             _heldPreviewEndCompiler = compileEnd;
@@ -535,6 +558,8 @@ public sealed class PlaybackController : IDisposable
                     _activePlan,
                     continuationPlan,
                     producerFrontier);
+            using IDisposable replacementResultStorage = _session.RetainPreparationStorage(continuation);
+            using IDisposable replacementPlanStorage = _session.RetainPreparationStorage(replacement);
             heldBackend.ReplaceHeldPreviewFutureAndResume(
                 replacement,
                 producerFrontier,
@@ -914,9 +939,14 @@ public sealed class PlaybackController : IDisposable
                 ReleaseEditLock();
             }
         }
-        _backend.Dispose();
-        _prewarmCancellation.Dispose();
-        _disposed = true;
+        try { _backend.Dispose(); }
+        finally
+        {
+            _activeResult = null;
+            _activePlan = null;
+            _prewarmCancellation.Dispose();
+            _disposed = true;
+        }
     }
 
     public void SetSharedGroupMuted(MidoraId sharedGroupId, bool muted)
@@ -1027,9 +1057,9 @@ public sealed class PlaybackController : IDisposable
                 _audibleTracks);
             ConfigureNextBufferingRecovery(compiled, plan);
             SetNextPlaybackCacheMode(RealtimePlaybackCacheMode.UnitPcmAndPlaybackSpan);
-            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeResult = compiled;
             _activePlan = plan;
+            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeTempoMap = new(compiled.TicksPerQuarterNote, compiled.Tempos);
             LastError = null;
             SetState(_backend.IsBuffering ? PlaybackState.Buffering : PlaybackState.Playing);
@@ -1084,9 +1114,9 @@ public sealed class PlaybackController : IDisposable
             SetNextPlaybackCacheMode(taskKind == PlaybackTaskKind.SegmentPreview
                 ? RealtimePlaybackCacheMode.UnitPcm
                 : RealtimePlaybackCacheMode.Disabled);
-            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeResult = compiled;
             _activePlan = plan;
+            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeTempoMap = new(compiled.TicksPerQuarterNote, compiled.Tempos);
             LastError = null;
             SetState(_backend.IsBuffering ? PlaybackState.Buffering : PlaybackState.Playing);
@@ -1147,6 +1177,8 @@ public sealed class PlaybackController : IDisposable
                 _activePlan,
                 expandedPlan,
                 producerFrontier);
+            using IDisposable replacementResultStorage = _session.RetainPreparationStorage(expanded);
+            using IDisposable replacementPlanStorage = _session.RetainPreparationStorage(replacement);
             heldBackend.ReplaceHeldPreviewFutureAndResume(
                 replacement,
                 producerFrontier,

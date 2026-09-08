@@ -29,12 +29,14 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
     private readonly TimeSpan _backgroundDebounce;
     private readonly SemaphoreSlim _compileSignal = new(0, 1);
     private readonly CancellationTokenSource _disposeCancellation = new();
-    private readonly Dictionary<(long Fingerprint, int SampleRate), MidiRenderPlan> _samplePlans = [];
-    private readonly Dictionary<
+    private readonly PreparationStorageCache _preparationStorage = new(
+        PreparationStorageCache.DefaultBudgetBytes, PreparationStorageCache.DefaultMaximumEntries);
+    private readonly PreparationStorageMap<(long Fingerprint, int SampleRate), MidiRenderPlan> _samplePlans;
+    private readonly PreparationStorageMap<
         (long Fingerprint, long StartTick, long EndTick, int SampleRate),
-        MidiRenderPlan> _realtimePlans = [];
-    private readonly Dictionary<(long StartTick, long? EndTick), CanonicalCompiledResult>
-        _playbackRangeResults = [];
+        MidiRenderPlan> _realtimePlans;
+    private readonly PreparationStorageMap<(long StartTick, long? EndTick), CanonicalCompiledResult>
+        _playbackRangeResults;
     private MidoraProject _compilationProject;
     private AudioCacheSessionStore? _audioCacheStore;
     private AudioCacheWarning _audioCacheWarning;
@@ -88,6 +90,9 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         ProjectCompilationExecutionMode executionMode = ProjectCompilationExecutionMode.Synchronous,
         TimeSpan? backgroundDebounce = null)
     {
+        _samplePlans = new(_preparationStorage, 0);
+        _realtimePlans = new(_preparationStorage, 1);
+        _playbackRangeResults = new(_preparationStorage, 2);
         Project = project ?? throw new ArgumentNullException(nameof(project));
         _executionMode = executionMode;
         _backgroundDebounce = backgroundDebounce ?? TimeSpan.FromMilliseconds(75);
@@ -135,6 +140,11 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
     }
 
     public MidoraProject Project { get; }
+    public PreparationStorageSnapshot PreparationStorage => _preparationStorage.Snapshot;
+
+    /// <summary>Retains immutable preparation storage independently of cache eviction.</summary>
+    public IDisposable RetainPreparationStorage(Midora.Common.IRetainedStorageSource value) =>
+        _preparationStorage.Retain(value);
     internal ProjectEditingTimeSession EditingTimeSession => _editingTime;
     public IReadOnlyList<SoundFontConfiguration> EffectiveSoundFontConfigurations
     {
@@ -144,8 +154,34 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
     public IReadOnlyList<string> EffectiveSoundFontPaths { get; private set; }
     public string? EffectiveSoundFontPath => EffectiveSoundFontPaths.FirstOrDefault();
     public string? EffectiveSoundFontSetCacheIdentity { get; private set; }
-    public CanonicalCompiledResult LastAttempt { get; private set; }
-    public CanonicalCompiledResult? LastSuccessfulResult { get; private set; }
+    private CanonicalCompiledResult? _lastAttempt;
+    private CanonicalCompiledResult? _lastSuccessfulResult;
+    private IDisposable? _lastAttemptStorage;
+    private IDisposable? _lastSuccessfulStorage;
+    public CanonicalCompiledResult LastAttempt
+    {
+        get => _lastAttempt ?? throw new ObjectDisposedException(nameof(ProjectCompilationSession));
+        private set
+        {
+            IDisposable next = _preparationStorage.Retain(value, baseline: true);
+            IDisposable? previous = _lastAttemptStorage;
+            _lastAttempt = value;
+            _lastAttemptStorage = next;
+            previous?.Dispose();
+        }
+    }
+    public CanonicalCompiledResult? LastSuccessfulResult
+    {
+        get => _lastSuccessfulResult;
+        private set
+        {
+            IDisposable? next = value is null ? null : _preparationStorage.Retain(value, baseline: true);
+            IDisposable? previous = _lastSuccessfulStorage;
+            _lastSuccessfulResult = value;
+            _lastSuccessfulStorage = next;
+            previous?.Dispose();
+        }
+    }
     public CompilerRunTelemetry LastCompilationTelemetry => _compiler.LastTelemetry;
     public ProjectCompilationExecutionMode ExecutionMode => _executionMode;
     public ProjectCompilationState CompilationState
@@ -1501,6 +1537,18 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         {
             ClearSampleDomainCachesCore();
             _playbackRangeResults.Clear();
+            // Dropping an accounting lease must also drop this owner's strong
+            // product reference. An external consumer's result/lease remains
+            // valid independently; do not Dispose shared immutable sources.
+            _lastAttempt = null;
+            _lastSuccessfulResult = null;
+            _lastAttemptStorage?.Dispose();
+            _lastAttemptStorage = null;
+            _lastSuccessfulStorage?.Dispose();
+            _lastSuccessfulStorage = null;
+            // The public Project remains part of the session contract. Only
+            // release the extra background mirror, after its worker has ended.
+            _compilationProject = Project;
             try
             {
                 try

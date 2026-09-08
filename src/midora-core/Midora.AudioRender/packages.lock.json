@@ -33,6 +33,7 @@
         "type": "Project",
         "dependencies": {
           "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.Common": "[1.0.0-dev, )",
           "Midora.Midi": "[1.0.0-dev, )"
         }
       },
@@ -61,6 +62,7 @@
       "midora.domain": {
         "type": "Project",
         "dependencies": {
+          "Midora.Common": "[1.0.0-dev, )",
           "Midora.Mapping.Contract.V2": "[1.0.0-dev, )"
         }
       },

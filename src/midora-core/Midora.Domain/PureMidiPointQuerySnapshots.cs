@@ -323,7 +323,7 @@ public sealed class OpaqueMidiEventQuerySnapshot
     private readonly IPureMidiSegmentContentSource? _source;
     private readonly IReadOnlySet<MidoraId>? _sourceExclusions;
     private readonly PureMidiPointOverlayIndex<OpaqueMidiEventValue> _overlayIndex;
-    private readonly PureMidiSourceIdResolutionCache<OpaqueMidiEventSourceMatch> _sourceIdCache;
+    private readonly PureMidiOpaqueIdResolutionCache _sourceIdCache;
     private readonly OpaqueMidiEventValue[] _excluded;
 
     internal OpaqueMidiEventQuerySnapshot(
@@ -332,7 +332,7 @@ public sealed class OpaqueMidiEventQuerySnapshot
         IReadOnlySet<MidoraId>? sourceExclusions,
         IReadOnlyDictionary<MidoraId, OpaqueMidiEventValue> sourceValues,
         PureMidiPointOverlayIndex<OpaqueMidiEventValue> overlayIndex,
-        PureMidiSourceIdResolutionCache<OpaqueMidiEventSourceMatch> sourceIdCache,
+        PureMidiOpaqueIdResolutionCache sourceIdCache,
         int count,
         long generation)
     {
@@ -355,7 +355,10 @@ public sealed class OpaqueMidiEventQuerySnapshot
     public long Generation { get; }
 
     internal IEnumerable<OpaqueMidiEventSourceMatch> ResolveSourceMatches(IReadOnlySet<MidoraId> ids) =>
-        _source is null ? [] : _sourceIdCache.Resolve(ids, _source.QueryOpaqueEventsByIds);
+        _source is null ? [] : _sourceIdCache.Resolve(ids, _source);
+
+    internal IReadOnlyList<OpaqueSourceAddress> ResolveSourceAddresses(IReadOnlySet<MidoraId> ids) =>
+        _source is null ? [] : _sourceIdCache.ResolveAddresses(ids, _source);
 
     internal IEnumerable<PureMidiContentRangeSummary> GetRangeSummaries()
     {
@@ -464,7 +467,7 @@ public sealed class OpaqueMidiEventQuerySnapshot
                 sourceIds.RemoveWhere(_sourceExclusions.Contains);
             foreach (OpaqueMidiEventSourceMatch match in _sourceIdCache.Resolve(
                 sourceIds,
-                _source.QueryOpaqueEventsByIds))
+                _source))
             {
                 if (emitted.Add(match.Value.Id)) yield return match.Value;
             }

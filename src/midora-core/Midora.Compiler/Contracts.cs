@@ -115,7 +115,7 @@ public enum CompilationEndTickSource
     NaturalContent
 }
 
-public sealed class CompilationContextSummary
+public sealed partial class CompilationContextSummary
 {
     private readonly MidoraId[] _includedTrackIds;
     private readonly MidoraId[] _includedSubVoiceIds;
@@ -443,7 +443,7 @@ public readonly record struct CanonicalKeySignature(
 public readonly record struct CanonicalMarker(MidoraId Id, long Tick, string Name);
 public readonly record struct CanonicalEndMarker(MidoraId Id, long Tick);
 
-public sealed class CanonicalConductor
+public sealed partial class CanonicalConductor
 {
     private readonly CanonicalTempo[] _tempos;
     private readonly CanonicalTimeSignature[] _timeSignatures;
@@ -477,7 +477,7 @@ public sealed class CanonicalConductor
     public long? EndMarkerTick => EndMarker?.Tick;
 }
 
-public sealed class CanonicalCompiledResult
+public sealed partial class CanonicalCompiledResult
 {
     private readonly CanonicalMidiEvent[] _events;
     private readonly ChannelUnitAllocation[] _allocations;

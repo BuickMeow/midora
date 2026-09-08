@@ -8,7 +8,7 @@ namespace Midora.Compiler;
 
 public sealed partial class MidoraCompiler
 {
-    private sealed class PureMidiPagedCanonicalSource :
+    private sealed partial class PureMidiPagedCanonicalSource :
         ICanonicalMidiEventPageSource,
         ICanonicalMidiRenderPageSource,
         ICanonicalDemandFilteredMidiRenderPageSource,

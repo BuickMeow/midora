@@ -44,7 +44,7 @@ internal static class BoundedPreparedSelection
                     var opaque = segment.OpaqueEvents.CreateObjectSource();
                     resolvers.Add(ids => notes.QueryByIds(ids).Select(static value => value.Value.Id));
                     resolvers.Add(ids => events.QueryByIds(ids).Select(static value => value.Value.Id));
-                    resolvers.Add(ids => opaque.QueryByIds(ids).Select(static value => value.Value.Id));
+                    resolvers.Add(ids => opaque.QueryAddressesByIds(ids).Select(static value => value.Id));
                 }
             foreach (var instrument in project.EventInstruments.Where(i => changes.AffectsEverything || changes.EventInstrumentIds.Contains(i.Id)))
                 foreach (var voice in instrument.SubVoices)

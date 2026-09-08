@@ -33,6 +33,9 @@ public readonly record struct TimelineObjectPage<TValue>(
     IReadOnlyList<TValue> Values)
 {
     public int Count => Values.Count;
+    /// <summary>Backing payload array capacity held by this page, separate
+    /// from its value-array storage. Shared arrays within the page count once.</summary>
+    public long RetainedPayloadBytes { get; init; }
 }
 
 /// <summary>

@@ -424,6 +424,14 @@ public sealed class MidoraProjectPackageV1
                 targetPath: target,
                 innerException: exception);
         }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Serialization,
+                "Project validation could not complete its temporary storage work; the target was not changed.",
+                targetPath: target,
+                innerException: exception);
+        }
 
         string transactionId = Guid.NewGuid().ToString("N");
         string temporaryDirectory = Path.Combine(directory, $".midora-save-{transactionId}");
@@ -1061,7 +1069,7 @@ public sealed class MidoraProjectPackageV1
         }
         ValidateArrangementGraph(project);
 
-        StableIdSetV1 ids = new();
+        using StableIdValidatorV1 ids = new(cancellationToken);
         foreach (MidoraId id in EnumerateConductorIds(project.Conductor))
         {
             AddId(id, project.NextStableId, ids, "Conductor event");
@@ -1095,6 +1103,7 @@ public sealed class MidoraProjectPackageV1
                 AddId(id, project.NextStableId, ids, "Pure MIDI Track object");
             }
         }
+        ids.Complete();
     }
 
     private static void ValidateArrangementGraph(MidoraProject project)
@@ -2350,7 +2359,7 @@ public sealed class MidoraProjectPackageV1
         long nextStableId,
         CancellationToken cancellationToken)
     {
-        StableIdSetV1 ids = new();
+        using StableIdValidatorV1 ids = new(cancellationToken);
         if (conductor is not null)
         {
             foreach (MidoraId id in EnumerateConductorIds(conductor))
@@ -2447,6 +2456,7 @@ public sealed class MidoraProjectPackageV1
                 }
             }
         }
+        ids.Complete();
     }
 
     private static IEnumerable<MidoraId> EnumerateConductorIds(ConductorTrack conductor)
@@ -2531,38 +2541,8 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
-    private static void AddId(MidoraId id, long nextStableId, StableIdSetV1 ids, string source)
-    {
-        if (id == default || id.Value >= nextStableId || !ids.Add(id))
-        {
-            throw new InvalidDataException($"{source} stable ID is zero, duplicated, or not below nextStableId.");
-        }
-    }
-
-    private sealed class StableIdSetV1
-    {
-        private const int BlockBitShift = 20;
-        private const int BitsPerBlock = 1 << BlockBitShift;
-        private const int WordsPerBlock = BitsPerBlock / 64;
-        private readonly Dictionary<long, ulong[]> _blocks = [];
-
-        public bool Add(MidoraId id)
-        {
-            long value = id.Value;
-            long blockIndex = value >> BlockBitShift;
-            int bitInBlock = (int)(value & (BitsPerBlock - 1));
-            if (!_blocks.TryGetValue(blockIndex, out ulong[]? block))
-            {
-                block = new ulong[WordsPerBlock];
-                _blocks.Add(blockIndex, block);
-            }
-            int wordIndex = bitInBlock >> 6;
-            ulong mask = 1UL << (bitInBlock & 63);
-            if ((block[wordIndex] & mask) != 0) return false;
-            block[wordIndex] |= mask;
-            return true;
-        }
-    }
+    private static void AddId(MidoraId id, long nextStableId, StableIdValidatorV1 ids, string source) =>
+        ids.Add(id, nextStableId, source);
 
     private static MidoraId ParseId(StableIdJsonV1? value, string fieldName)
     {

@@ -89,6 +89,14 @@ internal sealed class PureMidiFormalTimelineObjectSource<TValue> : ITimelineObje
         return true;
     }
 
+    internal bool MapSourceAddress(int sourceIndex, MidoraId id, out int ordinal)
+    {
+        if ((uint)sourceIndex >= (uint)_sourceCount || _removedSourceIds.Contains(id))
+        { ordinal = -1; return false; }
+        ordinal = checked(sourceIndex - LowerBound(_removedSourceOrdinals, sourceIndex));
+        return true;
+    }
+
     public bool TryGetPageByOrdinal(
         int firstOrdinal,
         int count,
@@ -364,6 +372,7 @@ public sealed class DirectMidiChannelEventObjectSource : ITimelineObjectSource<D
 
 public sealed class OpaqueMidiEventObjectSource : ITimelineObjectSource<OpaqueMidiEventValue>
 {
+    public const long MaximumPagePayloadBytes = 4L * 1024 * 1024;
     private readonly PureMidiFormalTimelineObjectSource<OpaqueMidiEventValue> _source;
     private readonly OpaqueMidiEventQuerySnapshot _query;
     private readonly IPureMidiSegmentContentSource? _paged;
@@ -405,6 +414,14 @@ public sealed class OpaqueMidiEventObjectSource : ITimelineObjectSource<OpaqueMi
         foreach (var id in ids)
             if (_source.TryGetAdded(id, out int ordinal, out var value)) yield return new(ordinal, value);
     }
+    internal IEnumerable<OpaqueSourceAddress> QueryAddressesByIds(IReadOnlySet<MidoraId> ids)
+    {
+        foreach (var address in _query.ResolveSourceAddresses(ids))
+            if (_source.MapSourceAddress(address.Index, address.Id, out int ordinal))
+                yield return new(address.Id, ordinal);
+        foreach (var id in ids)
+            if (_source.TryGetAdded(id, out int ordinal, out _)) yield return new(id, ordinal);
+    }
     internal bool TryQueryByIdsCached(IReadOnlySet<MidoraId> ids, List<OpaqueMidiEventSourceMatch> destination)
     {
         List<OpaqueMidiEventSourceMatch> matches = [];
@@ -417,8 +434,31 @@ public sealed class OpaqueMidiEventObjectSource : ITimelineObjectSource<OpaqueMi
             if (_source.TryGetAdded(id, out int ordinal, out var value)) destination.Add(new(ordinal, value));
         return true;
     }
-    public bool TryGetPageByOrdinal(int firstOrdinal, int count, out TimelineObjectPage<OpaqueMidiEventValue> page) =>
-        _source.TryGetPageByOrdinal(firstOrdinal, count, out page);
+    public bool TryGetPageByOrdinal(int firstOrdinal, int count, out TimelineObjectPage<OpaqueMidiEventValue> page)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(firstOrdinal);
+        if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (firstOrdinal >= Count) { page = default; return false; }
+        int maximumCount = Math.Min(Math.Min(count, PageCapacity), Count - firstOrdinal);
+        List<OpaqueMidiEventValue> values = new(Math.Min(maximumCount, 128));
+        long retained = 0;
+        for (int offset = 0; offset < maximumCount; offset++)
+        {
+            OpaqueMidiEventValue value = GetByOrdinal(firstOrdinal + offset);
+            long bytes = OpaqueMidiPayloadMemory.GetRetainedBytes(value.Payload);
+            // A single legal large event is never rejected or sliced. The
+            // temporary look-ahead value is not retained by the returned page.
+            if (values.Count != 0 && bytes > MaximumPagePayloadBytes - retained) break;
+            values.Add(value);
+            retained = checked(retained + bytes);
+            if (retained >= MaximumPagePayloadBytes) break;
+        }
+        page = new(SourceRevision, firstOrdinal, values.ToArray())
+        {
+            RetainedPayloadBytes = OpaqueMidiPayloadMemory.GetRetainedBytes(values)
+        };
+        return true;
+    }
     public int FindOrdinalAtOrAfterTick(long tick) => _source.FindOrdinalAtOrAfterTick(tick);
     public bool TryFindOrdinalById(MidoraId id, out int ordinal) => _source.TryFindOrdinalById(id, out ordinal);
     public IEnumerable<OpaqueMidiEventValue> QueryTickRange(TimelineObjectRangeQuery query) => _source.QueryTickRange(query);

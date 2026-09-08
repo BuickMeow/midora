@@ -5057,7 +5057,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     private readonly HashSet<MidoraId> _dirtyOverlayIds = [];
     private readonly object _snapshotPublicationSync = new();
     private OpaqueMidiEventQuerySnapshot? _querySnapshot;
-    private PureMidiSourceIdResolutionCache<OpaqueMidiEventSourceMatch> _sourceIdCache =
+    private PureMidiOpaqueIdResolutionCache _sourceIdCache =
         CreateSourceIdCache();
     private ImmutableHashSet<MidoraId> _formalRemovedSourceIds =
         ImmutableHashSet<MidoraId>.Empty;
@@ -5449,7 +5449,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
                     .ToArray();
             foreach (OpaqueMidiEventSourceMatch match in _sourceIdCache.Resolve(
                 sourceIds,
-                _source.QueryOpaqueEventsByIds))
+                _source))
             {
                 OpaqueMidiEvent value = _replacements.TryGetValue(match.Value.Id, out OpaqueMidiEvent? replacement)
                     ? replacement
@@ -5497,7 +5497,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
         {
             foreach (OpaqueMidiEventSourceMatch match in _sourceIdCache.Resolve(
                 unresolvedSourceIds,
-                _source.QueryOpaqueEventsByIds))
+                _source))
                 yield return Materialize(match.Value, match.Index, retain: true);
         }
         foreach (MidoraId id in ids)
@@ -6406,6 +6406,5 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
         return result;
     }
 
-    private static PureMidiSourceIdResolutionCache<OpaqueMidiEventSourceMatch> CreateSourceIdCache() =>
-        new(static match => match.Value.Id, static match => match.Index);
+    private static PureMidiOpaqueIdResolutionCache CreateSourceIdCache() => new();
 }

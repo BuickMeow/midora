@@ -2628,12 +2628,15 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         _ => target.Kind.ToString()
     };
 
-    internal static string OpaqueMidiEventLabel(OpaqueMidiEvent value) => value.Kind switch
+    internal static string OpaqueMidiEventLabel(OpaqueMidiEvent value) =>
+        OpaqueMidiEventLabel(value.Kind, value.MetaType, value.Payload.Length);
+
+    internal static string OpaqueMidiEventLabel(OpaqueMidiEventKind kind, byte metaType, int payloadLength) => kind switch
     {
-        OpaqueMidiEventKind.Meta => $"Meta 0x{value.MetaType:X2} · {value.Payload.Length} bytes",
-        OpaqueMidiEventKind.SystemExclusive => $"SysEx F0 · {value.Payload.Length} bytes",
-        OpaqueMidiEventKind.SystemExclusiveContinuation => $"SysEx F7 · {value.Payload.Length} bytes",
-        _ => value.Kind.ToString()
+        OpaqueMidiEventKind.Meta => $"Meta 0x{metaType:X2} · {payloadLength} bytes",
+        OpaqueMidiEventKind.SystemExclusive => $"SysEx F0 · {payloadLength} bytes",
+        OpaqueMidiEventKind.SystemExclusiveContinuation => $"SysEx F7 · {payloadLength} bytes",
+        _ => kind.ToString()
     };
 
     internal static double NormalizeDirectMidiEventValue(DirectMidiChannelEvent value) => value.Kind switch

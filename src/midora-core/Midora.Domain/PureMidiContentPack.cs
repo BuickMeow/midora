@@ -2,7 +2,10 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using Midora.Common;
 
 namespace Midora.Domain;
 
@@ -39,11 +42,18 @@ public sealed class PureMidiContentPackWriter : IDisposable
     private readonly CancellationToken _cancellationToken;
     private readonly ConcurrentExclusiveSchedulerPair _encoderScheduler;
     private readonly Queue<PendingEncodedPage> _pendingPages = [];
+    private readonly LinkedList<PageBuilder> _residentBuilders = [];
+    private readonly BuilderSpool _builderSpool = new();
     private readonly int _maximumPendingPageCount;
     private readonly long _encodeBufferBudget;
     private readonly Action? _encodePageTestHook;
     private readonly Action<bool>? _beforePageWaitTestHook;
+    private readonly Action? _beforeBuilderSpillTestHook;
     private long _pendingReservedBytes;
+    private long _activeBufferBytes;
+    private long _peakReservedBytes;
+    private long _pendingActualBufferBytes;
+    private long _peakActualBufferBytes;
     private bool _encoderCompleted;
     private bool _builderBuffersReleased;
     private bool _completed;
@@ -67,7 +77,8 @@ public sealed class PureMidiContentPackWriter : IDisposable
         int encoderConcurrency,
         long encodeBufferBudget,
         Action? encodePageTestHook = null,
-        Action<bool>? beforePageWaitTestHook = null)
+        Action<bool>? beforePageWaitTestHook = null,
+        Action? beforeBuilderSpillTestHook = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (encoderConcurrency <= 0)
@@ -83,6 +94,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
         _encodeBufferBudget = encodeBufferBudget;
         _encodePageTestHook = encodePageTestHook;
         _beforePageWaitTestHook = beforePageWaitTestHook;
+        _beforeBuilderSpillTestHook = beforeBuilderSpillTestHook;
         string? directory = System.IO.Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
         _stream = new FileStream(
@@ -97,6 +109,15 @@ public sealed class PureMidiContentPackWriter : IDisposable
     }
 
     public string Path => _path;
+
+    internal long ActiveBuilderCapacityBytes => _activeBufferBytes;
+    internal long PendingPageReservedBytes => _pendingReservedBytes;
+    internal long PeakReservedBytes => _peakReservedBytes;
+    internal long PendingActualBufferBytes => _pendingActualBufferBytes;
+    internal long PeakActualBufferBytes => _peakActualBufferBytes;
+    internal long BuilderSpillCount => _builderSpool.SpillCount;
+    internal long BuilderSpoolLength => _builderSpool.Length;
+    internal string? BuilderSpoolPath => _builderSpool.Path;
 
     public void AddNote(MidoraId segmentId, DirectMidiNoteValue value)
     {
@@ -167,6 +188,8 @@ public sealed class PureMidiContentPackWriter : IDisposable
             ? PureMidiContentPack.Open(_path)
             : PureMidiContentPack.Open(_path, decodedCache);
         _completed = true;
+        _pages.Clear();
+        _pages.Capacity = 0;
         return result;
     }
 
@@ -175,7 +198,8 @@ public sealed class PureMidiContentPackWriter : IDisposable
         if (_disposed) return;
         _disposed = true;
         Exception? encoderFailure = StopEncoderPipeline();
-        ReleaseBuilderBuffers();
+        try { ReleaseBuilderBuffers(); }
+        catch (Exception exception) { encoderFailure ??= exception; }
         try
         {
             DisposeStreams();
@@ -215,16 +239,97 @@ public sealed class PureMidiContentPackWriter : IDisposable
         var key = (segmentId, kind);
         if (!_builders.TryGetValue(key, out PageBuilder? result))
         {
-            result = new(segmentId, kind, Flush);
+            result = new(segmentId, kind, this);
             _builders.Add(key, result);
         }
+        TouchBuilder(result);
         return result;
     }
+
+    private void TouchBuilder(PageBuilder builder)
+    {
+        if (builder.ResidentNode is not null)
+        {
+            _residentBuilders.Remove(builder.ResidentNode);
+            _residentBuilders.AddLast(builder.ResidentNode);
+        }
+        else builder.ResidentNode = _residentBuilders.AddLast(builder);
+    }
+
+    private void EnsureBufferRoom(PageBuilder protectedBuilder, long additionalBytes)
+    {
+        _cancellationToken.ThrowIfCancellationRequested();
+        while (_pendingPages.Count != 0
+            && _activeBufferBytes + _pendingReservedBytes + additionalBytes > _encodeBufferBudget)
+            CommitOldestPage();
+        while (_activeBufferBytes + _pendingReservedBytes + additionalBytes > _encodeBufferBudget)
+        {
+            LinkedListNode<PageBuilder>? candidate = _residentBuilders.First;
+            while (candidate is not null
+                && (ReferenceEquals(candidate.Value, protectedBuilder)
+                    || candidate.Value.CapacityBytes == 0))
+                candidate = candidate.Next;
+            if (candidate is null) break;
+            candidate.Value.Spill();
+            _residentBuilders.Remove(candidate);
+            candidate.Value.ResidentNode = null;
+        }
+        // The internal test budget can be smaller than one legal page's
+        // encoding/growth peak. Never reject that page: after all other work is
+        // drained, one protected page may borrow its measured working capacity.
+        ObserveCapacityPeak(additionalBytes);
+    }
+
+    private void ObserveCapacityPeak(long additionalBytes = 0) =>
+        _peakReservedBytes = Math.Max(_peakReservedBytes,
+            checked(_activeBufferBytes + _pendingReservedBytes + additionalBytes));
+
+    private void ChangeActiveCapacity(long delta)
+    {
+        _activeBufferBytes = checked(_activeBufferBytes + delta);
+        ObserveCapacityPeak();
+        ObserveActualCapacityPeak();
+    }
+
+    private void ChangePendingActualCapacity(long delta)
+    {
+        Interlocked.Add(ref _pendingActualBufferBytes, delta);
+        ObserveActualCapacityPeak();
+    }
+
+    private void ObserveActualCapacityPeak(long additionalBytes = 0)
+    {
+        long value = checked(Volatile.Read(ref _activeBufferBytes)
+            + Volatile.Read(ref _pendingActualBufferBytes) + additionalBytes);
+        long previous = Volatile.Read(ref _peakActualBufferBytes);
+        while (value > previous)
+        {
+            long observed = Interlocked.CompareExchange(ref _peakActualBufferBytes, value, previous);
+            if (observed == previous) break;
+            previous = observed;
+        }
+    }
+
+    private static int PooledByteCapacity(int length) =>
+        checked((int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(16, length)));
 
     private void Flush(PageBuilder builder)
     {
         if (builder.RecordCount == 0) return;
         _cancellationToken.ThrowIfCancellationRequested();
+        builder.EnsureResident();
+        int sourceBytes = builder.DecodedByteCount;
+        bool endpoints = builder.IsEndpoint;
+        int compressedCapacity = PooledByteCapacity(Math.Max(4096,
+            BrotliEncoder.GetMaxCompressedLength(sourceBytes)));
+        long reservation = checked(
+            (endpoints ? builder.CapacityBytes : 0L)
+            + PooledByteCapacity(sourceBytes)
+            // Include both arrays temporarily alive while the compressed buffer
+            // grows, and the final pool bucket (not compressed payload length).
+            + compressedCapacity + compressedCapacity / 2L);
+        EnsureBufferRoom(builder, reservation);
+        while (_pendingPages.Count >= _maximumPendingPageCount) CommitOldestPage();
         ArraySegment<byte> decoded = builder.PreparePage();
         DirectMidiNoteValue[]? noteEndpoints = builder.TakeNoteEndpointBuffer();
         DirectMidiChannelEventValue[]? channelEndpoints = builder.TakeChannelEndpointBuffer();
@@ -239,21 +344,17 @@ public sealed class PureMidiContentPackWriter : IDisposable
                 $"A Pure MIDI content page decoded to {decodedByteCount} bytes, exceeding {MaximumDecodedPageByteCount} bytes.");
         }
         bool serializesEndpoints = noteEndpoints is not null || channelEndpoints is not null;
-        long reservation = checked(
-            decodedByteCount
-            + (serializesEndpoints ? decodedByteCount : 0L)
-            + (long)BrotliEncoder.GetMaxCompressedLength(decodedByteCount));
-        while (_pendingPages.Count != 0
-            && (_pendingReservedBytes + reservation > _encodeBufferBudget
-                || _pendingPages.Count >= _maximumPendingPageCount))
-        {
-            CommitOldestPage();
-        }
-
-        byte[]? decodedBuffer = null;
+        byte[]? decodedBuffer = ArrayPool<byte>.Shared.Rent(decodedByteCount);
+        long actualInputCapacity = decodedBuffer.LongLength
+            + (noteEndpoints?.LongLength ?? 0) * Unsafe.SizeOf<DirectMidiNoteValue>()
+            + (channelEndpoints?.LongLength ?? 0) * Unsafe.SizeOf<DirectMidiChannelEventValue>();
+        // The array actually returned by the pool, not the requested size, owns
+        // the pending bytes. Normal shared-pool buckets equal the estimate;
+        // account larger returns as well before scheduling any encoder.
+        reservation = checked(actualInputCapacity + compressedCapacity + compressedCapacity / 2L);
+        ChangePendingActualCapacity(actualInputCapacity);
         if (!serializesEndpoints)
         {
-            decodedBuffer = ArrayPool<byte>.Shared.Rent(decodedByteCount);
             decoded.AsSpan().CopyTo(decodedBuffer);
         }
         var ordinalKey = (builder.SegmentId, builder.Kind);
@@ -280,7 +381,8 @@ public sealed class PureMidiContentPackWriter : IDisposable
             noteEndpoints,
             channelEndpoints,
             _cancellationToken,
-            _encodePageTestHook);
+            _encodePageTestHook,
+            ChangePendingActualCapacity);
         Task<EncodedPage>? task = null;
         try
         {
@@ -292,6 +394,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
                 _encoderScheduler.ConcurrentScheduler);
             _pendingPages.Enqueue(new(task, reservation));
             _pendingReservedBytes = checked(_pendingReservedBytes + reservation);
+            ObserveCapacityPeak();
         }
         catch
         {
@@ -311,8 +414,10 @@ public sealed class PureMidiContentPackWriter : IDisposable
             if (decodedBuffer is null)
             {
                 decodedBuffer = ArrayPool<byte>.Shared.Rent(page.DecodedByteCount);
-                SerializeEndpoints(page, decodedBuffer);
+                page.ChangeActualCapacity(decodedBuffer.LongLength);
             }
+            if (page.NoteEndpoints is not null || page.ChannelEndpoints is not null)
+                SerializeEndpoints(page, decodedBuffer);
             byte[] decodedSha256 = SHA256.HashData(
                 decodedBuffer.AsSpan(0, page.DecodedByteCount));
             page.CancellationToken.ThrowIfCancellationRequested();
@@ -320,7 +425,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
                 page.DecodedByteCount / 8,
                 4 * 1024,
                 256 * 1024);
-            using PooledWriteStream compressed = new(initialStoredCapacity);
+            using PooledWriteStream compressed = new(initialStoredCapacity, page.ChangeActualCapacity);
             using (BrotliStream brotli = new(
                 compressed,
                 CompressionLevel.Fastest,
@@ -413,15 +518,17 @@ public sealed class PureMidiContentPackWriter : IDisposable
             ArrayPool<DirectMidiNoteValue>.Shared.Return(page.NoteEndpoints);
         if (page.ChannelEndpoints is not null)
             ArrayPool<DirectMidiChannelEventValue>.Shared.Return(page.ChannelEndpoints);
+        page.ChangeActualCapacity(-((decodedBuffer?.LongLength ?? 0)
+            + (page.NoteEndpoints?.LongLength ?? 0) * Unsafe.SizeOf<DirectMidiNoteValue>()
+            + (page.ChannelEndpoints?.LongLength ?? 0) * Unsafe.SizeOf<DirectMidiChannelEventValue>()));
     }
 
     private void CommitOldestPage()
     {
         PendingEncodedPage pending = _pendingPages.Dequeue();
-        _pendingReservedBytes -= pending.ReservedBytes;
-        EncodedPage encoded = WaitForEncodedPage(pending);
-        using (encoded)
+        try
         {
+            using EncodedPage encoded = WaitForEncodedPage(pending);
             _cancellationToken.ThrowIfCancellationRequested();
             long offset = _stream.Position;
             _stream.Write(encoded.Stored.Buffer.AsSpan(0, encoded.Stored.Count));
@@ -445,6 +552,10 @@ public sealed class PureMidiContentPackWriter : IDisposable
                 encoded.Stored.Count,
                 encoded.Source.DecodedByteCount,
                 encoded.DecodedSha256));
+        }
+        finally
+        {
+            _pendingReservedBytes -= pending.ReservedBytes;
         }
     }
 
@@ -471,7 +582,6 @@ public sealed class PureMidiContentPackWriter : IDisposable
         while (_pendingPages.Count != 0)
         {
             PendingEncodedPage pending = _pendingPages.Dequeue();
-            _pendingReservedBytes -= pending.ReservedBytes;
             try
             {
                 using EncodedPage encoded = WaitForEncodedPage(pending);
@@ -479,6 +589,10 @@ public sealed class PureMidiContentPackWriter : IDisposable
             catch (Exception exception)
             {
                 failure ??= exception;
+            }
+            finally
+            {
+                _pendingReservedBytes -= pending.ReservedBytes;
             }
         }
         CompleteEncoderScheduling();
@@ -490,6 +604,12 @@ public sealed class PureMidiContentPackWriter : IDisposable
         if (_builderBuffersReleased) return;
         _builderBuffersReleased = true;
         foreach (PageBuilder builder in _builders.Values) builder.ReleaseBuffers();
+        _builders.Clear();
+        _builders.TrimExcess();
+        _nextOrdinals.Clear();
+        _nextOrdinals.TrimExcess();
+        _residentBuilders.Clear();
+        _builderSpool.Dispose();
     }
 
     private readonly record struct PendingEncodedPage(
@@ -517,7 +637,8 @@ public sealed class PureMidiContentPackWriter : IDisposable
         DirectMidiNoteValue[]? NoteEndpoints,
         DirectMidiChannelEventValue[]? ChannelEndpoints,
         CancellationToken CancellationToken,
-        Action? EncodePageTestHook);
+        Action? EncodePageTestHook,
+        Action<long> ChangeActualCapacity);
 
     private sealed class EncodedPage(
         UnencodedPage source,
@@ -535,6 +656,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
             if (_disposed) return;
             _disposed = true;
             ArrayPool<byte>.Shared.Return(Stored.Buffer);
+            Source.ChangeActualCapacity(-Stored.Buffer.LongLength);
         }
     }
 
@@ -544,12 +666,15 @@ public sealed class PureMidiContentPackWriter : IDisposable
     {
         private byte[]? _buffer;
         private int _length;
+        private readonly Action<long> _capacityChanged;
 
-        public PooledWriteStream(int initialCapacity)
+        public PooledWriteStream(int initialCapacity, Action<long> capacityChanged)
         {
             if (initialCapacity <= 0)
                 throw new ArgumentOutOfRangeException(nameof(initialCapacity));
             _buffer = ArrayPool<byte>.Shared.Rent(initialCapacity);
+            _capacityChanged = capacityChanged;
+            _capacityChanged(_buffer.LongLength);
         }
 
         public override bool CanRead => false;
@@ -595,7 +720,11 @@ public sealed class PureMidiContentPackWriter : IDisposable
         protected override void Dispose(bool disposing)
         {
             byte[]? buffer = Interlocked.Exchange(ref _buffer, null);
-            if (buffer is not null) ArrayPool<byte>.Shared.Return(buffer);
+            if (buffer is not null)
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+                _capacityChanged(-buffer.LongLength);
+            }
             base.Dispose(disposing);
         }
 
@@ -619,9 +748,11 @@ public sealed class PureMidiContentPackWriter : IDisposable
                 nextLength = checked(nextLength * 2);
             }
             byte[] replacement = ArrayPool<byte>.Shared.Rent(nextLength);
+            _capacityChanged(replacement.LongLength);
             current.AsSpan(0, _length).CopyTo(replacement);
             _buffer = replacement;
             ArrayPool<byte>.Shared.Return(current);
+            _capacityChanged(-current.LongLength);
         }
     }
 
@@ -658,6 +789,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_completed) throw new InvalidOperationException("The content pack is already complete.");
+        _cancellationToken.ThrowIfCancellationRequested();
     }
 
     private void DisposeStreams()
@@ -668,11 +800,94 @@ public sealed class PureMidiContentPackWriter : IDisposable
         _stream.Dispose();
     }
 
+    /// <summary>
+    /// Stores incomplete builders without publishing pages or changing their
+    /// frozen write order. Bucket extents are reused, so repeatedly revisiting
+    /// a builder does not append another permanent copy of its tail.
+    /// </summary>
+    private sealed class BuilderSpool : IDisposable
+    {
+        private readonly Dictionary<int, Stack<long>> _free = [];
+        private MidoraOwnedTemporaryDirectoryLease? _lease;
+        private FileStream? _file;
+        public long SpillCount { get; private set; }
+        public long Length => _file?.Length ?? 0;
+        public string? Path { get; private set; }
+
+        public readonly record struct Extent(long Offset, int Length, int Capacity, byte[] Sha256);
+
+        public Extent Write(ReadOnlySpan<byte> bytes)
+        {
+            EnsureFile();
+            int capacity = PooledByteCapacity(bytes.Length);
+            long offset = _free.TryGetValue(capacity, out Stack<long>? offsets) && offsets.TryPop(out long freeOffset)
+                ? freeOffset : _file!.Length;
+            if (offset == _file!.Length) _file.SetLength(checked(offset + capacity));
+            _file.Position = offset;
+            _file.Write(bytes);
+            SpillCount++;
+            return new(offset, bytes.Length, capacity, SHA256.HashData(bytes));
+        }
+
+        public void Read(Extent extent, Span<byte> destination)
+        {
+            if (destination.Length != extent.Length) throw new InvalidOperationException();
+            _file!.Position = extent.Offset;
+            _file.ReadExactly(destination);
+            Span<byte> actualHash = stackalloc byte[32];
+            SHA256.HashData(destination, actualHash);
+            if (!actualHash.SequenceEqual(extent.Sha256))
+                throw new InvalidDataException("An incomplete Pure MIDI page spool checksum is invalid.");
+        }
+
+        public void Release(Extent extent)
+        {
+            if (!_free.TryGetValue(extent.Capacity, out Stack<long>? offsets))
+                _free.Add(extent.Capacity, offsets = []);
+            offsets.Push(extent.Offset);
+        }
+
+        private void EnsureFile()
+        {
+            if (_file is not null) return;
+            _lease = MidoraOwnedTemporaryDirectoryLease.Create(
+                MidoraProgramData.Current.CompilerRunsDirectory, "content-build");
+            Path = System.IO.Path.Combine(_lease.DirectoryPath, "incomplete-pages.bin");
+            try
+            {
+                _file = new(Path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                    bufferSize: 1, FileOptions.RandomAccess | FileOptions.DeleteOnClose);
+            }
+            catch
+            {
+                _lease.Dispose();
+                _lease = null;
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            try { _file?.Dispose(); }
+            finally
+            {
+                _file = null;
+                try { _lease?.Dispose(); }
+                finally
+                {
+                    _lease = null;
+                    _free.Clear();
+                }
+            }
+        }
+    }
+
     private sealed class PageBuilder
     {
-        private readonly Action<PageBuilder> _flush;
-        private readonly MemoryStream _buffer = new(64 * 1024);
-        private readonly BinaryWriter _writer;
+        private readonly PureMidiContentPackWriter _owner;
+        private MemoryStream? _buffer;
+        private BinaryWriter? _writer;
+        private BuilderSpool.Extent? _spooled;
         private int _recordCount;
         private long _minimumTick;
         private long _maximumTick;
@@ -691,17 +906,25 @@ public sealed class PureMidiContentPackWriter : IDisposable
         public PageBuilder(
             MidoraId segmentId,
             PureMidiContentRecordKind kind,
-            Action<PageBuilder> flush)
+            PureMidiContentPackWriter owner)
         {
             SegmentId = segmentId;
             Kind = kind;
-            _flush = flush;
-            _writer = new(_buffer, System.Text.Encoding.UTF8, leaveOpen: true);
+            _owner = owner;
         }
 
         public MidoraId SegmentId { get; }
         public PureMidiContentRecordKind Kind { get; }
         public int RecordCount => _recordCount;
+        public LinkedListNode<PageBuilder>? ResidentNode { get; set; }
+        public bool IsEndpoint => Kind is PureMidiContentRecordKind.NoteOnEndpoint
+            or PureMidiContentRecordKind.NoteOffEndpoint or PureMidiContentRecordKind.ChannelEventEndpoint;
+        public long CapacityBytes => (_buffer?.Capacity ?? 0L)
+            + (_noteEndpoints?.LongLength ?? 0) * Unsafe.SizeOf<DirectMidiNoteValue>()
+            + (_channelEndpoints?.LongLength ?? 0) * Unsafe.SizeOf<DirectMidiChannelEventValue>();
+        public int DecodedByteCount => IsEndpoint
+            ? checked(_recordCount * (Kind == PureMidiContentRecordKind.ChannelEventEndpoint ? 36 : 52))
+            : checked((int)(_buffer?.Length ?? _spooled?.Length ?? 0));
         public int LastPageRecordCount { get; private set; }
         public long LastPageMinimumTick { get; private set; }
         public long LastPageMaximumTick { get; private set; }
@@ -727,7 +950,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
             EnsureRoom(recordBytes);
             if (Kind == PureMidiContentRecordKind.Note)
             {
-                WriteNote(_writer, value);
+                WriteNote(_writer!, value);
                 Record(
                     value.Id,
                     value.StartTick,
@@ -736,9 +959,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
                     rasterValue: value.NoteOnVelocity);
                 return;
             }
-            _noteEndpoints ??= ArrayPool<DirectMidiNoteValue>.Shared.Rent(
-                MaximumEndpointPageRecordCount);
-            _noteEndpoints[_recordCount] = value;
+            _noteEndpoints![_recordCount] = value;
             long noteEnd = SaturatingAdd(value.StartTick, Math.Max(1, value.LengthTicks));
             long endpointTick = Kind == PureMidiContentRecordKind.NoteOnEndpoint
                 ? value.StartTick
@@ -763,13 +984,11 @@ public sealed class PureMidiContentPackWriter : IDisposable
             EnsureRoom(recordBytes);
             if (Kind == PureMidiContentRecordKind.ChannelEvent)
             {
-                WriteChannelEvent(_writer, value);
+                WriteChannelEvent(_writer!, value);
             }
             else
             {
-                _channelEndpoints ??= ArrayPool<DirectMidiChannelEventValue>.Shared.Rent(
-                    MaximumEndpointPageRecordCount);
-                _channelEndpoints[_recordCount] = value;
+                _channelEndpoints![_recordCount] = value;
             }
             Record(value.Id, value.Tick, value.Tick, -1, rasterValue: value.Data2);
         }
@@ -784,7 +1003,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
                     $"Opaque MIDI event {value.Id.Value} exceeds the decoded page byte limit.");
             }
             EnsureRoom(recordBytes);
-            _writer.Write(value.Id.Value);
+            _writer!.Write(value.Id.Value);
             _writer.Write(value.Tick);
             _writer.Write((int)value.Kind);
             _writer.Write(value.MetaType);
@@ -796,7 +1015,7 @@ public sealed class PureMidiContentPackWriter : IDisposable
 
         public ArraySegment<byte> PreparePage()
         {
-            _writer.Flush();
+            _writer?.Flush();
             LastPageRecordCount = _recordCount;
             LastPageMinimumTick = _minimumTick;
             LastPageMaximumTick = _maximumTick;
@@ -809,13 +1028,15 @@ public sealed class PureMidiContentPackWriter : IDisposable
             LastPageLaneMaskHigh = _laneMaskHigh;
             LastPageMinimumRasterValue = _minimumRasterValue;
             LastPageMaximumRasterValue = _maximumRasterValue;
-            return new(_buffer.GetBuffer(), 0, checked((int)_buffer.Length));
+            return _buffer is null ? default : new(_buffer.GetBuffer(), 0, checked((int)_buffer.Length));
         }
 
         public DirectMidiNoteValue[]? TakeNoteEndpointBuffer()
         {
             DirectMidiNoteValue[]? result = _noteEndpoints;
             _noteEndpoints = null;
+            if (result is not null)
+                _owner.ChangeActiveCapacity(-result.LongLength * Unsafe.SizeOf<DirectMidiNoteValue>());
             return result;
         }
 
@@ -823,11 +1044,14 @@ public sealed class PureMidiContentPackWriter : IDisposable
         {
             DirectMidiChannelEventValue[]? result = _channelEndpoints;
             _channelEndpoints = null;
+            if (result is not null)
+                _owner.ChangeActiveCapacity(-result.LongLength * Unsafe.SizeOf<DirectMidiChannelEventValue>());
             return result;
         }
 
         public void ReleaseBuffers()
         {
+            long capacity = CapacityBytes;
             if (_noteEndpoints is not null)
             {
                 ArrayPool<DirectMidiNoteValue>.Shared.Return(_noteEndpoints);
@@ -838,14 +1062,17 @@ public sealed class PureMidiContentPackWriter : IDisposable
                 ArrayPool<DirectMidiChannelEventValue>.Shared.Return(_channelEndpoints);
                 _channelEndpoints = null;
             }
-            _writer.Dispose();
-            _buffer.Dispose();
+            _writer?.Dispose();
+            _buffer?.Dispose();
+            _writer = null;
+            _buffer = null;
+            _owner.ChangeActiveCapacity(-capacity);
         }
 
         public void ResetPage()
         {
-            _buffer.SetLength(0);
-            _buffer.Position = 0;
+            _buffer?.SetLength(0);
+            if (_buffer is not null) _buffer.Position = 0;
             _recordCount = 0;
             _maximumActiveEndTick = -1;
             _laneMaskLow = 0;
@@ -861,10 +1088,95 @@ public sealed class PureMidiContentPackWriter : IDisposable
                     : MaximumPageRecordCount;
             if (_recordCount != 0
                 && (_recordCount >= maximumRecords
-                    || _buffer.Length + nextRecordBytes > MaximumDecodedPageByteCount))
+                    || DecodedByteCount + nextRecordBytes > MaximumDecodedPageByteCount))
             {
-                _flush(this);
+                _owner.Flush(this);
             }
+            EnsureResident();
+            if (Kind is PureMidiContentRecordKind.NoteOnEndpoint or PureMidiContentRecordKind.NoteOffEndpoint)
+                GrowEndpoint(ref _noteEndpoints, _recordCount + 1);
+            else if (Kind == PureMidiContentRecordKind.ChannelEventEndpoint)
+                GrowEndpoint(ref _channelEndpoints, _recordCount + 1);
+            else GrowByteBuffer(checked(DecodedByteCount + nextRecordBytes));
+        }
+
+        private void GrowEndpoint<T>(ref T[]? buffer, int required) where T : struct
+        {
+            if (buffer is not null && buffer.Length >= required) return;
+            int desired = Math.Max(16, buffer is null ? required : Math.Max(required, buffer.Length * 2));
+            int capacity = checked((int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)desired));
+            long bytes = (long)capacity * Unsafe.SizeOf<T>();
+            _owner.EnsureBufferRoom(this, bytes);
+            T[] replacement = ArrayPool<T>.Shared.Rent(capacity);
+            long actualBytes = replacement.LongLength * Unsafe.SizeOf<T>();
+            _owner.ChangeActiveCapacity(actualBytes);
+            if (buffer is not null)
+            {
+                buffer.AsSpan(0, _recordCount).CopyTo(replacement);
+                _owner.ChangeActiveCapacity(-buffer.LongLength * Unsafe.SizeOf<T>());
+                ArrayPool<T>.Shared.Return(buffer);
+            }
+            buffer = replacement;
+        }
+
+        private void GrowByteBuffer(int required)
+        {
+            int oldCapacity = _buffer?.Capacity ?? 0;
+            if (oldCapacity >= required) return;
+            int capacity = Math.Min(MaximumDecodedPageByteCount,
+                Math.Max(256, Math.Max(required, checked(oldCapacity * 2))));
+            _owner.EnsureBufferRoom(this, capacity);
+            if (_buffer is null)
+            {
+                _buffer = new(capacity);
+                _writer = new(_buffer, System.Text.Encoding.UTF8, leaveOpen: true);
+            }
+            else _buffer.Capacity = capacity;
+            _owner.ObserveActualCapacityPeak(capacity);
+            _owner.ChangeActiveCapacity(capacity - oldCapacity);
+        }
+
+        public void Spill()
+        {
+            if (CapacityBytes == 0) return;
+            if (_recordCount != 0)
+            {
+                _owner._beforeBuilderSpillTestHook?.Invoke();
+                ReadOnlySpan<byte> data = _noteEndpoints is not null
+                    ? MemoryMarshal.AsBytes(_noteEndpoints.AsSpan(0, _recordCount))
+                    : _channelEndpoints is not null
+                        ? MemoryMarshal.AsBytes(_channelEndpoints.AsSpan(0, _recordCount))
+                        : _buffer!.GetBuffer().AsSpan(0, checked((int)_buffer.Length));
+                _spooled = _owner._builderSpool.Write(data);
+            }
+            ReleaseBuffers();
+        }
+
+        public void EnsureResident()
+        {
+            if (_spooled is not { } extent) return;
+            if (Kind is PureMidiContentRecordKind.NoteOnEndpoint or PureMidiContentRecordKind.NoteOffEndpoint)
+            {
+                GrowEndpoint(ref _noteEndpoints, _recordCount);
+                _owner._builderSpool.Read(extent, MemoryMarshal.AsBytes(_noteEndpoints.AsSpan(0, _recordCount)));
+            }
+            else if (Kind == PureMidiContentRecordKind.ChannelEventEndpoint)
+            {
+                GrowEndpoint(ref _channelEndpoints, _recordCount);
+                _owner._builderSpool.Read(extent, MemoryMarshal.AsBytes(_channelEndpoints.AsSpan(0, _recordCount)));
+            }
+            else
+            {
+                GrowByteBuffer(extent.Length);
+                // Expanding MemoryStream.Length clears the newly exposed bytes;
+                // establish its extent before copying the staged data back.
+                _buffer!.SetLength(extent.Length);
+                _owner._builderSpool.Read(extent, _buffer.GetBuffer().AsSpan(0, extent.Length));
+                _buffer.Position = extent.Length;
+            }
+            _owner._builderSpool.Release(extent);
+            _spooled = null;
+            _owner.TouchBuilder(this);
         }
 
         private void Record(
@@ -1082,6 +1394,10 @@ public sealed class PureMidiContentPackDecodedCache : IDisposable
             // deliberately not canceled by an individual waiter: another raster/audio
             // consumer may already share this single-flight decode.
             object value = factory();
+            long retainedByteCount = value is OpaqueMidiEventValue[] opaque
+                ? checked(24L + opaque.LongLength * Unsafe.SizeOf<OpaqueMidiEventValue>()
+                    + OpaqueMidiPayloadMemory.GetRetainedAllocatedBytes(opaque))
+                : decodedByteCount;
             object published;
             lock (_gate)
             {
@@ -1092,11 +1408,11 @@ public sealed class PureMidiContentPackDecodedCache : IDisposable
                     _lru.Remove(concurrentlyAdded.Node);
                     _lru.AddFirst(concurrentlyAdded.Node);
                 }
-                else
+                else if (retainedByteCount <= ByteLimit)
                 {
                     LinkedListNode<CacheKey> node = _lru.AddFirst(key);
-                    _entries.Add(key, new(value, decodedByteCount, node));
-                    _byteCount += decodedByteCount;
+                    _entries.Add(key, new(value, retainedByteCount, node));
+                    _byteCount += retainedByteCount;
                     while (_byteCount > ByteLimit && _lru.Last is not null)
                     {
                         CacheKey evictedKey = _lru.Last.Value;
@@ -1108,6 +1424,7 @@ public sealed class PureMidiContentPackDecodedCache : IDisposable
                     }
                     published = value;
                 }
+                else published = value;
                 _decodes.Remove(key);
             }
             cacheHit = false;
@@ -1194,7 +1511,7 @@ public sealed class PureMidiContentPackDecodedCache : IDisposable
 
     private sealed record CacheEntry(
         object Value,
-        int DecodedByteCount,
+        long DecodedByteCount,
         LinkedListNode<CacheKey> Node);
 }
 

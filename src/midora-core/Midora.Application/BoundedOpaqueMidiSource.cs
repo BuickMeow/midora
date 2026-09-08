@@ -210,10 +210,11 @@ internal sealed class BoundedOpaqueMidiSource : IPureMidiSegmentContentSource,
         {
             if (BoundedOpaquePayloadCache.TryGet(CacheIdentity, ordinal, out var cached)) return cached;
             var descriptor = Descriptors[checked(ordinal - FirstOrdinal)];
-            using IDisposable? working = BulkEditPreparationContext.Current?.Resources.ReserveWorking(descriptor.Length);
             byte[] result = new byte[descriptor.Length];
+            using IDisposable? payloadLease = BulkEditPreparationContext.Current?.Resources.BorrowPayload(result);
             for (int offset = 0; offset < result.Length; offset += 64)
             {
+                if ((offset & 0x3fff) == 0) BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
                 var block = Blocks[descriptor.FirstBlock + offset / 64];
                 ((ReadOnlySpan<byte>)block)[..Math.Min(64, result.Length - offset)].CopyTo(result.AsSpan(offset));
             }
@@ -233,9 +234,11 @@ internal sealed class BoundedOpaqueMidiSource : IPureMidiSegmentContentSource,
         public int Add(ReadOnlyMemory<byte> bytes)
         {
             _scope.Token.ThrowIfCancellationRequested();
-            // A single unusually large blob must pass the same preparation
-            // budget as a scalar batch before any result pages are generated.
-            using IDisposable working = _scope.Resources.ReserveWorking(bytes.Length);
+            // The input is one borrowed immutable event, not a newly allocated
+            // working buffer. A legal large message must not be rejected only
+            // because it exceeds a page. Output blocks still use the shared
+            // resident/spill budget and cancellation gates.
+            using IDisposable payloadLease = _scope.Resources.BorrowPayload(bytes);
             int ordinal = checked(_first + _descriptors.Count);
             _descriptors.Add(new(_blocks.Count, bytes.Length), _scope.Token);
             _hash.AppendData(BitConverter.GetBytes(bytes.Length)); _hash.AppendData(bytes.Span);

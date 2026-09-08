@@ -136,12 +136,12 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand DuplicateLogicalTrack(
         MidoraId trackId,
         string? name = null) =>
-        DuplicateLogicalTrack(trackId, shareInstrumentState: false, name);
+        new ProjectPresentationCloneCommand(DuplicateLogicalTrack(trackId, shareInstrumentState: false, name), PresentationCloneKind.LogicalTrack, trackId);
 
     public static IProjectEditCommand DuplicateLogicalTrackAndShareState(
         MidoraId trackId,
         string? name = null) =>
-        DuplicateLogicalTrack(trackId, shareInstrumentState: true, name);
+        new ProjectPresentationCloneCommand(DuplicateLogicalTrack(trackId, shareInstrumentState: true, name), PresentationCloneKind.LogicalTrack, trackId);
 
     private static IProjectEditCommand DuplicateLogicalTrack(
         MidoraId trackId,
@@ -279,12 +279,12 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand DuplicateEventInstrument(
         MidoraId eventInstrumentId,
         string? name = null) =>
-        DuplicateEventInstrumentCore(eventInstrumentId, name);
+        new ProjectPresentationCloneCommand(DuplicateEventInstrumentCore(eventInstrumentId, name), PresentationCloneKind.Instrument, eventInstrumentId);
 
     public static IProjectEditCommand DuplicateEventInstrumentOnly(
         MidoraId eventInstrumentId,
         string? name = null) =>
-        DuplicateEventInstrumentCore(eventInstrumentId, name);
+        new ProjectPresentationCloneCommand(DuplicateEventInstrumentCore(eventInstrumentId, name), PresentationCloneKind.Instrument, eventInstrumentId);
 
     private static IProjectEditCommand DuplicateEventInstrumentCore(
         MidoraId eventInstrumentId,

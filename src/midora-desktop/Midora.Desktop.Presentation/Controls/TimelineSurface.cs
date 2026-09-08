@@ -837,6 +837,10 @@ public sealed partial class TimelineSurface : Control
 
     private void OnSurfaceUnloaded(object sender, RoutedEventArgs args)
     {
+        CancelOnionRequests();
+        _onionCancellation.Cancel();
+        _onionSourceSnapshot = null;
+        _onionDrawSnapshot = null;
         _ = sender;
         _ = args;
         if (_backgroundWorkSuspended) return;
@@ -1965,6 +1969,7 @@ public sealed partial class TimelineSurface : Control
         {
             if (SurfaceMode == TimelineSurfaceMode.PianoRoll)
             {
+                DrawOnion(drawingContext, viewport, laneHeaderWidth, rulerHeight);
                 DrawPianoNoteTiles(
                     drawingContext,
                     viewport,

@@ -11,7 +11,8 @@ public enum WorkspaceKind
     Diagnostics,
     ConductorTrack,
     SegmentEditor,
-    EventInstrumentEditor
+    EventInstrumentEditor,
+    AllTracks
 }
 
 public readonly record struct WorkspaceKey(WorkspaceKind Kind, MidoraId? ObjectId)
@@ -76,6 +77,10 @@ public readonly record struct WorkspaceTimelineSelectionSource(
     double PointMinimum = 0,
     double PointMaximum = 127)
 {
+    // QuantizeScope returns this same record type; synthesized record formatting
+    // would recurse indefinitely through that computed property.
+    public override string ToString() => $"WorkspaceTimelineSelectionSource {{ Kind = {Kind} }}";
+
     /// <summary>
     /// Quantize may operate across several event lanes owned by the same
     /// Segment/SubVoice. Other edits still require the exact lane source.

@@ -90,11 +90,16 @@ public sealed class ConductorWorkspaceTests(ITestOutputHelper output)
         project.Conductor.Tempos.Add(new(project, 192, 180m));
         TimelineWorkspaceViewModel workspace = new(WorkspaceKey.ForType(WorkspaceKind.ConductorTrack), "Conductor", TimelineWorkspaceMode.Conductor);
         workspace.Rebuild(project, 0);
-        Task oldFit = workspace.FitVisibleTempoAsync(CancellationToken.None);
-        workspace.SetTempoAxis(10, 300);
-        await oldFit;
-        Assert.Equal(10, workspace.TempoAxisMinimum);
-        Assert.Equal(300, workspace.TempoAxisMaximum);
+        // Exercise both completion orders, including a pool continuation racing
+        // the explicit request when no WPF SynchronizationContext is installed.
+        for (int i = 0; i < 128; i++)
+        {
+            Task oldFit = workspace.FitVisibleTempoAsync(CancellationToken.None);
+            workspace.SetTempoAxis(10 + i, 300 + i);
+            await oldFit;
+            Assert.Equal(10 + i, workspace.TempoAxisMinimum);
+            Assert.Equal(300 + i, workspace.TempoAxisMaximum);
+        }
         workspace.CancelBackgroundPresentationWork();
     }
 

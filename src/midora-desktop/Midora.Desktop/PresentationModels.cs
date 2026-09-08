@@ -337,6 +337,17 @@ public abstract class WorkspaceViewModel(
     WorkspaceKey key,
     string header) : ObservableObject
 {
+    private TimelineOnionSnapshot? _onionSnapshot;
+    private bool _isOnionEnabled;
+    private bool _canConfigureOnion;
+    public bool IsOnionEnabled { get => _isOnionEnabled; internal set => Set(ref _isOnionEnabled, value); }
+    public bool CanConfigureOnion { get => _canConfigureOnion; internal set => Set(ref _canConfigureOnion, value); }
+    internal (long Document, long Presentation, MidoraId? Voice) LastOnionRevision { get; set; } = (-1, -1, null);
+    public TimelineOnionSnapshot? OnionSnapshot
+    {
+        get => _onionSnapshot;
+        internal set => Set(ref _onionSnapshot, value);
+    }
     private const int SynchronousSelectionMetricsLimit = 4_096;
     private const int DeferredSelectionMetricsDelayMilliseconds = 100;
     private string _header = header;
@@ -348,7 +359,7 @@ public abstract class WorkspaceViewModel(
     private long _selectionPresentationScope;
     private WorkspaceTabIconKind _tabIconKind = key.Kind switch
     {
-        WorkspaceKind.Arrangement => WorkspaceTabIconKind.Arrangement,
+        WorkspaceKind.Arrangement or WorkspaceKind.AllTracks => WorkspaceTabIconKind.Arrangement,
         WorkspaceKind.EventInstrumentLibrary or WorkspaceKind.EventInstrumentEditor =>
             WorkspaceTabIconKind.EventInstrument,
         WorkspaceKind.ProjectSettings => WorkspaceTabIconKind.Settings,
@@ -454,6 +465,7 @@ public abstract class WorkspaceViewModel(
     /// </summary>
     public virtual void CancelBackgroundPresentationWork()
     {
+        OnionSnapshot = null;
         ObjectList.SetActive(false);
         _selectionPresentationScope = checked(_selectionPresentationScope + 1);
         _selectionPrefetchGeneration = checked(_selectionPrefetchGeneration + 1);
@@ -968,7 +980,7 @@ internal static class TimelineLowerEditorLayout
     public const double MaximumHeight = 520;
 }
 
-public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel
+public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPlaybackTimelineWorkspace
 {
     private const int MaterializedSegmentPreviewThreshold = 4096;
     private readonly Dictionary<MidoraId, SegmentPreviewCacheEntry> _segmentPreviewCache = [];

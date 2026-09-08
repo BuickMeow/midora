@@ -22,7 +22,7 @@ using Midora.Midi;
 
 namespace Midora.Desktop;
 
-public sealed class DesktopSessionController : ObservableObject, IAsyncDisposable
+public sealed partial class DesktopSessionController : ObservableObject, IAsyncDisposable
 {
     [Flags]
     private enum ModelRefreshKind
@@ -159,6 +159,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         _creation = new(_packages);
         _opening = new(_packages);
+        // UI collection notifications publish an immutable roster for Onion refreshes.
+        // A compile completion can overlap tab creation in a headless host; bindings
+        // can also remove a tab re-entrantly during a presentation notification.
+        Workspaces.CollectionChanged += (_, _) => PublishOnionWorkspaceRoster();
     }
 
     public bool HasProject => _context is not null;
@@ -2287,6 +2291,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         PrepareWorkspaceRuntimeState(workspace);
         workspace.Rebuild(Project, _revision);
+        RefreshOnionPresentations();
         workspace.PresentationDocumentRevision = Document?.PublicationRevision ?? -1;
         workspace.RefreshSelectionPresentation();
         if (workspace is TimelineWorkspaceViewModel timeline)
@@ -2486,6 +2491,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Workspaces.Insert(0, created);
         else
             Workspaces.Add(created);
+        RefreshOnionPresentations();
         return created;
     }
 
@@ -2520,6 +2526,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 }
             }
         }
+        RefreshOnionPresentations();
         RefreshProperties();
     }
 
@@ -2576,6 +2583,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 timeline.UpdatePlaybackCursor(Project, CurrentTick);
             }
         }
+        RefreshOnionPresentations();
         return rebuilt;
     }
 
@@ -3023,7 +3031,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             return;
         }
-        foreach (TimelineWorkspaceViewModel timeline in Workspaces.OfType<TimelineWorkspaceViewModel>())
+        foreach (IPlaybackTimelineWorkspace timeline in Workspaces.OfType<IPlaybackTimelineWorkspace>())
         {
             timeline.UpdatePlaybackCursor(Project, currentTick);
         }
@@ -3103,6 +3111,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void Subscribe(ProjectContext context)
     {
+        _onionIdentity = Guid.NewGuid().ToString("N");
+        context.Persistence.Presentation.Changed += OnPresentationChanged;
         context.Document.HistoryChanged += OnDocumentHistoryChanged;
         context.Document.ContentChanged += OnDocumentContentChanged;
         context.Compilation.CompilationChanged += OnCompilationChanged;
@@ -3114,6 +3124,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void Unsubscribe(ProjectContext context)
     {
+        context.Persistence.Presentation.Changed -= OnPresentationChanged;
         context.Document.HistoryChanged -= OnDocumentHistoryChanged;
         context.Document.ContentChanged -= OnDocumentContentChanged;
         context.Compilation.CompilationChanged -= OnCompilationChanged;
@@ -3215,14 +3226,18 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             kinds = _pendingModelRefreshKinds;
             changes = _pendingContentChanges;
             refreshContext = _pendingModelRefreshContext;
-            restoreStateId = _pendingSelectionRestoreStateId;
+            // Compilation can notify while Undo/Redo has mutated the source but
+            // before the document commits its history state. Only the document's
+            // post-commit Content/History notification may consume the bookmark.
+            restoreStateId = (kinds & (ModelRefreshKind.Content | ModelRefreshKind.History)) != 0
+                ? _pendingSelectionRestoreStateId : null;
             selectionHistoryCaptureStateId = _pendingSelectionHistoryCaptureStateId;
             pruneSelectionHistory = (kinds & ModelRefreshKind.History) != 0
                 && _workspaceSelectionHistoryPruneRequested;
             _pendingModelRefreshKinds = ModelRefreshKind.None;
             _pendingContentChanges = null;
             _pendingModelRefreshContext = null;
-            _pendingSelectionRestoreStateId = null;
+            if (restoreStateId is not null) _pendingSelectionRestoreStateId = null;
             _pendingSelectionHistoryCaptureStateId = null;
             if (pruneSelectionHistory)
             {
@@ -3288,6 +3303,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     RefreshProjectRuntimeInformation();
                 }
                 RefreshCompilationProperties();
+                RefreshOnionPresentations();
             }
 
             if ((kinds & ModelRefreshKind.Playback) != 0)

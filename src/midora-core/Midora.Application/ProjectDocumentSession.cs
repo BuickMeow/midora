@@ -122,6 +122,7 @@ public sealed class StagedProjectEdit : IDisposable
             "The staged Project edit was already published or abandoned.");
     public string Name { get; }
     public PreparedTimelineSelection? PreparedSelection { get; }
+    internal PresentationCloneCapture? PresentationClone { get; init; }
 
     internal void TransferToHistory()
     {
@@ -365,6 +366,7 @@ public sealed class ProjectDocumentSession : IDisposable
 
     public event EventHandler? HistoryChanged;
     public event EventHandler<ProjectContentChangedEventArgs>? ContentChanged;
+    internal event Action<IReadOnlyDictionary<MidoraId, MidoraId>>? PresentationObjectsCloned;
 
     public ProjectEditExecution Execute(IProjectEditCommand command)
     {
@@ -373,6 +375,7 @@ public sealed class ProjectDocumentSession : IDisposable
         {
             ThrowIfNotifying();
             string commandName = ValidateCommandName(command.Name, nameof(command));
+            var presentationClone = (command as ProjectPresentationCloneCommand)?.Capture(Project);
             using BulkEditPreparationContext preparationContext = BulkEditPreparationContext.Enter(
                 BulkEditPreparationContext.Current?.Token ?? default, project: Project);
             using BoundedEditResourceLease resourceLease = preparationContext.Resources.BeginResourceLease();
@@ -386,6 +389,8 @@ public sealed class ProjectDocumentSession : IDisposable
                 prepared.AttachResources(resourceLease.Complete(preparationContext.Token));
                 ProjectEditExecution result = CommitPrepared(commandName, prepared);
                 if (result.Changed) prepared = null;
+                if (result.Changed && presentationClone is not null)
+                    PresentationObjectsCloned?.Invoke(presentationClone.Resolve(Project));
                 return result;
             }
             finally
@@ -421,6 +426,7 @@ public sealed class ProjectDocumentSession : IDisposable
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        var presentationClone = (command as ProjectPresentationCloneCommand)?.Capture(project);
         var preparationProgress = progress is null ? null : new BulkEditProgressRange(progress, 0, 0.95);
         using BulkEditPreparationContext preparationContext =
             BulkEditPreparationContext.Enter(cancellationToken, preparationProgress, project: project);
@@ -467,7 +473,7 @@ public sealed class ProjectDocumentSession : IDisposable
                     expectedStateId,
                     expectedPublicationRevision,
                     prepared,
-                    preparedSelection);
+                    preparedSelection) { PresentationClone = presentationClone };
             }
         }
         finally
@@ -515,6 +521,8 @@ public sealed class ProjectDocumentSession : IDisposable
                 ProjectEditExecution result = CommitPrepared(staged.Name, prepared);
                 if (result.Changed) staged.TransferToHistory();
                 else staged.Dispose();
+                if (result.Changed && staged.PresentationClone is { } clone)
+                    PresentationObjectsCloned?.Invoke(clone.Resolve(Project));
                 return result;
             }
             catch

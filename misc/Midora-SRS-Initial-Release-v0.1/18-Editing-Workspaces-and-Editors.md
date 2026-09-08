@@ -680,4 +680,32 @@ Failed
 Cancelled
 Cancelled With Completed Outputs
 ```
+
+## 18.11 只读洋葱皮与 All Tracks
+
+### 18.11.1 Track / SubVoice 洋葱皮
+
+Logical Segment、MIDI Segment 与 SubVoice 的主钢琴卷帘在水平 Zoom In 右边、同组提供 `LayerDiagonalRegular` 图标 Button；尺寸与缩放按钮一致，启用时按 Toggle 外观高亮，但单击只在原地打开主题菜单，不直接切换。菜单分组为 Enable/Disable；Show Previous Track/SubVoice、Show Next Track/SubVoice、Select Tracks/SubVoices...；Settings...。前后项是无勾选态的命令，按当前正式顺序解析、不循环，边界项禁用；执行后启用且仅显示对应邻居，不改写手选来源列表或透明度。保存并重开仍恢复 previous/next 模式，按届时正式顺序解析邻居；重排/删除后没有邻居则显示为空，不自动切回 custom。Disable 保留模式和手选列表。
+
+Settings 仅提供透明度，不改变启用状态、显示模式或来源。独立 Select Tracks/SubVoices 弹窗始终显示保留的手选来源，支持多选、全选和清空；OK 切回 custom 模式并启用，Cancel 保持原配置。两个弹窗均不提供 Enable 控件，显式启用/禁用由菜单承担。当前目标不得作为自身来源。目标 Track 的各 Segment 共用来源 Track 配置；每个目标 SubVoice 独立配置同一 Definition 内的来源 SubVoice。
+
+来源按当前 Arrangement / SubVoice 正式顺序从下至上叠加，当前编辑音符、选择与拖动预览始终在其上。Track 使用自身正式显示色，包括 Logical Track color override。SubVoice 无独立音乐颜色属性，允许用既有柔和调色板区分只读来源。
+
+Segment 映射为 target local tick → Project absolute tick → source Segment local tick，仅展示来源 Segment 的暴露范围，并精确裁剪跨边界音符；不得暴露来源被 crop/content offset 隐藏的内容。SubVoice 使用共同模板 Tick。洋葱皮不参与命中、选择、吸附、编辑、Note 计数、编译和音频，底部 Lanes 不叠加。
+
+### 18.11.2 All Tracks
+
+Arrangement 在水平 Zoom In 右边、同组提供相同 LayerDiagonalRegular 图标按钮，直接打开独立 `All Tracks` Tab，不弹菜单。其顶部控件沿用钢琴卷帘工具栏的样式和高度。只有只读钢琴卷帘与导航控件，没有 Lanes；不得改变任何编辑工作区的选择。
+
+Raw 叠加 Project 暴露音符。按 2026-09-08 的用户更正，Compiled 是混合只读显示：Logical Track 从成功的完整 Canonical Compiled Result 展开；Pure MIDI Track 直接复用当前源音符快照、暴露范围和颜色，不为它重新建立整曲 FIFO 显示索引。Logical 展开仍按 Port/Channel/Key FIFO 配对 NoteOn/NoteOff，颜色使用 NoteOn 的正式 source Track identity，不从 Channel/名称反推。Pure MIDI 的源 Gate 不宣称等于跨轨道共享 Channel 的最终 MIDI 流配对时长；这只是显示投影，不改变 canonical、播放或导出。
+
+必须包含起点在可视范围之前而 Gate 延续到范围内的 Note。编译失败或音乐修订过期时保留 Logical 的最后成功展开并显著标记 `Logical stale`；不得显示为 Current。尚无成功结果时明确 Logical 不可用，但 Pure MIDI 源音符仍显示。逻辑索引准备在后台执行，可取消、重试；旧结果保持到新结果完整提交。被删除 Logical 来源的旧 canonical 音符仍属于 stale 结果，保留已知来源色；首次打开旧结果且来源元数据已不存在时可用中性外观。Pure MIDI 来源删除立即反映到混合视图，不保留旧 canonical MIDI 层。
+
+All Tracks 在 Raw/Compiled 下均显示绝对播放指针，并遵守全局 Follow Playback：明确中键/水平概览拖动期间暂停跟随，释放后立即恢复；跟随播放期间在底部概览上禁用滚轮横向移动。时间标尺或音符内容区左键单击设置绝对播放游标，Playing/Buffering 时复用第 13 章既有 Seek 和范围限制；不做隐藏 Snap 量化、不改变选择，不启用连续 scrub。左侧钢琴尺和右键不跳转。坐标定位不查询音符，指针更新不得重建音符投影或瓦片。
+
+### 18.11.3 缓存与持久化
+
+来源查询、分页读取、密集列聚合和 Logical compiled FIFO 索引均在有界后台执行；WPF 线程不得为绘制全量枚举音符。来源分块局部失效，洋葱皮使用独立缓存身份，不污染已验收的普通 Note/Selection/Velocity/Event 缓存。允许每 Key 一行的只读占用缓存，垂直缩放/滚动复用；不得使其成为领域数据或编辑命中来源。Raw/Compiled 可复用未改变的 Pure MIDI 来源快照与相同内容块缓存。缓存必须有明确预算及取消、Workspace/Project 关闭后的释放时机。
+
+配置复用 §16.7.5 的 Format 3 presentation schema 2：目标、手选来源、sourceMode、enable、opacity、默认 Raw/Compiled 随显式 Save / Save Copy 保存，不增加 Undo、不设置音乐 Modified、不引发关闭保存提示。来源顺序在保存快照中按当前正式顺序过滤、排序。删除引用在会话中 dormant，Undo 恢复同身份时重新生效；保存过滤仍悬空的引用但不破坏会话内 Undo 恢复。Duplicate Track/SubVoice 复制该目标配置，Definition 深复制重映射内部 SubVoice 引用；视图配置本身不随音乐 Undo 回退。损坏隔离沿用 §16.33，不阻止音乐加载。
 ---

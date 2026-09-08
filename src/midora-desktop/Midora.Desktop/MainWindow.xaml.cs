@@ -701,7 +701,7 @@ public partial class MainWindow : Window
 
     private void FollowActivePlayback(bool force)
     {
-        if (_session.ActiveWorkspace is not TimelineWorkspaceViewModel timeline)
+        if (_session.ActiveWorkspace is not IPlaybackTimelineWorkspace timeline)
         {
             return;
         }
@@ -723,9 +723,9 @@ public partial class MainWindow : Window
     private bool CanTemporarilySuspendPlaybackFollow() =>
         _preferences.DesktopUi.FollowPlayback
         && _session.IsPlaybackActive
-        && _session.ActiveWorkspace is TimelineWorkspaceViewModel { PlaybackCursorTick: not null };
+        && _session.ActiveWorkspace is IPlaybackTimelineWorkspace { PlaybackCursorTick: not null };
 
-    private void OnFollowViewportPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    internal void OnFollowViewportPreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         bool beginsExplicitViewportDrag = sender switch
         {
@@ -739,7 +739,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnFollowViewportPreviewMouseUp(object sender, MouseButtonEventArgs e)
+    internal void OnFollowViewportPreviewMouseUp(object sender, MouseButtonEventArgs e)
     {
         bool endsExplicitViewportDrag = sender switch
         {
@@ -753,7 +753,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnFollowViewportLostMouseCapture(object sender, MouseEventArgs e) =>
+    internal void OnFollowViewportLostMouseCapture(object sender, MouseEventArgs e) =>
         EndFollowPlaybackViewportInteraction();
 
     private void EndFollowPlaybackViewportInteraction()
@@ -767,7 +767,7 @@ public partial class MainWindow : Window
         FollowActivePlayback(force: true);
     }
 
-    private void OnFollowOverviewPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    internal void OnFollowOverviewPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (CanTemporarilySuspendPlaybackFollow())
         {

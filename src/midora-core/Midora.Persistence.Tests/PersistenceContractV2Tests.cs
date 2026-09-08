@@ -23,7 +23,7 @@ public sealed class PersistenceContractV2Tests
         Assert.Equal(1, PersistenceContractV2.ReusedComponentSchemaVersion);
         Assert.Equal(3, PersistenceContractV3.FileFormatVersion);
         Assert.Equal(3, PersistenceContractV3.ManifestSchemaVersion);
-        Assert.Equal(1, PersistenceContractV3.ProjectPresentationSchemaVersion);
+        Assert.Equal(2, PersistenceContractV3.ProjectPresentationSchemaVersion);
     }
 
     [Fact]
@@ -137,9 +137,8 @@ public sealed class PersistenceContractV2Tests
         byte[] packageBytes = await File.ReadAllBytesAsync(path);
         Assert.Equal(packageBytes, await File.ReadAllBytesAsync(equivalentPath));
         string packageHash = Convert.ToHexStringLower(SHA256.HashData(packageBytes));
-        Assert.Equal(
-            "01f4fd0a7a1f973bb0921095165d8a3967176f3956ae28dc0429e5a6f1f6d361",
-            packageHash);
+        Assert.True(packageHash == "44eef7db01bab5d1ad57a94916a2ff362b4c8486ec56726606adaa8d72405e99",
+            $"Actual Format 3 / presentation schema 2 package hash: {packageHash}");
 
         using (ZipArchive archive = ZipFile.OpenRead(path))
         {
@@ -153,6 +152,7 @@ public sealed class PersistenceContractV2Tests
                 manifest.Files,
                 item => item.Kind == "project-presentation-json");
             Assert.Equal(MidoraPackagePathsV1.ProjectPresentation, presentationEntry.Path);
+            Assert.Equal(2, presentationEntry.SchemaVersion);
             ManifestFileEntryJsonV1 instrumentEntry = Assert.Single(
                 manifest.Files,
                 item => item.Kind == "event-instrument-pb");
@@ -369,6 +369,7 @@ public sealed class PersistenceContractV2Tests
             "manifest-v3.schema.json",
             "metadata-v1.schema.json",
             "project-presentation-v1.schema.json",
+            "project-presentation-v2.schema.json",
             "project-settings-v1.schema.json",
             "project-v1.schema.json"
         ];

@@ -123,6 +123,8 @@
 | INV-112 | Logical/MIDI Segment 与 SubVoice 对象列表只创建可见行，排序及范围选择采用冻结修订、有界可取消后台准备。隐藏/卸载停止请求；列表布局不持久化。Note/Event 混合选择仅由显式类型子菜单处理冻结子集，未处理选择保留，Undo/Redo 恢复完整前后选择；普通类型专属快捷键不得隐式跳过对象。 |
 | INV-113 | SubVoice Pre-Roll/Loop 只读覆盖层与三面板共用 tick/device-pixel 变换。Pre-Roll 前缀为半开暗区；Loop 单端只画存在的端点，完整范围只在两端齐全时显示。覆盖层不截获输入，不改变编译语义或内容瓦片身份。 |
 | INV-114 | Event Instrument Loop 的时间映射独立于长 / 短 / 等长音分类：除短音 One-Shot 外，实际实例局部 Gate horizon 超过 Loop End 即允许跳回并重复半开 Loop，不得以 `Gate Length > Template Length` 为前提。原始事件、Value Curve、状态型映射与 Mapping TemplateTick 必须一致；Envelope 不随 Loop 重启，Logical Parameter 按实际内容 Tick 求值。等长音 / EndAtTemplate / Segment 结束仍优先；已循环的短音 Tail 从 Gate End 接模板 `[Loop End, Template Length)`，持续 Note 不重触发。 |
+| INV-115 | Track/SubVoice 洋葱皮是独立只读投影：按 source 暴露范围与正式层顺序映射，目标音符始终在上；不参与选择/命中/编辑/编译/音频，也不污染普通编辑瓦片。后台查询、位图、在途任务和 compiled 索引必须有界、可取消并随会话释放。 |
+| INV-116 | All Tracks Compiled 为混合只读显示：Logical 只从完整成功 canonical 按 Port/Channel/Key FIFO 展开并用正式 NoteOn source Track 着色；Pure MIDI 复用当前源音符，不建立整曲 FIFO 索引、不宣称源 Gate 等于最终流配对。保留跨可视起点的 Note，旧 Logical 标为 stale。播放指针/跟随不重建音符缓存；标尺/内容单击仅复用既有 Seek。Onion 的手选列表与 custom/previous/next 显示模式分别保存，快捷命令不得改写手选列表；独立 presentation schema 2 只随显式保存写入，v1 读为 custom。Duplicate remap、dormant/Undo 与损坏隔离按 §18.11/§16.7.5 执行，不改变音乐 Modified/Undo、canonical、播放和导出语义。 |
 
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
@@ -149,6 +151,7 @@
 | 各编辑器工作区、Timeline 精确属性与事务式 Properties | 第 17、18、20、24 章 |
 | Conductor 虚拟列表、Tempo 阶梯图、绘线、密集元事件与原子批量编辑 | 第 4、18、20 章；INV-110～111 |
 | 三种钢琴卷帘虚拟对象列表、混合选择子菜单、SubVoice Loop/Pre-Roll 覆盖层 | 第 18、20 章；INV-112～113 |
+| Track/SubVoice 洋葱皮、All Tracks Raw/Compiled、有界只读缓存、来源色和 Stale | 第 3、16、18 章；INV-115～116 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、分页 ordinal/range query、detached edit、浮动工具、拖放、验证、快捷键和 UI 验收 | 第 18、20、23、24 章；INV-095～100 |
 | 工具表达式 profile、Preset、Humanize、Note Split/Join、Note/Event Quantize、Batch Create、Segment 双向转换 | 第 18、20、23 章；INV-104～109 |

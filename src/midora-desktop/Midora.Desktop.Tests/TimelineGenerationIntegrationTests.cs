@@ -10,6 +10,30 @@ namespace Midora.Desktop.Tests;
 [Collection(DesktopSharedPresentationStateCollection.Name)]
 public sealed class TimelineGenerationIntegrationTests(ITestOutputHelper output)
 {
+    [Fact]
+    public async Task EarlyCompilationNoticeMustNotConsumePendingUndoSelection()
+    {
+        await using Fixture fixture = await Fixture.CreateAsync();
+        var session = fixture.Session;
+        var source = fixture.Source(WorkspaceTimelineSelectionKind.TemplateNote);
+        var workspace = fixture.Open(WorkspaceTimelineSelectionKind.TemplateNote);
+        Publish(session, workspace, Create(source, 2));
+        var ids = fixture.ReadIds(WorkspaceTimelineSelectionKind.TemplateNote);
+        workspace.Selection.Replace(ids[0], source);
+        session.RefreshWorkspaceSelection(workspace);
+        bool injectNotice = false;
+        var notify = typeof(Midora.Playback.ProjectCompilationSession).GetMethod("NotifyCompilationChanged",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var command = new ProjectPropertyEditCommand<string>("Rename for notification test", p => p.Metadata.ProjectName,
+            (p, value) => { p.Metadata.ProjectName = value; if (injectNotice) notify.Invoke(session.Document!.Compilation, null); },
+            "Changed", new() { AffectsEverything = true });
+        session.ExecutePreservingWorkspaceSelection(command, workspace);
+        workspace.Selection.Replace(ids[1], source);
+        session.RefreshWorkspaceSelection(workspace);
+        injectNotice = true;
+        session.Undo();
+        AssertSelection(workspace, [ids[0]], source);
+    }
     [Theory]
     [InlineData(WorkspaceTimelineSelectionKind.DirectMidiNote)]
     [InlineData(WorkspaceTimelineSelectionKind.LogicalNote)]
@@ -175,7 +199,8 @@ public sealed class TimelineGenerationIntegrationTests(ITestOutputHelper output)
     private static void AssertSelection(WorkspaceViewModel workspace, IReadOnlyCollection<MidoraId> ids,
         WorkspaceTimelineSelectionSource source)
     {
-        Assert.True(workspace.Selection.IdSet.SetEquals(ids));
+        Assert.True(workspace.Selection.IdSet.SetEquals(ids),
+            $"Expected selection [{string.Join(',', ids)}], actual [{string.Join(',', workspace.Selection.IdSet)}]; kind={workspace.Selection.HomogeneousTimelineSource?.Kind}");
         Assert.Equal(source, workspace.Selection.HomogeneousTimelineSource);
         Assert.Equal(source.QuantizeScope, workspace.Selection.HomogeneousTimelineQuantizeScope);
     }

@@ -97,7 +97,9 @@ internal static class ManifestCodecV3
             bool reusedStructural = ReusedStructuralKinds.Contains(file.Kind);
             bool unknown = !presentation && !eventInstrument && !reusedStructural;
             bool schemaInvalid = presentation
-                ? file.SchemaVersion != PersistenceContractV3.ProjectPresentationSchemaVersion
+                // Presentation has an independent reader and recovery boundary. An
+                // unsupported future view version must not prevent music loading.
+                ? !file.SchemaVersion.HasValue || file.SchemaVersion <= 0
                 : eventInstrument
                     ? file.SchemaVersion != PersistenceContractV3.EventInstrumentSchemaVersion
                     : reusedStructural

@@ -341,7 +341,9 @@ public sealed class ConductorInteractionTests
     {
         object?[] arguments = [null];
         Assert.True((bool)Invoke(surface, "TryCreateViewport", arguments)!);
-        return (bool)Invoke(surface, "TryDeferConductorPress", Button(true), point, arguments[0])!;
+        bool result = false;
+        At(surface, point, () => result = (bool)Invoke(surface, "TryDeferConductorPress", Button(true), point, arguments[0])!);
+        return result;
     }
     private static MouseButtonEventArgs Button(bool down) => new(Mouse.PrimaryDevice, 0, MouseButton.Left)
     { RoutedEvent = down ? Mouse.MouseDownEvent : Mouse.MouseUpEvent };
@@ -355,9 +357,12 @@ public sealed class ConductorInteractionTests
     private static void At(TimelineSurface surface, Point point, Action action)
     {
         FieldInfo field = typeof(TimelineSurface).GetField("_replayingConductorPosition", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        FieldInfo modifiers = typeof(TimelineSurface).GetField("_replayingConductorModifiers", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object? previousModifiers = modifiers.GetValue(surface);
         field.SetValue(surface, point);
+        modifiers.SetValue(surface, ModifierKeys.None); // Synthetic input must not inherit the user's physical Shift/Alt/Ctrl keys.
         try { action(); }
-        finally { field.SetValue(surface, null); }
+        finally { field.SetValue(surface, null); modifiers.SetValue(surface, previousModifiers); }
     }
     private static void Cleanup(TimelineSurface surface) => surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
     private static void PumpUntil(Func<bool> completed)

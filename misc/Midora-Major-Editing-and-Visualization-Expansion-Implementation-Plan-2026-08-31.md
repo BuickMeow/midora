@@ -1,13 +1,15 @@
 # Midora 大型编辑与可视化扩展实施方案（已定案记录）
 
 - 日期：2026-08-31
-- 状态：**非规范性决策记录与实施计划；阶段 1～6 及后续修复已验收，阶段 6 于 2026-09-07 以 `e753fc4` 提交并推送；阶段 7 功能整体验收通过，本轮处理 Pre-Roll 颜色/空白输入与 SubVoice Time Range 三项小调整；阶段 8 尚未授权实施**
+- 状态：**非规范性决策记录与实施计划；阶段 1～7 及后续 Loop 修复已验收并提交；2026-09-07 阶段 8 实施完成，8A/8B 自动验证通过，等待一次合并人工验收。本轮未提交、推送或本地发布。**
 - 适用仓库基线：`b8ed363`
 - 目的：把本轮需求整理为可审查、可逐项定案、可分阶段实施的长期存档。
 
 阶段 6 交付记录：`Midora-Stage6-Conductor-Requirement-Trace.md`、`Midora-Stage6-Conductor-Architecture-Decisions.md`、`Midora-Stage6-Conductor-Validation-Report.md`、`Midora-Stage6-Conductor-Acceptance-Checklist.md`。
 
 阶段 7 交付记录：[需求及实现追踪](Midora-Stage7-Timeline-Object-Lists-Requirement-Trace.md)、[验证报告](Midora-Stage7-Timeline-Object-Lists-Validation-Report.md)、[14 项人工验收清单](Midora-Stage7-Timeline-Object-Lists-Acceptance-Checklist.md)。
+
+阶段 8 交付记录：[需求及实现决策](Midora-Stage-8-Onion-Requirement-Trace-and-Decisions.md)、[使用说明](Midora-Stage8-Onion-User-Guide.md)、[验证与性能报告](Midora-Stage8-Onion-Validation-Report.md)、[25 项合并验收清单](Midora-Stage8-Acceptance-Checklist.md)。
 
 > 本文不是 SRS、ADR 或 Project Format 规范，不修改任何既有需求。凡是与现行 SRS 冲突、会改变可听语义、持久化格式、公共交互或性能基础设施的内容，必须先由产品所有者完成本文末尾的决策，再正式更新 SRS、跨系统不变量和 ADR，之后才能进入代码实施。
 
@@ -669,10 +671,10 @@ selected source-track onion blocks
 ### 5.15.2 All Tracks 视图
 
 - Raw：从 Project source 按 Arrangement 轨道顺序投影；
-- Compiled：只消费 Canonical Compiled Result；NoteOn/NoteOff 按正式 FIFO 配对；
+- Compiled（2026-09-08 用户更正）：Logical 只消费 Canonical Compiled Result，NoteOn/NoteOff 按正式 FIFO 配对；Pure MIDI 复用当前源音符，不建整曲 FIFO 显示索引。此混合显示不改变正式编译/播放/导出。
 - canonical source 当前已经包含 TrackId；Compiled 模式先验证所有 Logical/Pure 编译路径均完整携带并直接复用，只有发现缺口时才扩展 source trace，不能由 Port/Channel/名称反推；
 - 可视范围查询必须包含 viewport 左边界之前 NoteOn、但 Gate 延续到 viewport 内的活动 Note，不能只查询 viewport 内 NoteOn；
-- Compiled 模式按来源 Logical/Pure Track 颜色显示；编译失败或结果过期时保留最后一次成功结果并明显标记 `Stale`，不得伪装成当前结果；
+- Compiled 模式按来源 Logical/Pure Track 颜色显示；编译失败或结果过期时仅逻辑层保留最后成功结果并明显标记 `Logical stale`；MIDI 始终显示当前源音符；
 - 只读，不显示 Lanes，不参与 Project 选择。
 
 ### 5.15.3 持久化
@@ -962,6 +964,10 @@ create Definition
 
 #### 阶段 8：洋葱皮、All Tracks 与发布前全量回归
 
+2026-09-08 后续确认：Settings 与手选来源弹窗分离，Previous/Next 为仅显示邻居的命令；手选来源独立保留，快捷模式也持久化。Project Format 3 不变，独立 presentation schema 2 读旧 v1 为 custom。All Tracks 标尺/内容单击调用既有 Seek。详细边界和验证见 `Midora-Stage8-Onion-Source-Modes-and-Navigation-2026-09-08.md`。
+
+2026-09-07 实施记录：Raw/Compiled、presentation 生命周期和独立有界缓存已落地；8A、8B 自动门通过。具体证据及资源限制见阶段 8 报告，人工验收尚未进行，不等同于正式发布授权。
+
 覆盖 `WP-10` 的 Onion slice 与 `WP-12`。本阶段设置两个内部自动门：先完成并冻结 Onion 专项测试，再运行发布级全量回归；产品所有者只需做一次合并后的人工验收。主要交付：
 
 - Current Segment Raw onion；
@@ -1134,7 +1140,7 @@ create Definition
 - Full/Incremental 对同输入完全等价；
 - 跨类型 Segment 的丢弃清单、确认、Move rollback 与 selection 恢复；
 - 洋葱皮、颜色、目录名称不改变 canonical fingerprint；
-- Compiled overlay 只消费 canonical，不重解释 Project；
+- Compiled overlay 的逻辑展开只消费 canonical，不重解释乐器；按 2026-09-08 决定，Pure MIDI 直接复用源音符的只读显示；
 - Format 1/2 -> 3 presentation migration golden、deterministic save、corruption isolation；
 - 迁移后原路径 Save：确认取消、当前格式构建失败、源 identity 改变、backup name collision、备份失败、publish 失败、崩溃恢复、成功状态切换和第二次普通 Save；
 - 自动旧版副本与升级前来源逐字节一致，且升级后的原路径严格重开为当前 Format；Save Copy 不清除 migration-dirty，也不替代或绕过原路径升级事务。

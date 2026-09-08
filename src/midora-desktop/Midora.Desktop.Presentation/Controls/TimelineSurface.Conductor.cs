@@ -50,11 +50,11 @@ public sealed partial class TimelineSurface
             || Snapshot?.ConductorSource is null || !CanEdit || ToolMode is not (TimelineToolMode.Draw or TimelineToolMode.Erase)
             || point.X < GetLaneHeaderWidth() || point.Y < GetRulerHeight()
             || point.X >= ActualWidth || point.Y >= ActualHeight
-            || ToolMode == TimelineToolMode.Draw && (Keyboard.Modifiers & ModifierKeys.Alt) != 0)
+            || ToolMode == TimelineToolMode.Draw && (ConductorGestureModifiers & ModifierKeys.Alt) != 0)
             return false;
         TryHitConductorPoint(point, viewport, out _);
         if (!_exactQueryPending) return false;
-        _pendingConductorPress = new(args, point, Keyboard.Modifiers, ToolMode, Snapshot,
+        _pendingConductorPress = new(args, point, ConductorGestureModifiers, ToolMode, Snapshot,
             GestureProjection(viewport), SelectionSnapshot?.Revision);
         CaptureMouse();
         Cursor = Cursors.Wait;

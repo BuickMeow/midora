@@ -38,7 +38,13 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand DuplicateSubVoice(
         MidoraId eventInstrumentId,
         MidoraId subVoiceId,
-        string? name = null) =>
+        string? name = null) => new ProjectPresentationCloneCommand(
+            DuplicateSubVoiceCore(eventInstrumentId, subVoiceId, name), PresentationCloneKind.SubVoice, subVoiceId, eventInstrumentId);
+
+    private static IProjectEditCommand DuplicateSubVoiceCore(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        string? name) =>
         Command("Duplicate SubVoice", project =>
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);

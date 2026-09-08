@@ -902,12 +902,14 @@ public sealed class MidoraProjectPackageV1
                         entries,
                         index,
                         path,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken,
+                        expectedSchemaVersion: index[MidoraPackagePathsV1.ProjectPresentation].SchemaVersion!.Value).ConfigureAwait(false);
                     if (presentationBytes is null)
                     {
                         throw new InvalidDataException("project-presentation.json is missing.");
                     }
-                    presentation = ProjectPresentationCodecV3.Parse(presentationBytes, project);
+                    presentation = ProjectPresentationCodecV3.Parse(presentationBytes, project,
+                        index[MidoraPackagePathsV1.ProjectPresentation].SchemaVersion);
                 }
                 catch (Exception exception) when (exception is InvalidDataException
                     or System.Text.Json.JsonException
@@ -1865,7 +1867,8 @@ public sealed class MidoraProjectPackageV1
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         IReadOnlyDictionary<string, ManifestFileEntryJsonV1> index,
         string targetPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int expectedSchemaVersion = PersistenceContractV1.SchemaVersion)
     {
         if (!index.TryGetValue(packagePath, out ManifestFileEntryJsonV1? manifestEntry)
             || !entries.TryGetValue(packagePath, out ZipArchiveEntry? archiveEntry))
@@ -1873,7 +1876,7 @@ public sealed class MidoraProjectPackageV1
             return null;
         }
         if (manifestEntry.Kind != expectedKind
-            || manifestEntry.SchemaVersion != PersistenceContractV1.SchemaVersion)
+            || manifestEntry.SchemaVersion != expectedSchemaVersion)
         {
             throw StructureFailure(targetPath, packagePath, "Package file kind or schemaVersion is inconsistent.");
         }

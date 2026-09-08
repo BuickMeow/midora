@@ -6,6 +6,7 @@ namespace Midora.Desktop;
 
 public sealed partial class TimelineWorkspaceViewModel
 {
+    private readonly object _tempoAxisSync = new();
     private ConductorTrack? _conductor;
     private ConductorTimelineProjection? _conductorProjection;
     private ConductorEventListSource? _conductorListSource;
@@ -44,23 +45,30 @@ public sealed partial class TimelineWorkspaceViewModel
     {
         base.CancelBackgroundPresentationWork();
         _conductorListSource?.Dispose();
-        _tempoFitCancellation?.Cancel();
-        _tempoAxisRequest++;
+        lock (_tempoAxisSync)
+        {
+            _tempoFitCancellation?.Cancel();
+            _tempoAxisRequest++;
+        }
     }
 
     private void RebuildConductorPaged(MidoraProject project, long revision)
     {
-        _tempoFitCancellation?.Cancel();
-        _conductor = project.Conductor;
-        _conductorRevision = revision;
-        _conductorListSource?.Dispose();
-        _conductorListSource = new(project.Conductor);
-        Raise(nameof(ConductorListSource));
-        RulerSnapshot = null;
-        RangeStartTick = null;
-        RangeEndTick = null;
-        RebuildConductorProjection();
-        Context = $"{_conductorListSource.Count:N0} events";
+        lock (_tempoAxisSync)
+        {
+            _tempoFitCancellation?.Cancel();
+            _tempoAxisRequest++;
+            _conductor = project.Conductor;
+            _conductorRevision = revision;
+            _conductorListSource?.Dispose();
+            _conductorListSource = new(project.Conductor);
+            Raise(nameof(ConductorListSource));
+            RulerSnapshot = null;
+            RangeStartTick = null;
+            RangeEndTick = null;
+            RebuildConductorProjection();
+            Context = $"{_conductorListSource.Count:N0} events";
+        }
     }
 
     private void RebuildConductorProjection()
@@ -77,59 +85,75 @@ public sealed partial class TimelineWorkspaceViewModel
         if (!double.IsFinite(minimum) || !double.IsFinite(maximum) || minimum < 0 || maximum <= minimum
             || maximum >= (double)decimal.MaxValue || (decimal)maximum <= (decimal)minimum)
             throw new ArgumentException("The BPM display range must be finite, non-negative and increasing.");
-        _tempoAxisMinimum = minimum;
-        _tempoAxisMaximum = maximum;
-        _tempoFitCancellation?.Cancel();
-        _tempoAxisRequest++;
-        Raise(nameof(TempoAxisMinimum));
-        Raise(nameof(TempoAxisMaximum));
-        RebuildConductorProjection();
+        lock (_tempoAxisSync)
+        {
+            _tempoAxisMinimum = minimum;
+            _tempoAxisMaximum = maximum;
+            _tempoFitCancellation?.Cancel();
+            _tempoAxisRequest++;
+            Raise(nameof(TempoAxisMinimum));
+            Raise(nameof(TempoAxisMaximum));
+            RebuildConductorProjection();
+        }
     }
 
     internal async Task FitVisibleTempoAsync(CancellationToken cancellationToken)
     {
-        if (_conductor is null) return;
-        _tempoFitCancellation?.Cancel();
         using var preparation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _tempoFitCancellation = preparation;
         cancellationToken = preparation.Token;
+        ConductorQuerySnapshot<TempoChange> source;
+        long start, end, revision, request, span;
+        lock (_tempoAxisSync)
+        {
+            if (_conductor is null) return;
+            source = _conductor.Tempos.CaptureQuerySnapshot();
+            start = StartTick;
+            span = TickSpan;
+            end = start <= long.MaxValue - span ? start + span : long.MaxValue;
+            revision = _conductorRevision;
+            _tempoFitCancellation?.Cancel();
+            _tempoFitCancellation = preparation;
+            request = ++_tempoAxisRequest;
+        }
         try
         {
-        var source = _conductor.Tempos.CaptureQuerySnapshot();
-        long start = StartTick;
-        long end = start <= long.MaxValue - TickSpan ? start + TickSpan : long.MaxValue;
-        long revision = _conductorRevision;
-        long request = ++_tempoAxisRequest;
-        long span = TickSpan;
-        var range = await Task.Run(() =>
-        {
-            double min = double.PositiveInfinity, max = double.NegativeInfinity;
-            // Binary predecessor and ordered ordinal walk; no prefix scan.
-            int low = 0, high = source.Count;
-            while (low < high)
+            var range = await Task.Run(() =>
             {
-                int mid = low + (high - low) / 2;
-                if (source.GetByOrdinal(mid).Tick < start) low = mid + 1; else high = mid;
-            }
-            for (int i = Math.Max(0, low - 1); i < source.Count; i++)
+                double min = double.PositiveInfinity, max = double.NegativeInfinity;
+                // Binary predecessor and ordered ordinal walk; no prefix scan.
+                int low = 0, high = source.Count;
+                while (low < high)
+                {
+                    int mid = low + (high - low) / 2;
+                    if (source.GetByOrdinal(mid).Tick < start) low = mid + 1; else high = mid;
+                }
+                for (int i = Math.Max(0, low - 1); i < source.Count; i++)
+                {
+                    if ((i & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    var value = source.GetByOrdinal(i);
+                    if (value.Tick >= end) break;
+                    double bpm = (double)value.BeatsPerMinute;
+                    min = Math.Min(min, bpm); max = Math.Max(max, bpm);
+                }
+                return (min, max);
+            }, cancellationToken);
+            // Request validation and publication must be indivisible: a foreground axis
+            // change must not slip between the generation check and the old Fit result.
+            lock (_tempoAxisSync)
             {
-                if ((i & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
-                var value = source.GetByOrdinal(i);
-                if (value.Tick >= end) break;
-                double bpm = (double)value.BeatsPerMinute;
-                min = Math.Min(min, bpm); max = Math.Max(max, bpm);
+                if (preparation.IsCancellationRequested || revision != _conductorRevision || request != _tempoAxisRequest
+                    || start != StartTick || span != TickSpan || !double.IsFinite(range.min)) return;
+                double padding = Math.Max(1, (range.max - range.min) * .1);
+                SetTempoAxis(Math.Max(0, range.min - padding), range.max + padding);
             }
-            return (min, max);
-        }, cancellationToken);
-        if (revision != _conductorRevision || request != _tempoAxisRequest
-            || start != StartTick || span != TickSpan || !double.IsFinite(range.min)) return;
-        double padding = Math.Max(1, (range.max - range.min) * .1);
-        SetTempoAxis(Math.Max(0, range.min - padding), range.max + padding);
         }
         catch (OperationCanceledException) when (preparation.IsCancellationRequested) { }
         finally
         {
-            if (ReferenceEquals(_tempoFitCancellation, preparation)) _tempoFitCancellation = null;
+            lock (_tempoAxisSync)
+            {
+                if (ReferenceEquals(_tempoFitCancellation, preparation)) _tempoFitCancellation = null;
+            }
         }
     }
 

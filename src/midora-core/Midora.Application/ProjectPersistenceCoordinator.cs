@@ -87,6 +87,7 @@ public sealed class ProjectPersistenceCoordinator
                 nameof(legacySourceIdentity));
         }
         _legacySourceIdentity = legacySourceIdentity;
+        document.PresentationObjectsCloned += _presentation.CopyForDuplicate;
     }
 
     public ProjectDocumentSession Document => _document;

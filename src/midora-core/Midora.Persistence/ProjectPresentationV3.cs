@@ -10,18 +10,27 @@ public enum ProjectPresentationAllTracksModeV3
     Compiled
 }
 
+public enum OnionSourceMode
+{
+    Custom,
+    Previous,
+    Next
+}
+
 public sealed record TrackOnionPresetV3(
     MidoraId TargetTrackId,
     bool Enabled,
     double Opacity,
-    IReadOnlyList<MidoraId> SourceTrackIds);
+    IReadOnlyList<MidoraId> SourceTrackIds,
+    OnionSourceMode SourceMode = OnionSourceMode.Custom);
 
 public sealed record SubVoiceOnionPresetV3(
     MidoraId EventInstrumentId,
     MidoraId TargetSubVoiceId,
     bool Enabled,
     double Opacity,
-    IReadOnlyList<MidoraId> SourceSubVoiceIds);
+    IReadOnlyList<MidoraId> SourceSubVoiceIds,
+    OnionSourceMode SourceMode = OnionSourceMode.Custom);
 
 public sealed record ProjectPresentationStateV3(
     ProjectPresentationAllTracksModeV3 AllTracksMode,
@@ -38,10 +47,22 @@ internal static class ProjectPresentationCodecV3
 {
     public static ProjectPresentationStateV3 Parse(
         ReadOnlySpan<byte> utf8,
-        MidoraProject project)
+        MidoraProject project,
+        int? declaredSchemaVersion = null)
     {
         ArgumentNullException.ThrowIfNull(project);
         StrictJsonV1.ValidateInput(utf8);
+        using JsonDocument header = JsonDocument.Parse(utf8.ToArray());
+        if (header.RootElement.ValueKind != JsonValueKind.Object
+            || !header.RootElement.TryGetProperty("schemaVersion", out JsonElement version)
+            || version.ValueKind != JsonValueKind.Number
+            || !version.TryGetInt32(out int schemaVersion)
+            || declaredSchemaVersion is { } declared && schemaVersion != declared)
+            throw new InvalidDataException("project-presentation.json schemaVersion is missing or differs from its manifest.");
+        if (schemaVersion == 2)
+            return ProjectPresentationCodecV2.Read(utf8, project);
+        if (schemaVersion != 1)
+            throw new InvalidDataException("project-presentation.json schemaVersion is not supported.");
         ProjectPresentationJsonV3 dto = JsonSerializer.Deserialize(
             utf8,
             ProjectPresentationJsonContextV3.Default.ProjectPresentationJsonV3)
@@ -56,7 +77,7 @@ internal static class ProjectPresentationCodecV3
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(project);
         ProjectPresentationStateV3 canonical = ValidateAndCanonicalize(state, project);
-        ProjectPresentationJsonV3 dto = new()
+        ProjectPresentationJsonV2 dto = new()
         {
             SchemaVersion = PersistenceContractV3.ProjectPresentationSchemaVersion,
             AllTracksMode = canonical.AllTracksMode switch
@@ -66,22 +87,24 @@ internal static class ProjectPresentationCodecV3
                 _ => throw new InvalidDataException("Unknown all-tracks presentation mode.")
             },
             TrackOnionPresets = canonical.TrackOnionPresets.Select(value =>
-                new TrackOnionPresetJsonV3
+                new TrackOnionPresetJsonV2
                 {
                     TargetTrackId = new(value.TargetTrackId.Value),
                     Enabled = value.Enabled,
                     Opacity = value.Opacity,
+                    SourceMode = ProjectPresentationCodecV2.FormatMode(value.SourceMode),
                     SourceTrackIds = value.SourceTrackIds
                         .Select(id => new StableIdJsonV1(id.Value))
                         .ToArray()
                 }).ToArray(),
             SubVoiceOnionPresets = canonical.SubVoiceOnionPresets.Select(value =>
-                new SubVoiceOnionPresetJsonV3
+                new SubVoiceOnionPresetJsonV2
                 {
                     EventInstrumentId = new(value.EventInstrumentId.Value),
                     TargetSubVoiceId = new(value.TargetSubVoiceId.Value),
                     Enabled = value.Enabled,
                     Opacity = value.Opacity,
+                    SourceMode = ProjectPresentationCodecV2.FormatMode(value.SourceMode),
                     SourceSubVoiceIds = value.SourceSubVoiceIds
                         .Select(id => new StableIdJsonV1(id.Value))
                         .ToArray()
@@ -89,7 +112,7 @@ internal static class ProjectPresentationCodecV3
         };
         return StrictJsonV1.SerializeWithFinalLf(
             dto,
-            ProjectPresentationJsonContextV3.Default.ProjectPresentationJsonV3);
+            ProjectPresentationJsonContextV2.Default.ProjectPresentationJsonV2);
     }
 
     public static ProjectPresentationStateV3 ValidateAndCanonicalize(
@@ -130,7 +153,7 @@ internal static class ProjectPresentationCodecV3
         ProjectPresentationJsonV3 dto,
         MidoraProject project)
     {
-        if (dto.SchemaVersion != PersistenceContractV3.ProjectPresentationSchemaVersion)
+        if (dto.SchemaVersion != 1)
         {
             throw new InvalidDataException("project-presentation.json schemaVersion is invalid.");
         }
@@ -175,6 +198,7 @@ internal static class ProjectPresentationCodecV3
     {
         ArgumentNullException.ThrowIfNull(value);
         ValidateOpacity(value.Opacity);
+        if (!Enum.IsDefined(value.SourceMode)) throw new InvalidDataException("Invalid Track onion source mode.");
         if (!trackIds.Contains(value.TargetTrackId) || !targets.Add(value.TargetTrackId))
         {
             throw new InvalidDataException("A Track onion target is missing or duplicated.");
@@ -194,6 +218,7 @@ internal static class ProjectPresentationCodecV3
     {
         ArgumentNullException.ThrowIfNull(value);
         ValidateOpacity(value.Opacity);
+        if (!Enum.IsDefined(value.SourceMode)) throw new InvalidDataException("Invalid SubVoice onion source mode.");
         if (!instruments.TryGetValue(value.EventInstrumentId, out EventInstrument? instrument))
         {
             throw new InvalidDataException("A SubVoice onion preset references a missing Event Instrument.");

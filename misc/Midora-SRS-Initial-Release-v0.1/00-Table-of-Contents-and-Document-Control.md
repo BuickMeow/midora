@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-09-07**
+> 最近修订日期：**2026-09-08**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -50,8 +50,14 @@
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
 
+## 2026-09-08 修订摘要
+
+- 用户继续确认：洋葱皮 Settings 只保留透明度，手选来源单独弹窗；Previous/Next 为独占邻居显示命令，手选列表独立保留，快捷模式也随显式保存/重开恢复。独立 presentation schema 升为 2、继续读取 v1 为 custom，Project Format 仍为 3。All Tracks 标尺/内容单击复用既有播放 Seek。同步 §16.7.5、§16.33、§18.11、INV-116。
+- 根据用户验收更正，Onion / All Tracks 入口统一为缩放同组的 LayerDiagonalRegular 图标；Onion 原地菜单支持启用、相邻来源与设置。All Tracks 支持播放指针和统一跟随规则。Compiled 明确为“逻辑 canonical 展开 + 当前 Pure MIDI 源音符”的混合显示，不重建 Pure MIDI 整曲 FIFO 索引。SRS 18.11、INV-116 同步；音乐编译、播放/导出、Format 3 / presentation schema 1 不变。
+
 ## 2026-09-07 修订摘要
 
+- 阶段 8 落地已定案的 Track/SubVoice 只读洋葱皮、All Tracks Raw/Compiled、来源色与 FIFO 配对、过期显示和有界后台缓存；沿用 Format 3 / presentation schema 1，不改变音乐编辑、编译及音频语义。明确 Duplicate remap、删除引用 dormant/Undo、显式保存及正式叠加顺序。受影响章节：3、16、18、22；INV-115～116。
 - 根据阻塞 BUG 复现澄清 Loop 进入条件：除短音 One-Shot 外，到 Loop End 且 Gate 尚未结束即循环，不再要求 Gate 超过 Template Length；统一原始事件、曲线与 Mapping 的模板时钟，保留既有硬结束并明确循环后 Tail 的时间映射。受影响章节：7、10、22，新增 INV-114；不改变 Project Format。
 - 阶段 7 同步已批准的三种钢琴卷帘虚拟对象列表、显式 Note/Event 类型子菜单和完整选择 Undo/Redo；列表只属于 Session，隐藏停止后台读取，不引入新 Project 格式或音频语义。
 - SubVoice 使用独立 Pre-Roll/Loop 覆盖层：半开前缀暗区、单端/双端黄线、顶部 Tick 标签；不使音符/事件缓存失效。受影响章节：18、20、22，新增 INV-112～113。

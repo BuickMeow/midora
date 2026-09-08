@@ -20,7 +20,8 @@ internal enum TimelineRasterLayer
     ResizePreview,
     VelocityBars,
     EventPoints,
-    EventPointSelection
+    EventPointSelection,
+    Onion
 }
 
 internal readonly record struct TimelineRasterCacheKey(

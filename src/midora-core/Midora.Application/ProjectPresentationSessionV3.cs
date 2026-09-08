@@ -58,6 +58,21 @@ public sealed class ProjectPresentationSessionV3
 
     public event EventHandler? Changed;
 
+    public void CopyForDuplicate(IReadOnlyDictionary<MidoraId, MidoraId> map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        var state = Current;
+        MidoraId Remap(MidoraId id) => map.TryGetValue(id, out var replacement) ? replacement : id;
+        var tracks = state.TrackOnionPresets.Where(p => map.ContainsKey(p.TargetTrackId))
+            .Select(p => p with { TargetTrackId = Remap(p.TargetTrackId), SourceTrackIds = p.SourceTrackIds.Select(Remap).Where(id => id != Remap(p.TargetTrackId)).ToArray() }).ToArray();
+        var voices = state.SubVoiceOnionPresets.Where(p => map.ContainsKey(p.TargetSubVoiceId))
+            .Select(p => p with { EventInstrumentId = Remap(p.EventInstrumentId), TargetSubVoiceId = Remap(p.TargetSubVoiceId),
+                SourceSubVoiceIds = p.SourceSubVoiceIds.Select(Remap).Where(id => id != Remap(p.TargetSubVoiceId)).ToArray() }).ToArray();
+        if (tracks.Length == 0 && voices.Length == 0) return;
+        Replace(state with { TrackOnionPresets = state.TrackOnionPresets.Concat(tracks).ToArray(),
+            SubVoiceOnionPresets = state.SubVoiceOnionPresets.Concat(voices).ToArray() });
+    }
+
     public void Replace(ProjectPresentationStateV3 state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -113,6 +128,8 @@ public sealed class ProjectPresentationSessionV3
         HashSet<MidoraId> tracks = project.ArrangementTracks
             .Select(value => value.TrackId)
             .ToHashSet();
+        var trackOrder = project.TracksInArrangementOrder().Select((value, index) => (value.TrackId, index))
+            .ToDictionary(value => value.TrackId, value => value.index);
         TrackOnionPresetV3[] trackPresets = state.TrackOnionPresets
             .Where(value => tracks.Contains(value.TargetTrackId))
             .Select(value => value with
@@ -120,6 +137,7 @@ public sealed class ProjectPresentationSessionV3
                 SourceTrackIds = value.SourceTrackIds
                     .Where(id => id != value.TargetTrackId && tracks.Contains(id))
                     .Distinct()
+                    .OrderBy(id => trackOrder[id])
                     .ToArray()
             })
             .ToArray();
@@ -128,6 +146,8 @@ public sealed class ProjectPresentationSessionV3
             .ToDictionary(
                 value => value.Id,
                 value => value.SubVoices.Select(subVoice => subVoice.Id).ToHashSet());
+        var voiceOrder = project.EventInstruments.SelectMany(i => i.SubVoices.Select((voice, index) => (voice.Id, index)))
+            .ToDictionary(value => value.Id, value => value.index);
         SubVoiceOnionPresetV3[] subVoicePresets = state.SubVoiceOnionPresets
             .Where(value => subVoices.TryGetValue(value.EventInstrumentId, out HashSet<MidoraId>? ids)
                 && ids.Contains(value.TargetSubVoiceId))
@@ -137,6 +157,7 @@ public sealed class ProjectPresentationSessionV3
                     .Where(id => id != value.TargetSubVoiceId
                         && subVoices[value.EventInstrumentId].Contains(id))
                     .Distinct()
+                    .OrderBy(id => voiceOrder[id])
                     .ToArray()
             })
             .ToArray();

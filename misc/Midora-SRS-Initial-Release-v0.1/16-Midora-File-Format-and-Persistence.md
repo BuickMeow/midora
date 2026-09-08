@@ -477,7 +477,7 @@ Project 标记为已修改。
 
 `settings/project-presentation.json` 是 Format 3 新增的唯一 Project presentation entry。它不是 Project Source Data，不进入 Domain、编译、canonical fingerprint、音频缓存或 Undo/Redo；其 revision/save baseline 独立于音乐 Project Modified。
 
-v1 schema 固定保存：
+冻结的 v1 schema 保存：
 
 ```text
 schemaVersion = 1
@@ -486,9 +486,11 @@ trackOnionPresets[] = targetTrackId + enabled + opacity + ordered sourceTrackIds
 subVoiceOnionPresets[] = eventInstrumentId + targetSubVoiceId + enabled + opacity + ordered sourceSubVoiceIds
 ```
 
-opacity 必须是有限 `0..1`。target 必须存在且唯一，source 必须存在、同类、唯一且不得等于 target。写出按 target stable ID 确定排序；source 顺序保留为叠加顺序。保存快照过滤已经删除的 target/source，不得为 presentation 引用复活 Project 对象。
+当前 writer 使用独立 presentation schema 2：每个 Track/SubVoice preset 在 v1 字段外追加必填 `sourceMode = custom | previous | next`。原有 source ID 列表始终表示保留的手选来源；previous/next 只改变显示模式，不改写列表。前后邻居按当前正式顺序解析，不循环；显式保存后重开恢复相同模式。v1 reader/DTO/schema 保留并显式转换为 custom，不将 sourceMode 反向写入 v1。
 
-该 entry 缺失、hash 不符、strict JSON/schema/引用验证失败时，只隔离 presentation、恢复 `allTracksMode=raw` 且 preset arrays 为空，并报告 `MIDORA-PERSIST-PRESENTATION-RECOVERED` Warning。音乐 Project source 仍可打开，`IsModified` 不因此成立；presentation session 单独保持 recovery-dirty，下一次普通 Save 可重写默认有效 entry。Format 1/2 没有该 entry，detached migration 使用同一默认 presentation。
+opacity 必须是有限 `0..1`。target 必须存在且唯一，source 必须存在、同类、唯一且不得等于 target。写出按 target stable ID 确定排序；source 顺序保存为当次正式 Arrangement / SubVoice 顺序过滤后的叠加顺序，而非另建用户可重排的顺序。运行时跟随正式轨道 / SubVoice 顺序，首项最底层。保存快照过滤已经删除的 target/source，不得为 presentation 引用复活 Project 对象。
+
+该 entry 缺失、hash 不符、strict JSON/schema/引用验证失败、未知 presentation schema/模式或 manifest 与 payload schemaVersion 不一致时，只隔离 presentation、恢复 `allTracksMode=raw` 且 preset arrays 为空，并报告 `MIDORA-PERSIST-PRESENTATION-RECOVERED` Warning。音乐 Project source 仍可打开，`IsModified` 不因此成立；presentation session 单独保持 recovery-dirty，下一次普通 Save 可重写默认有效 entry。Format 1/2 没有该 entry，detached migration 使用同一默认 presentation。
 ## 16.8 conductor-track.json
 ### 16.8.1 内容
 `conductor-track.json` 保存完整 Conductor Track 内容，包括：
@@ -1953,7 +1955,7 @@ minimumReadableVersion = 3
 manifestSchemaVersion = 3
 ```
 
-Format 3 新增一个 `project-presentation-json` file kind，且必须在 canonical path `settings/project-presentation.json` 恰好出现一次、schemaVersion=1。除该 entry 与 manifest v3 外，Format 3 逐项复用 Format 2 的 Project source JSON schemas、Event Instrument protobuf v2、其他 protobuf v1 与 Pure MIDI content-pack wire；复用不允许修改那些既有契约。
+Format 3 新增一个 `project-presentation-json` file kind，且必须在 canonical path `settings/project-presentation.json` 恰好出现一次。其 manifest schemaVersion 是正整数，由独立 presentation reader 分派（当前读 1/2、写 2）；未知版本交由 presentation 恢复边界处理，不阻止音乐加载。除该 entry 与 manifest v3 外，Format 3 逐项复用 Format 2 的 Project source JSON schemas、Event Instrument protobuf v2、其他 protobuf v1 与 Pure MIDI content-pack wire；复用不允许修改那些既有契约。
 
 ### 16.33.2 Reader、writer 与损坏边界
 
@@ -1972,9 +1974,10 @@ Format 1 先按第 16.32.3 节显式补 `Pre-Roll Ticks=0`；Format 2 保留其�
 Format 3 必须持续覆盖：
 
 ```text
-manifest-v3 与 project-presentation-v1 schema set hash
+manifest-v3 与 project-presentation-v1/v2 schema set hash
 空/非空 presentation deterministic bytes 与 package golden
 strict unknown/duplicate/type/range/reference rejection
+presentation v1 -> custom / v2 mode + custom sources, manifest/payload version agreement
 presentation missing/hash/corruption isolation without Project Modified
 Format 1/2 detached migration + default presentation
 Format 1/2 -> confirmed in-place Format 3 upgrade + exact-byte permanent backup

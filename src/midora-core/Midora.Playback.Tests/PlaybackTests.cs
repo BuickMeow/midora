@@ -2262,6 +2262,34 @@ public sealed class PlaybackTests
         return path;
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TimelineNavigationSeeksWhilePlayingOrBufferingAndCanStillStop(bool buffering)
+    {
+        string soundFont = CreateTemporarySoundFont();
+        try
+        {
+            using ProjectCompilationSession session = new(CreateProject(), soundFont);
+            using RecoveryBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.PositionFrames = 4800;
+            backend.IsBuffering = buffering;
+            controller.Update();
+            Assert.Equal(buffering ? PlaybackState.Buffering : PlaybackState.Playing, controller.State);
+            controller.Seek(240);
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(240, controller.CurrentTick);
+            Assert.Equal(1, backend.StopCount);
+            Assert.Equal(PlaybackTaskKind.MainTimeline, controller.ActiveTaskKind);
+            controller.Stop();
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.False(session.EditsLocked);
+        }
+        finally { File.Delete(soundFont); }
+    }
+
     private sealed class ManualTimeProvider : TimeProvider
     {
         private DateTimeOffset _utcNow = new(2026, 8, 6, 0, 0, 0, TimeSpan.Zero);

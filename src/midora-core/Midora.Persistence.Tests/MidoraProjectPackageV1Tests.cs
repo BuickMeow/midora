@@ -480,7 +480,9 @@ public sealed class MidoraProjectPackageV1Tests
             Assert.Equal(
                 item.Kind == "event-instrument-pb"
                     ? PersistenceContractV3.EventInstrumentSchemaVersion
-                    : PersistenceContractV3.ReusedComponentSchemaVersion,
+                    : item.Kind == "project-presentation-json"
+                        ? PersistenceContractV3.ProjectPresentationSchemaVersion
+                        : PersistenceContractV3.ReusedComponentSchemaVersion,
                 item.SchemaVersion);
         }
     }

@@ -334,6 +334,7 @@
       </HierarchicalDataTemplate.Triggers>
     </HierarchicalDataTemplate>
 
+    <DataTemplate DataType="{x:Type local:AllTracksWorkspaceViewModel}"><local:AllTracksView PlaybackCursorRequested="OnTimelineRulerClicked"/></DataTemplate>
     <DataTemplate DataType="{x:Type local:TimelineWorkspaceViewModel}">
       <Grid Background="{StaticResource Brush.Surface.0}">
         <Grid.ColumnDefinitions><ColumnDefinition Width="{Binding ObjectList.ColumnWidth, Mode=TwoWay}"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -404,8 +405,16 @@
                 <TextBox Width="42" Height="24" Padding="5,0" Text="{Binding EditorSettings.DefaultVelocity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Default note velocity (1–127)"/>
               </StackPanel>
               <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
-              <Button Width="26" Height="24" Margin="0,0,2,0" Padding="0" ToolTip="Zoom out" Tag="Out" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}"/></Button>
-              <Button Width="26" Height="24" Margin="0,0,6,0" Padding="0" ToolTip="Zoom in" Tag="In" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}"/></Button>
+              <Button Style="{StaticResource Button.TimelineIcon}" ToolTip="Zoom out" Tag="Out" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}"/></Button>
+              <Button Style="{StaticResource Button.TimelineIcon}" ToolTip="Zoom in" Tag="In" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}"/></Button>
+              <Button Margin="0,0,6,0" ToolTip="Onion skin" Tag="{Binding IsOnionEnabled}" IsEnabled="{Binding CanConfigureOnion}" Click="OnOnionMenuClick">
+                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.TimelineOption}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                <ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.LayerDiagonal20Regular}"/>
+              </Button>
+              <Button Margin="0,0,6,0" ToolTip="All Tracks" Click="OnOpenAllTracksClick">
+                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.TimelineIcon}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                <ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.LayerDiagonal20Regular}"/>
+              </Button>
               <Border Width="1" Height="18" Margin="0,0,7,0" Background="{StaticResource Brush.Border}"/>
               <ToggleButton Width="30" Height="24" Margin="0,0,4,0" Padding="0" ToolTip="Draw (D)" Tag="Draw" IsChecked="{Binding IsDrawTool, Mode=OneWay}" Click="OnTimelineToolClick"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Pen20Regular}"/></ToggleButton>
               <ToggleButton Width="30" Height="24" Margin="0,0,4,0" Padding="0" ToolTip="Select (S)" Tag="Select" IsChecked="{Binding IsSelectTool, Mode=OneWay}" Click="OnTimelineToolClick"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.SelectObject20Regular}"/></ToggleButton>
@@ -456,6 +465,7 @@
         <ui:TimelineSurface x:Name="Timeline" Tag="PrimaryTimeline"
                             Focusable="True"
                             Snapshot="{Binding Snapshot}"
+                            OnionSnapshot="{Binding OnionSnapshot}"
                             SelectionSnapshot="{Binding SelectionSnapshot}"
                             SelectedArrangementTrackId="{Binding SelectedArrangementTrackId}"
                             IsConductorTrackSelected="{Binding IsConductorTrackSelected}"
@@ -852,7 +862,9 @@
                             <TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Length"/><TextBox Width="56" Height="24" Margin="0,0,5,0" Padding="5,0" Text="{Binding EditorSettings.DefaultLengthTicks, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                             <TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Vel"/><TextBox Width="42" Height="24" Margin="0,0,4,0" Padding="5,0" Text="{Binding EditorSettings.DefaultVelocity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                             <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
-                            <Button Width="26" Height="24" Margin="0,0,2,0" Padding="0" ToolTip="Zoom out" Tag="Out" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}"/></Button><Button Width="26" Height="24" Margin="0,0,6,0" Padding="0" ToolTip="Zoom in" Tag="In" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}"/></Button>
+                            <Button Style="{StaticResource Button.TimelineIcon}" ToolTip="Zoom out" Tag="Out" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}"/></Button>
+                            <Button Style="{StaticResource Button.TimelineIcon}" ToolTip="Zoom in" Tag="In" Click="OnTimelineZoomClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}"/></Button>
+                            <Button Style="{StaticResource Button.TimelineOption}" Margin="0,0,6,0" ToolTip="Onion skin" Tag="{Binding IsOnionEnabled}" IsEnabled="{Binding CanConfigureOnion}" Click="OnOnionMenuClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.LayerDiagonal20Regular}"/></Button>
                             <Border Width="1" Height="18" Margin="0,0,7,0" Background="{StaticResource Brush.Border}"/>
                             <ToggleButton Width="30" Height="24" Margin="0,0,4,0" Padding="0" ToolTip="Draw (D)" IsChecked="{Binding IsDrawTool, Mode=OneWay}" Tag="Draw" Click="OnInstrumentTimelineToolClick"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Pen20Regular}"/></ToggleButton><ToggleButton Width="30" Height="24" Margin="0,0,4,0" Padding="0" ToolTip="Select (S)" IsChecked="{Binding IsSelectTool, Mode=OneWay}" Tag="Select" Click="OnInstrumentTimelineToolClick"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.SelectObject20Regular}"/></ToggleButton><ToggleButton Width="30" Height="24" Padding="0" ToolTip="Erase (E)" IsChecked="{Binding IsEraseTool, Mode=OneWay}" Tag="Erase" Click="OnInstrumentTimelineToolClick"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Eraser20Regular}"/></ToggleButton>
                           </StackPanel>
@@ -865,7 +877,7 @@
                         <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="22"/></Grid.RowDefinitions>
                       <GroupBox Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice note piano roll" AutomationProperties.AutomationId="SubVoiceNoteTimelineSurface">
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                        <ui:TimelineSurface x:Name="SubVoiceNoteTimeline" Tag="SubVoiceNotes" Snapshot="{Binding SubVoiceNoteSnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}"
+                        <ui:TimelineSurface x:Name="SubVoiceNoteTimeline" Tag="SubVoiceNotes" Snapshot="{Binding SubVoiceNoteSnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" OnionSnapshot="{Binding OnionSnapshot}"
                                             ContextMenu="{StaticResource TimelineContextMenu}"
                                             IsTimeRangeSelectionEnabled="False"
                                             CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"

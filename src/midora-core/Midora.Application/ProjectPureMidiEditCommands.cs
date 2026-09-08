@@ -590,7 +590,7 @@ public static partial class ProjectDomainEditCommands
         });
 
     public static IProjectEditCommand DuplicatePureMidiTrack(MidoraId trackId, string? name = null) =>
-        DuplicatePureMidiTrackCore(trackId, name, detachedPreparation: false);
+        new ProjectPresentationCloneCommand(DuplicatePureMidiTrackCore(trackId, name, detachedPreparation: false), PresentationCloneKind.MidiTrack, trackId);
 
     private static IProjectEditCommand DuplicatePureMidiTrackCore(MidoraId trackId, string? name, bool detachedPreparation) =>
         Command("Duplicate Pure MIDI Track", project =>

@@ -191,8 +191,10 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         sourceWorkCount = 0;
         if (kind is not (TimelineRasterAggregateKind.PianoNotes
             or TimelineRasterAggregateKind.Velocity))
@@ -211,7 +213,8 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
             projection,
             minimumNote,
             maximumNote,
-            raw);
+            raw,
+            cancellationToken);
         MergeRasterColumns(raw, destination, kind);
         return true;
     }
@@ -606,12 +609,14 @@ internal sealed class PagedLogicalParameterTimelineItemSource :
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         sourceWorkCount = 0;
         if (kind != TimelineRasterAggregateKind.EventPoints) return false;
         TimelineRasterColumnSummary[] raw = new TimelineRasterColumnSummary[destination.Length];
-        sourceWorkCount = _snapshot.AccumulateRasterColumns(projection, raw);
+        sourceWorkCount = _snapshot.AccumulateRasterColumns(projection, raw, cancellationToken);
         for (int column = 0; column < raw.Length; column++)
         {
             TimelineRasterColumnSummary summary = raw[column];
@@ -869,8 +874,10 @@ internal sealed class PagedTemplateNoteTimelineItemSource :
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         sourceWorkCount = 0;
         if (kind is not (TimelineRasterAggregateKind.PianoNotes
             or TimelineRasterAggregateKind.Velocity))
@@ -889,7 +896,8 @@ internal sealed class PagedTemplateNoteTimelineItemSource :
             projection,
             minimumNote,
             maximumNote,
-            raw);
+            raw,
+            cancellationToken);
         PagedLogicalNoteTimelineItemSource.MergeRasterColumns(raw, destination, kind);
         return true;
     }
@@ -1103,14 +1111,17 @@ internal sealed class PagedTemplateEventLaneTimelineItemSource :
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         sourceWorkCount = 0;
         if (kind != TimelineRasterAggregateKind.EventPoints || _targetIndex is null)
             return false;
         sourceWorkCount = _targetIndex.AccumulateRasterColumns(
             projection,
-            destination);
+            destination,
+            cancellationToken);
         return true;
     }
 

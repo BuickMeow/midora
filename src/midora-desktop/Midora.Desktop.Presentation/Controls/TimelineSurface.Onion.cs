@@ -33,11 +33,22 @@ public sealed partial class TimelineSurface
         _onionCancellation.Cancel();
         _onionCancellation.Dispose();
         _onionCancellation = new();
+        // These are source-bearing projections, not the independent bitmap LRU.
+        // A disabled/hidden layer must not retain the previous Project graph.
+        _onionSourceSnapshot = null;
+        _onionDrawSnapshot = null;
+        _onionMaximumBlocks = 0;
+        OnionMissingTileCount = 0;
     }
     private void DrawOnion(DrawingContext context, TimelineViewport viewport, double header, double ruler)
     {
         OnionMissingTileCount = 0;
-        if (OnionSnapshot is not { Opacity: > 0 } snapshot) return;
+        if (_backgroundWorkSuspended) return;
+        if (OnionSnapshot is not { Opacity: > 0 } snapshot || snapshot.Blocks.Count == 0)
+        {
+            if (_onionSourceSnapshot is not null) CancelOnionRequests();
+            return;
+        }
         var metrics = (viewport.StartTick, viewport.EndTick, viewport.FirstLane, viewport.LaneHeight, viewport.Width);
         if (_onionViewport != metrics || _onionCancellation.IsCancellationRequested)
         { CancelOnionRequests(); _onionViewport = metrics; }
@@ -87,7 +98,8 @@ public sealed partial class TimelineSurface
                 TimelineRasterCache.Shared.Request(key,
                     token => TimelineOnionRasterizer.Render(snapshot, capturedBlock, capturedX, 0, sx, 1, token),
                     Dispatcher, InvalidateVisual, _onionCancellation.Token,
-                    OnionIsPrimaryLayer ? TimelineRasterRequestPriority.Visible : TimelineRasterRequestPriority.Normal);
+                    OnionIsPrimaryLayer ? TimelineRasterRequestPriority.Visible : TimelineRasterRequestPriority.Normal,
+                    consumerId: _rasterConsumerId);
             }
         }
         context.Pop();

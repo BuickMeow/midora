@@ -396,9 +396,12 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         set
         {
             WorkspaceViewModel? previous = _activeWorkspace;
+            if (value?.IsDisposed == true || ReferenceEquals(previous, value)) return;
+            previous?.SuspendPresentation();
             if (Set(ref _activeWorkspace, value))
             {
                 StopEventInstrumentKeyboardPreviewOnWorkspaceExit(previous, value);
+                value?.ResumePresentation();
                 if (!_isNavigatingHistory
                     && previous is not null
                     && value is not null
@@ -414,6 +417,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
                 }
                 Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
                     .FirstOrDefault()?.SetScope(_diagnosticScopeWorkspace);
+                RefreshOnionPresentations();
                 Raise(nameof(CanNavigateBack));
                 Raise(nameof(CanNavigateForward));
             }
@@ -2249,17 +2253,23 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         if (!workspace.CanClose) return;
         int index = Workspaces.IndexOf(workspace);
         if (index < 0) return;
-        workspace.CancelBackgroundPresentationWork();
         Workspaces.RemoveAt(index);
         _workspaceSelectionBookmarkCache.Remove(workspace.Key);
-        _backNavigation.RemoveAll(key => key == workspace.Key);
-        _forwardNavigation.RemoveAll(key => key == workspace.Key);
         if (ReferenceEquals(ActiveWorkspace, workspace))
         {
             ActiveWorkspace = Workspaces.Count == 0
                 ? null
                 : Workspaces[Math.Clamp(index - 1, 0, Workspaces.Count - 1)];
         }
+        if (ReferenceEquals(_diagnosticScopeWorkspace, workspace))
+        {
+            _diagnosticScopeWorkspace = ActiveWorkspace is DiagnosticsWorkspaceViewModel ? null : ActiveWorkspace;
+            Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
+                .FirstOrDefault()?.SetScope(_diagnosticScopeWorkspace);
+        }
+        workspace.Dispose();
+        _backNavigation.RemoveAll(key => key == workspace.Key);
+        _forwardNavigation.RemoveAll(key => key == workspace.Key);
         Raise(nameof(CanNavigateBack));
         Raise(nameof(CanNavigateForward));
     }
@@ -2377,7 +2387,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         await refreshesIdle;
         TimelineRasterCacheSession.Clear();
         foreach (WorkspaceViewModel workspace in Workspaces)
-            workspace.CancelBackgroundPresentationWork();
+            workspace.Dispose();
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
@@ -2397,6 +2407,8 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         ActiveWorkspace = null;
         _revision = 0;
         _timeSignatureMap = null;
+        ArrangementEditorSettings.Reset(arrangement: true);
+        PianoRollEditorSettings.Reset(arrangement: false);
         _displayCurrentTick = 0;
         _orderedTempoChanges = [];
         _activeTempoIndex = -1;
@@ -2434,13 +2446,14 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         Subscribe(next);
         TimelineRasterCacheSession.Clear();
         foreach (WorkspaceViewModel workspace in Workspaces)
-            workspace.CancelBackgroundPresentationWork();
+            workspace.Dispose();
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
         _workspaceSelectionHistory.Clear();
         _workspaceSelectionBookmarkCache.Clear();
         _projectTreeStructureStamp = null;
+        _diagnosticScopeWorkspace = null;
         ActiveWorkspace = null;
         _revision = 1;
         _timeSignatureMap = new(Project!);

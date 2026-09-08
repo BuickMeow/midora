@@ -31,6 +31,7 @@ public sealed class OnionWorkspaceTests
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 192, 192));
         var a = session.OpenSegment(track.Segments[0].Id);
         var b = session.OpenSegment(track.Segments[1].Id);
+        session.ActiveWorkspace = a;
         bool removed = false;
         a.PropertyChanged += (_, e) =>
         {
@@ -58,6 +59,7 @@ public sealed class OnionWorkspaceTests
         var a = session.OpenSegment(tracks[0].Segments[0].Id);
         var b = session.OpenSegment(tracks[1].Segments[0].Id);
         var d = session.OpenSegment(tracks[3].Segments[0].Id);
+        session.ActiveWorkspace = b;
         session.Document!.MarkSaveSucceeded();
         long revision = session.Document.PublicationRevision;
         Assert.Null(session.GetOnionControls(a)!.Previous);
@@ -195,7 +197,7 @@ public sealed class OnionWorkspaceTests
                     Assert.Equal(revision, session.Document.PublicationRevision);
                     Assert.False(session.Document.IsModified);
                 }
-                vm.CancelBackgroundPresentationWork();
+                vm.Dispose();
             }
             finally { session.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         });
@@ -258,7 +260,7 @@ public sealed class OnionWorkspaceTests
                 var retained = vm.OnionSnapshot!.Blocks.SelectMany(b => b).Select(t => t.Id).ToArray();
                 Assert.DoesNotContain(removed.Id, retained); Assert.Contains(logical.Id, retained);
             }
-            finally { vm.CancelBackgroundPresentationWork(); }
+            finally { vm.Dispose(); }
             static (long Tick, long Length) Bounds(TimelineOnionTrack track)
             {
                 List<TimelineRenderItem> notes = []; track.Clips[0].Source.QueryInto(0, 192, 0, 128, notes);
@@ -357,7 +359,7 @@ public sealed class OnionWorkspaceTests
             Assert.True(sources.Sources[0].Included);
             sources.Sources[0].Included = false;
             Assert.True(original.Included); // Cancel owns no externally shared draft.
-            sources.Close(); dialog.Close(); vm.CancelBackgroundPresentationWork();
+            sources.Close(); dialog.Close(); vm.Dispose();
         });
     }
     [Fact]
@@ -381,7 +383,9 @@ public sealed class OnionWorkspaceTests
         long revision = session.Document.PublicationRevision;
         session.SetTrackOnion(new(target.Id, true, .3, [source.Id]));
         Assert.Equal(revision, session.Document.PublicationRevision);
-        Assert.NotNull(a.OnionSnapshot); Assert.NotNull(b.OnionSnapshot);
+        Assert.Null(a.OnionSnapshot); Assert.NotNull(b.OnionSnapshot);
+        session.ActiveWorkspace = a;
+        Assert.NotNull(a.OnionSnapshot); Assert.Null(b.OnionSnapshot);
         Assert.Empty(a.Selection.Ids); Assert.False(a.Snapshot!.HasHitTestableItems);
         var old = a.OnionSnapshot;
         session.RefreshWorkspaceSelection(a); Assert.Same(old, a.OnionSnapshot);

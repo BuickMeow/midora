@@ -44,12 +44,41 @@ public sealed partial class TimelineWorkspaceViewModel
     public override void CancelBackgroundPresentationWork()
     {
         base.CancelBackgroundPresentationWork();
-        _conductorListSource?.Dispose();
+        if (!_midiTargetDiscoveryCancellation.IsCancellationRequested)
+            _midiTargetDiscoveryCancellation.Cancel();
+        _midiTargetDiscoveryGeneration++;
         lock (_tempoAxisSync)
         {
             _tempoFitCancellation?.Cancel();
             _tempoAxisRequest++;
         }
+    }
+
+    private void SuspendConductorPresentation()
+    {
+        _conductorListSource?.Dispose();
+        _conductorListSource = null;
+        Raise(nameof(ConductorListSource));
+    }
+
+    private void ResumeConductorPresentation()
+    {
+        if (IsConductor && _conductor is not null && _conductorListSource is null)
+        {
+            _conductorListSource = new(_conductor);
+            Raise(nameof(ConductorListSource));
+        }
+        _midiTargetDiscoveryCancellation.Dispose();
+        _midiTargetDiscoveryCancellation = new();
+    }
+
+    private void DisposeConductorPresentation()
+    {
+        SuspendConductorPresentation();
+        _conductor = null;
+        _conductorProjection = null;
+        SelectedConductorEvent = null;
+        Raise(nameof(ConductorTempoSnapshot));
     }
 
     private void RebuildConductorPaged(MidoraProject project, long revision)
@@ -61,13 +90,15 @@ public sealed partial class TimelineWorkspaceViewModel
             _conductor = project.Conductor;
             _conductorRevision = revision;
             _conductorListSource?.Dispose();
-            _conductorListSource = new(project.Conductor);
+            _conductorListSource = IsPresentationSuspended ? null : new(project.Conductor);
             Raise(nameof(ConductorListSource));
             RulerSnapshot = null;
             RangeStartTick = null;
             RangeEndTick = null;
             RebuildConductorProjection();
-            Context = $"{_conductorListSource.Count:N0} events";
+            Context = $"{project.Conductor.Tempos.Count + project.Conductor.TimeSignatures.Count
+                + project.Conductor.KeySignatures.Count + project.Conductor.Markers.Count
+                + (project.Conductor.EndMarker is null ? 0 : 1):N0} events";
         }
     }
 
@@ -105,7 +136,7 @@ public sealed partial class TimelineWorkspaceViewModel
         long start, end, revision, request, span;
         lock (_tempoAxisSync)
         {
-            if (_conductor is null) return;
+            if (IsDisposed || IsPresentationSuspended || _conductor is null) return;
             source = _conductor.Tempos.CaptureQuerySnapshot();
             start = StartTick;
             span = TickSpan;
@@ -141,7 +172,7 @@ public sealed partial class TimelineWorkspaceViewModel
             // change must not slip between the generation check and the old Fit result.
             lock (_tempoAxisSync)
             {
-                if (preparation.IsCancellationRequested || revision != _conductorRevision || request != _tempoAxisRequest
+                if (IsDisposed || IsPresentationSuspended || preparation.IsCancellationRequested || revision != _conductorRevision || request != _tempoAxisRequest
                     || start != StartTick || span != TickSpan || !double.IsFinite(range.min)) return;
                 double padding = Math.Max(1, (range.max - range.min) * .1);
                 SetTempoAxis(Math.Max(0, range.min - padding), range.max + padding);

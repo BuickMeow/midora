@@ -335,8 +335,51 @@ public enum WorkspaceTabIconKind
 
 public abstract class WorkspaceViewModel(
     WorkspaceKey key,
-    string header) : ObservableObject
+    string header) : ObservableObject, IDisposable
 {
+    private bool _isDisposed;
+    private bool _isPresentationSuspended;
+    public bool IsDisposed => _isDisposed;
+    public bool IsPresentationSuspended => _isPresentationSuspended;
+
+    public void SuspendPresentation()
+    {
+        if (IsDisposed || IsPresentationSuspended) return;
+        _isPresentationSuspended = true;
+        CancelBackgroundPresentationWork();
+        OnPresentationSuspended();
+        Raise(nameof(IsPresentationSuspended));
+    }
+
+    public void ResumePresentation()
+    {
+        if (IsDisposed || !IsPresentationSuspended) return;
+        _isPresentationSuspended = false;
+        LastOnionRevision = (-1, -1, null);
+        OnPresentationResumed();
+        Raise(nameof(IsPresentationSuspended));
+    }
+
+    protected virtual void OnPresentationSuspended() { }
+    protected virtual void OnPresentationResumed() => RefreshSelectionPresentation();
+    protected virtual void DisposeCore() { }
+
+    public void Dispose()
+    {
+        if (IsDisposed) return;
+        _isDisposed = true;
+        _isPresentationSuspended = true;
+        CancelOwnedSelectionPresentationWork();
+        CancelBackgroundPresentationWork();
+        DisposeCore();
+        ObjectList.SetFactory(null);
+        Selection.Clear();
+        SelectionSnapshot = TimelineSelectionSnapshot.CreateUnavailable(Selection.Revision);
+        _selectionPrefetchCancellation.Dispose();
+        Raise(nameof(IsDisposed));
+        Raise(nameof(IsPresentationSuspended));
+        GC.SuppressFinalize(this);
+    }
     private TimelineOnionSnapshot? _onionSnapshot;
     private bool _isOnionEnabled;
     private bool _canConfigureOnion;
@@ -402,8 +445,11 @@ public abstract class WorkspaceViewModel(
 
     public abstract void Rebuild(MidoraProject project, long revision);
 
-    public virtual void RefreshSelectionPresentation() =>
-        SelectionSnapshot = TimelineSelectionSnapshot.FromWorkspaceSelection(Selection);
+    public virtual void RefreshSelectionPresentation()
+    {
+        if (!IsDisposed)
+            SelectionSnapshot = TimelineSelectionSnapshot.FromWorkspaceSelection(Selection);
+    }
 
     /// <summary>
     /// Publishes metrics accumulated by an exact background selection query.
@@ -417,6 +463,7 @@ public abstract class WorkspaceViewModel(
         TimelineSelectionRenderIndex? renderIndex = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
+        if (IsDisposed) return;
         _selectionPrefetchCancellation.Cancel();
         _selectionPrefetchGeneration = checked(_selectionPrefetchGeneration + 1);
         SelectionSnapshot = TimelineSelectionSnapshot.FromWorkspaceSelection(
@@ -437,7 +484,7 @@ public abstract class WorkspaceViewModel(
         Action? afterPublish = null)
     {
         ArgumentNullException.ThrowIfNull(snapshots);
-        if (Selection.IdSet.Count == 0
+        if (IsDisposed || IsPresentationSuspended || Selection.IdSet.Count == 0
             || metricsAreComplete && SelectionSnapshot.HasRenderIndex)
         {
             return;
@@ -453,6 +500,7 @@ public abstract class WorkspaceViewModel(
 
     protected void BeginPresentationRebuild()
     {
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
         _selectionPresentationScope = checked(_selectionPresentationScope + 1);
         _selectionPrefetchCancellation.Cancel();
     }
@@ -463,13 +511,17 @@ public abstract class WorkspaceViewModel(
     /// untouched, but no orphaned metrics scan may retain paged snapshots or
     /// publish back into a closed Workspace.
     /// </summary>
-    public virtual void CancelBackgroundPresentationWork()
+    public virtual void CancelBackgroundPresentationWork() => CancelOwnedSelectionPresentationWork();
+
+    private void CancelOwnedSelectionPresentationWork()
     {
         OnionSnapshot = null;
+        LastOnionRevision = (-1, -1, null);
         ObjectList.SetActive(false);
         _selectionPresentationScope = checked(_selectionPresentationScope + 1);
         _selectionPrefetchGeneration = checked(_selectionPrefetchGeneration + 1);
-        _selectionPrefetchCancellation.Cancel();
+        if (!_selectionPrefetchCancellation.IsCancellationRequested)
+            _selectionPrefetchCancellation.Cancel();
     }
 
     protected bool TryRefreshSelectionPresentation(
@@ -477,6 +529,7 @@ public abstract class WorkspaceViewModel(
         Action? afterPublish = null)
     {
         ArgumentNullException.ThrowIfNull(snapshots);
+        if (IsDisposed) return false;
         IReadOnlySet<MidoraId> ids = Selection.IdSet;
         long revision = Selection.Revision;
         long scope = _selectionPresentationScope;
@@ -529,6 +582,7 @@ public abstract class WorkspaceViewModel(
         // Pending is not Empty. Preserve the immutable IDs immediately but do
         // not fabricate position metrics until all required cold pages exist.
         SelectionSnapshot = TimelineSelectionSnapshot.FromWorkspaceSelection(Selection);
+        if (IsPresentationSuspended) return false;
         _selectionPrefetchCancellation.Cancel();
         _selectionPrefetchCancellation.Dispose();
         _selectionPrefetchCancellation = new();
@@ -547,17 +601,17 @@ public abstract class WorkspaceViewModel(
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    if (task.IsCanceled) return;
+                    if (task.IsCanceled || cancellationToken.IsCancellationRequested) return;
                     if (task.IsFaulted)
                     {
                         System.Diagnostics.Trace.TraceError(
                             $"Selection ID prefetch failed: {task.Exception}");
                         return;
                     }
-                    _ = dispatcher.BeginInvoke(
+                    WorkspacePresentationDispatch.Post(dispatcher, cancellationToken,
                         () =>
                         {
-                            if (cancellationToken.IsCancellationRequested
+                            if (IsDisposed || IsPresentationSuspended || cancellationToken.IsCancellationRequested
                                 || generation != _selectionPrefetchGeneration
                                 || revision != Selection.Revision
                                 || scope != _selectionPresentationScope)
@@ -567,8 +621,7 @@ public abstract class WorkspaceViewModel(
                             TryRefreshSelectionPresentation(
                                 capturedSnapshots,
                                 afterPublish);
-                        },
-                        DispatcherPriority.Background);
+                        });
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
@@ -584,6 +637,7 @@ public abstract class WorkspaceViewModel(
         long scope,
         Dispatcher dispatcher)
     {
+        if (IsDisposed || IsPresentationSuspended) return;
         _selectionPrefetchCancellation.Cancel();
         _selectionPrefetchCancellation.Dispose();
         _selectionPrefetchCancellation = new();
@@ -632,17 +686,17 @@ public abstract class WorkspaceViewModel(
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    if (task.IsCanceled) return;
+                    if (task.IsCanceled || cancellationToken.IsCancellationRequested) return;
                     if (task.IsFaulted)
                     {
                         System.Diagnostics.Trace.TraceError(
                             $"Deferred selection metrics failed: {task.Exception}");
                         return;
                     }
-                    _ = dispatcher.BeginInvoke(
+                    WorkspacePresentationDispatch.Post(dispatcher, cancellationToken,
                         () =>
                         {
-                            if (cancellationToken.IsCancellationRequested
+                            if (IsDisposed || IsPresentationSuspended || cancellationToken.IsCancellationRequested
                                 || generation != _selectionPrefetchGeneration
                                 || revision != Selection.Revision
                                 || scope != _selectionPresentationScope)
@@ -655,8 +709,7 @@ public abstract class WorkspaceViewModel(
                                 metricsAreComplete: true,
                                 renderIndex: task.Result.RenderIndex);
                             afterPublish?.Invoke();
-                        },
-                        DispatcherPriority.Background);
+                        });
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
@@ -1025,6 +1078,8 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
     private GridLength _conductorBottomEditorRowHeight = new(1, GridUnitType.Star);
     private CancellationTokenSource _midiTargetDiscoveryCancellation = new();
     private long _midiTargetDiscoveryGeneration;
+    private MidiSegment? _midiTargetDiscoverySegment;
+    private DirectMidiChannelEventQuerySnapshot? _midiTargetDiscoverySnapshot;
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
@@ -1035,19 +1090,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
     {
         Mode = mode;
         EditorSettings = editorSettings ?? new TimelineEditorSettings();
-        EditorSettings.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName is nameof(TimelineEditorSettings.DisplayGridStepTicks)
-                or nameof(TimelineEditorSettings.DisplayGridLabel)
-                or nameof(TimelineEditorSettings.EffectiveOperationStepTicks)
-                or nameof(TimelineEditorSettings.GridVisible))
-            {
-                Raise(nameof(GridStepTicks));
-                Raise(nameof(OperationStepTicks));
-                Raise(nameof(GridLabel));
-                Raise(nameof(GridVisible));
-            }
-        };
+        EditorSettings.PropertyChanged += OnEditorSettingsPropertyChanged;
         _laneHeight = mode switch
         {
             TimelineWorkspaceMode.Arrangement => 56,
@@ -1056,6 +1099,53 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         };
         _firstLane = mode == TimelineWorkspaceMode.Segment ? 48 : 0;
         _tickSpan = 3072;
+    }
+
+    private void OnEditorSettingsPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (IsDisposed) return;
+        if (args.PropertyName is nameof(TimelineEditorSettings.DisplayGridStepTicks)
+            or nameof(TimelineEditorSettings.DisplayGridLabel)
+            or nameof(TimelineEditorSettings.EffectiveOperationStepTicks)
+            or nameof(TimelineEditorSettings.GridVisible))
+        {
+            Raise(nameof(GridStepTicks));
+            Raise(nameof(OperationStepTicks));
+            Raise(nameof(GridLabel));
+            Raise(nameof(GridVisible));
+        }
+    }
+
+    protected override void OnPresentationSuspended()
+    {
+        SuspendConductorPresentation();
+        base.OnPresentationSuspended();
+    }
+
+    protected override void OnPresentationResumed()
+    {
+        ResumeConductorPresentation();
+        if (_midiTargetDiscoverySegment is { } segment && _midiTargetDiscoverySnapshot is { } snapshot)
+            ScheduleMidiTargetDiscovery(segment, snapshot);
+        base.OnPresentationResumed();
+    }
+
+    protected override void DisposeCore()
+    {
+        EditorSettings.PropertyChanged -= OnEditorSettingsPropertyChanged;
+        _midiTargetDiscoveryCancellation.Dispose();
+        _midiTargetDiscoverySegment = null;
+        _midiTargetDiscoverySnapshot = null;
+        _segmentPreviewCache.Clear();
+        _directMidiEventTargetCache.Clear();
+        Snapshot = null;
+        RulerSnapshot = null;
+        ParameterSnapshot = null;
+        VelocitySnapshot = null;
+        EventInstrumentBrowser.Clear();
+        ParameterLaneOptions.Clear();
+        DisposeConductorPresentation();
+        base.DisposeCore();
     }
 
     public TimelineWorkspaceMode Mode { get; }
@@ -1542,6 +1632,8 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         _midiTargetDiscoveryCancellation.Dispose();
         _midiTargetDiscoveryCancellation = new();
         _midiTargetDiscoveryGeneration = checked(_midiTargetDiscoveryGeneration + 1);
+        _midiTargetDiscoverySegment = null;
+        _midiTargetDiscoverySnapshot = null;
         ProjectTickOffset = Mode == TimelineWorkspaceMode.Segment
             ? FindSegment(project, ObjectId) is { } logical
                 ? checked(logical.Segment.ProjectStartTick - logical.Segment.ContentOffsetTick)
@@ -2393,6 +2485,9 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         MidiSegment segment,
         DirectMidiChannelEventQuerySnapshot snapshot)
     {
+        _midiTargetDiscoverySegment = segment;
+        _midiTargetDiscoverySnapshot = snapshot;
+        if (IsDisposed || IsPresentationSuspended) return;
         if (_directMidiEventTargetCache.TryGetValue(
                 segment.Id,
                 out DirectMidiEventTargetCacheEntry? cached)
@@ -2427,11 +2522,11 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    if (task.IsCanceled || task.IsFaulted) return;
-                    _ = dispatcher.BeginInvoke(
+                    if (task.IsCanceled || task.IsFaulted || cancellationToken.IsCancellationRequested) return;
+                    WorkspacePresentationDispatch.Post(dispatcher, cancellationToken,
                         () =>
                         {
-                            if (cancellationToken.IsCancellationRequested
+                            if (IsDisposed || IsPresentationSuspended || cancellationToken.IsCancellationRequested
                                 || requestGeneration != _midiTargetDiscoveryGeneration
                                 || ObjectId != segmentId
                                 || segment.ChannelEvents.Generation != sourceGeneration)
@@ -2442,8 +2537,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
                                 sourceGeneration,
                                 task.Result);
                             ApplyDiscoveredMidiTargets(task.Result.Targets);
-                        },
-                        DispatcherPriority.Background);
+                        });
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
@@ -2883,6 +2977,10 @@ public sealed class InstrumentWorkspaceViewModel(
     private readonly Dictionary<MidoraId, SubVoiceEventTargetCacheEntry> _subVoiceEventTargetCache = [];
     private CancellationTokenSource _subVoiceTargetDiscoveryCancellation = new();
     private long _subVoiceTargetDiscoveryGeneration;
+    private MidoraProject? _subVoiceTargetDiscoveryProject;
+    private long _subVoiceTargetDiscoveryRevision;
+    private SubVoice? _subVoiceTargetDiscoveryVoice;
+    private TemplateEventQuerySnapshot? _subVoiceTargetDiscoverySnapshot;
     private string _summary = string.Empty;
     private TimelineRenderSnapshot? _subVoiceSnapshot;
     private TimelineRenderSnapshot? _subVoiceNoteSnapshot;
@@ -3252,6 +3350,9 @@ public sealed class InstrumentWorkspaceViewModel(
         _subVoiceTargetDiscoveryCancellation.Dispose();
         _subVoiceTargetDiscoveryCancellation = new();
         _subVoiceTargetDiscoveryGeneration = checked(_subVoiceTargetDiscoveryGeneration + 1);
+        _subVoiceTargetDiscoveryProject = null;
+        _subVoiceTargetDiscoveryVoice = null;
+        _subVoiceTargetDiscoverySnapshot = null;
         EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == ObjectId);
         SubVoices.Clear();
         Parameters.Clear();
@@ -3684,6 +3785,51 @@ public sealed class InstrumentWorkspaceViewModel(
         TimelineEditorSettings Piano,
         TimelineEditorSettings EventLane);
 
+    public override void CancelBackgroundPresentationWork()
+    {
+        base.CancelBackgroundPresentationWork();
+        if (!_subVoiceTargetDiscoveryCancellation.IsCancellationRequested)
+            _subVoiceTargetDiscoveryCancellation.Cancel();
+        _subVoiceTargetDiscoveryGeneration++;
+    }
+
+    protected override void OnPresentationResumed()
+    {
+        _subVoiceTargetDiscoveryCancellation.Dispose();
+        _subVoiceTargetDiscoveryCancellation = new();
+        if (_subVoiceTargetDiscoveryProject is { } project
+            && _subVoiceTargetDiscoveryVoice is { } voice
+            && _subVoiceTargetDiscoverySnapshot is { } snapshot)
+            ScheduleSubVoiceEventTargetIndex(project, _subVoiceTargetDiscoveryRevision, voice, snapshot);
+        base.OnPresentationResumed();
+    }
+
+    protected override void DisposeCore()
+    {
+        _subVoiceTargetDiscoveryCancellation.Dispose();
+        _subVoiceTargetDiscoveryProject = null;
+        _subVoiceTargetDiscoveryVoice = null;
+        _subVoiceTargetDiscoverySnapshot = null;
+        _subVoiceEditorSettings.Clear();
+        _subVoiceEventTargetCache.Clear();
+        SubVoiceSnapshot = null;
+        SubVoiceNoteSnapshot = null;
+        SubVoiceEventSnapshot = null;
+        SubVoiceVelocitySnapshot = null;
+        SubVoices.Clear();
+        Parameters.Clear();
+        MappingFunctions.Clear();
+        ParameterMappings.Clear();
+        Envelopes.Clear();
+        MappingChains.Clear();
+        MappingSteps.Clear();
+        InitialStateEntries.Clear();
+        ActiveSubVoiceInitialStateFields.Clear();
+        InstrumentInitialStateFields.Clear();
+        RenderLanes.Clear();
+        base.DisposeCore();
+    }
+
     private sealed record SubVoiceEventTargetCacheEntry(
         long Generation,
         TimelineEventTargetIndex<MidiValueTarget> Index);
@@ -3694,6 +3840,11 @@ public sealed class InstrumentWorkspaceViewModel(
         SubVoice voice,
         TemplateEventQuerySnapshot snapshot)
     {
+        _subVoiceTargetDiscoveryProject = project;
+        _subVoiceTargetDiscoveryRevision = revision;
+        _subVoiceTargetDiscoveryVoice = voice;
+        _subVoiceTargetDiscoverySnapshot = snapshot;
+        if (IsDisposed || IsPresentationSuspended) return;
         if (_subVoiceEventTargetCache.TryGetValue(
                 voice.Id,
                 out SubVoiceEventTargetCacheEntry? cached)
@@ -3735,11 +3886,11 @@ public sealed class InstrumentWorkspaceViewModel(
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    if (task.IsCanceled || task.IsFaulted) return;
-                    _ = dispatcher.BeginInvoke(
+                    if (task.IsCanceled || task.IsFaulted || cancellationToken.IsCancellationRequested) return;
+                    WorkspacePresentationDispatch.Post(dispatcher, cancellationToken,
                         () =>
                         {
-                            if (cancellationToken.IsCancellationRequested
+                            if (IsDisposed || IsPresentationSuspended || cancellationToken.IsCancellationRequested
                                 || requestGeneration != _subVoiceTargetDiscoveryGeneration
                                 || ObjectId is null
                                 || voice.Events.Generation != sourceGeneration)
@@ -3750,8 +3901,7 @@ public sealed class InstrumentWorkspaceViewModel(
                                 sourceGeneration,
                                 task.Result);
                             Rebuild(project, revision);
-                        },
-                        DispatcherPriority.Background);
+                        });
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,

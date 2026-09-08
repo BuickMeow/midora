@@ -99,12 +99,14 @@ internal sealed class DirectMidiNoteOverlayIndex
         long startTick,
         long endTick,
         int minimumKey,
-        int maximumKey)
+        int maximumKey,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (endTick <= startTick || maximumKey < minimumKey || _spatialRoot is null)
             return [];
         List<DirectMidiNoteValue> result = [];
-        QuerySpatial(_spatialRoot, startTick, endTick, minimumKey, maximumKey, result);
+        QuerySpatial(_spatialRoot, startTick, endTick, minimumKey, maximumKey, result, cancellationToken);
         return result;
     }
 
@@ -164,8 +166,10 @@ internal sealed class DirectMidiNoteOverlayIndex
         TimelineRasterColumnProjection projection,
         int minimumKey,
         int maximumKey,
-        Span<TimelineRasterColumnSummary> destination)
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (maximumKey < minimumKey || destination.IsEmpty)
             return 0;
         int work = 0;
@@ -175,7 +179,8 @@ internal sealed class DirectMidiNoteOverlayIndex
             minimumKey,
             maximumKey,
             destination,
-            ref work);
+            ref work,
+            cancellationToken);
         return work;
     }
 
@@ -239,8 +244,10 @@ internal sealed class DirectMidiNoteOverlayIndex
         long endTick,
         int minimumKey,
         int maximumKey,
-        List<DirectMidiNoteValue> destination)
+        List<DirectMidiNoteValue> destination,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (node is null
             || node.MaximumEndTick <= startTick
             || node.MinimumStartTick >= endTick
@@ -249,7 +256,7 @@ internal sealed class DirectMidiNoteOverlayIndex
         {
             return;
         }
-        QuerySpatial(node.Left, startTick, endTick, minimumKey, maximumKey, destination);
+        QuerySpatial(node.Left, startTick, endTick, minimumKey, maximumKey, destination, cancellationToken);
         DirectMidiNoteValue value = node.Value;
         if (value.StartTick < endTick
             && EndTick(value) > startTick
@@ -258,7 +265,7 @@ internal sealed class DirectMidiNoteOverlayIndex
         {
             destination.Add(value);
         }
-        QuerySpatial(node.Right, startTick, endTick, minimumKey, maximumKey, destination);
+        QuerySpatial(node.Right, startTick, endTick, minimumKey, maximumKey, destination, cancellationToken);
     }
 
     private static void QueryStartKey(
@@ -347,8 +354,10 @@ internal sealed class DirectMidiNoteOverlayIndex
         int minimumKey,
         int maximumKey,
         Span<TimelineRasterColumnSummary> destination,
-        ref int work)
+        ref int work,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (node is null
             || node.MaximumEndTick <= projection.StartTick
             || node.MinimumStartTick >= projection.EndTick
@@ -386,7 +395,8 @@ internal sealed class DirectMidiNoteOverlayIndex
             minimumKey,
             maximumKey,
             destination,
-            ref work);
+            ref work,
+            cancellationToken);
         DirectMidiNoteValue value = node.Value;
         if (value.StartTick < projection.EndTick
             && EndTick(value) > projection.StartTick
@@ -413,7 +423,8 @@ internal sealed class DirectMidiNoteOverlayIndex
             minimumKey,
             maximumKey,
             destination,
-            ref work);
+            ref work,
+            cancellationToken);
     }
 
     private static void IncludeNode(

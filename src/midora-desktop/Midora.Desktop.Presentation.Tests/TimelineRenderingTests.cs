@@ -3544,9 +3544,14 @@ public sealed class TimelineRenderingTests
         RunOnSta(() =>
         {
             const long segmentLengthTicks = 36_000;
+            long coarseContentWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
+                segmentLengthTicks,
+                768,
+                TimelineSegmentPreviewRasterizer.SelectWarmupLod(segmentLengthTicks, 768));
             ManualResetEventSlim releaseSlowFallback = new(false);
-            RecordingSegmentPreviewSource fastSource = new(fingerprint: 11);
+            RecordingSegmentPreviewSource fastSource = new(coarseContentWidth, fingerprint: 11);
             RecordingSegmentPreviewSource slowSource = new(
+                coarseContentWidth,
                 fingerprint: 12,
                 firstQueryGate: releaseSlowFallback);
             TimelineRenderItem fastSegment = Item(
@@ -3592,8 +3597,10 @@ public sealed class TimelineRenderingTests
                         false,
                         true)
                 ]);
-            TimelineSurface surface = CreateArrangementSurface(snapshot, tickSpan: 3_072);
+            // Arrange can already submit visible requests. Clear is a session reset that
+            // revokes their consumers, so establish the cold cache before creating the surface.
             TimelineRasterCacheSession.Clear();
+            TimelineSurface surface = CreateArrangementSurface(snapshot, tickSpan: 3_072);
             try
             {
                 for (int attempt = 0;
@@ -6529,6 +6536,7 @@ public sealed class TimelineRenderingTests
     }
 
     private sealed class RecordingSegmentPreviewSource(
+        long coarseContentWidth,
         ulong fingerprint,
         ManualResetEventSlim? firstQueryGate = null) : ITimelineSegmentPreviewSource
     {
@@ -6546,11 +6554,25 @@ public sealed class TimelineRenderingTests
             get
             {
                 lock (_gate)
-                    return _queries.Count(static query =>
+                {
+                    int completed = 0;
+                    // The final coarse tile may be narrower than a detail tile.
+                    // Count each exact coarse interval once, not wide queries or retries.
+                    for (long left = 0;
+                        left < coarseContentWidth;
+                        left += TimelineSegmentPreviewRasterizer.FixedPreviewTileSize)
                     {
-                        double span = query.End - query.Start;
-                        return span >= 0.2;
-                    });
+                        long right = Math.Min(
+                            left + TimelineSegmentPreviewRasterizer.FixedPreviewTileSize,
+                            coarseContentWidth);
+                        double start = Math.Max(0, (left - 1d) / coarseContentWidth);
+                        double end = Math.Min(
+                            Math.BitIncrement(1d),
+                            (right + 1d) / coarseContentWidth);
+                        if (_queries.Contains((start, end))) completed++;
+                    }
+                    return completed;
+                }
             }
         }
 

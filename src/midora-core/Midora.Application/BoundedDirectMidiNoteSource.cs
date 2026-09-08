@@ -555,13 +555,17 @@ internal sealed class BoundedDirectMidiNoteSource : IPureMidiSegmentContentSourc
     }
 
     public bool TryAccumulateNoteRasterColumns(TimelineRasterColumnProjection projection, int minimumKey,
-        int maximumKey, Span<TimelineRasterColumnSummary> destination, IReadOnlySet<MidoraId>? excludedIds, out int sourceWorkCount)
+        int maximumKey, Span<TimelineRasterColumnSummary> destination, IReadOnlySet<MidoraId>? excludedIds, out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         IReadOnlySet<MidoraId> exclusions = excludedIds is null ? this : new PureMidiUnionIdSet(this, excludedIds);
         if (!_baseline.Query.TryAccumulateRasterColumnsExcluding(projection, minimumKey, maximumKey,
-            destination, exclusions, out sourceWorkCount)) return false;
-        foreach (var item in _spatial.Query(projection.StartTick, projection.EndTick, minimumKey, maximumKey))
+            destination, exclusions, out sourceWorkCount, cancellationToken)) return false;
+        int scanned = 0;
+        foreach (var item in _spatial.Query(projection.StartTick, projection.EndTick, minimumKey, maximumKey, cancellationToken))
         {
+            if ((scanned++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             var value = item.Value;
             if (excludedIds?.Contains(value.Id) == true) continue;
             ulong low = value.Key < 64 ? 1UL << value.Key : 0;

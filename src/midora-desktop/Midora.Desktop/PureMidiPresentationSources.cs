@@ -316,8 +316,10 @@ internal sealed class PagedDirectMidiTimelineItemSource :
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         sourceWorkCount = 0;
         if (_projection == DirectMidiTimelineProjection.ChannelEvents
             && kind == TimelineRasterAggregateKind.EventPoints
@@ -325,7 +327,8 @@ internal sealed class PagedDirectMidiTimelineItemSource :
         {
             sourceWorkCount = _eventIndex.AccumulateRasterColumns(
                 projection,
-                destination);
+                destination,
+                cancellationToken);
             return true;
         }
         if (_projection is not (DirectMidiTimelineProjection.Notes
@@ -348,7 +351,8 @@ internal sealed class PagedDirectMidiTimelineItemSource :
                 minimumKey,
                 maximumKey,
                 raw,
-                out sourceWorkCount))
+                out sourceWorkCount,
+                cancellationToken))
         {
             return false;
         }

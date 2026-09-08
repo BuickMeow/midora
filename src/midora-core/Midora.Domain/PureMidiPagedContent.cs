@@ -482,8 +482,10 @@ public interface IPureMidiContentOverviewSource
         int maximumKey,
         Span<TimelineRasterColumnSummary> destination,
         IReadOnlySet<MidoraId>? excludedIds,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         sourceWorkCount = 0;
         return false;
     }
@@ -1149,8 +1151,10 @@ public sealed class DirectMidiNoteQuerySnapshot
         int minimumKey,
         int maximumKey,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         destination.Clear();
         sourceWorkCount = 0;
         if (destination.IsEmpty || maximumKey < minimumKey)
@@ -1164,7 +1168,8 @@ public sealed class DirectMidiNoteQuerySnapshot
                     maximumKey,
                     destination,
                     _sourceExclusions,
-                    out sourceWorkCount))
+                    out sourceWorkCount,
+                    cancellationToken))
             {
                 return false;
             }
@@ -1173,7 +1178,8 @@ public sealed class DirectMidiNoteQuerySnapshot
             projection,
             minimumKey,
             maximumKey,
-            destination);
+            destination,
+            cancellationToken);
         sourceWorkCount = sourceWorkCount > int.MaxValue - overlayWork
             ? int.MaxValue
             : sourceWorkCount + overlayWork;
@@ -1192,8 +1198,9 @@ public sealed class DirectMidiNoteQuerySnapshot
 
     internal bool TryAccumulateRasterColumnsExcluding(TimelineRasterColumnProjection projection,
         int minimumKey, int maximumKey, Span<TimelineRasterColumnSummary> destination,
-        IReadOnlySet<MidoraId> excludedIds, out int work)
+        IReadOnlySet<MidoraId> excludedIds, out int work, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         work = 0;
         if (_source is not null)
         {
@@ -1201,10 +1208,12 @@ public sealed class DirectMidiNoteQuerySnapshot
                 : new PureMidiUnionIdSet(_sourceExclusions, excludedIds);
             if (_source is not IPureMidiContentOverviewSource overview
                 || !overview.TryAccumulateNoteRasterColumns(projection, minimumKey, maximumKey,
-                    destination, exclusions, out work)) return false;
+                    destination, exclusions, out work, cancellationToken)) return false;
         }
-        foreach (var value in _overlayIndex.Query(projection.StartTick, projection.EndTick, minimumKey, maximumKey))
+        int scanned = 0;
+        foreach (var value in _overlayIndex.Query(projection.StartTick, projection.EndTick, minimumKey, maximumKey, cancellationToken))
         {
+            if ((scanned++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (excludedIds.Contains(value.Id)) continue;
             ulong low = value.Key < 64 ? 1UL << value.Key : 0;
             ulong high = value.Key >= 64 ? 1UL << (value.Key - 64) : 0;

@@ -2099,13 +2099,16 @@ public sealed class PureMidiContentPack : IDisposable
             int maximumKey,
             Span<TimelineRasterColumnSummary> destination,
             IReadOnlySet<MidoraId>? excludedIds,
-            out int sourceWorkCount)
+            out int sourceWorkCount,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (maximumKey < minimumKey) throw new ArgumentOutOfRangeException(nameof(maximumKey));
             sourceWorkCount = 0;
             if (destination.IsEmpty) return true;
             foreach (PageDescriptor page in _noteOnEndpointPages)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (page.MaximumActiveEndTick <= projection.StartTick
                     || page.MinimumTick >= projection.EndTick
                     || page.MaximumKey < minimumKey
@@ -2120,7 +2123,7 @@ public sealed class PureMidiContentPack : IDisposable
                     out int first,
                     out int lastExclusive)
                     && lastExclusive - first == 1;
-                bool decode = !singleColumn || MayContainExcludedRecord(page, excludedIds);
+                bool decode = !singleColumn || MayContainExcludedRecord(page, excludedIds, cancellationToken);
                 if (!decode)
                 {
                     (ulong low, ulong high) = FilterLaneMask(
@@ -2151,9 +2154,11 @@ public sealed class PureMidiContentPack : IDisposable
                     continue;
                 }
 
+                int scanned = 0;
                 foreach (DirectMidiNoteValue value in
                     (DirectMidiNoteValue[])_owner.GetDecodedPage(page.Index))
                 {
+                    if ((scanned++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
                     if (excludedIds?.Contains(value.Id) == true
                         || value.Key < minimumKey
                         || value.Key > maximumKey
@@ -2673,13 +2678,17 @@ public sealed class PureMidiContentPack : IDisposable
 
         private static bool MayContainExcludedId(
             PageDescriptor page,
-            IReadOnlySet<MidoraId>? excludedIds)
+            IReadOnlySet<MidoraId>? excludedIds,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (excludedIds is null || excludedIds.Count == 0) return false;
             if (excludedIds is IPureMidiIdRangeSet ranged)
                 return ranged.MayContain(page.MinimumId, page.MaximumId);
+            int scanned = 0;
             foreach (MidoraId id in excludedIds)
             {
+                if ((scanned++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (id.CompareTo(page.MinimumId) >= 0
                     && id.CompareTo(page.MaximumId) <= 0)
                 {
@@ -2691,10 +2700,11 @@ public sealed class PureMidiContentPack : IDisposable
 
         private static bool MayContainExcludedRecord(
             PageDescriptor page,
-            IReadOnlySet<MidoraId>? excludedIds) =>
+            IReadOnlySet<MidoraId>? excludedIds,
+            CancellationToken cancellationToken = default) =>
             excludedIds is IPureMidiOrdinalRangeSet ordinal
                 ? ordinal.MayContainOrdinalRange(page.FirstOrdinal, page.RecordCount)
-                : MayContainExcludedId(page, excludedIds);
+                : MayContainExcludedId(page, excludedIds, cancellationToken);
 
         private static bool IsFullyExcluded(
             PageDescriptor page,

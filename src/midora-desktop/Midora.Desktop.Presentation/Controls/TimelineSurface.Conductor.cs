@@ -158,9 +158,13 @@ public sealed partial class TimelineSurface
                 ColorToArgb(selected), ColorToArgb(border), dpiX, dpiY);
             long capturedTile = tile;
             int capturedLane = lane;
-            TimelineRasterBuffer Build(CancellationToken token) => TimelineConductorMetaRasterizer.Rasterize(
-                snapshot, selection, scale, height, capturedTile, capturedLane,
-                dpi.DpiScaleX, dpi.DpiScaleY, normal, selected, border, key, token);
+            Func<CancellationToken, TimelineRasterBuffer> build = TimelineRasterFactory.Create(
+                (snapshot, selection, scale, height, capturedTile, capturedLane,
+                    dpi.DpiScaleX, dpi.DpiScaleY, normal, selected, border, key),
+                static (state, token) => TimelineConductorMetaRasterizer.Rasterize(
+                    state.snapshot, state.selection, state.scale, state.height,
+                    state.capturedTile, state.capturedLane, state.DpiScaleX, state.DpiScaleY,
+                    state.normal, state.selected, state.border, state.key, token));
             double x = header + (left - viewport.StartTick * scale) / dpi.DpiScaleX;
             double y = ruler + (lane - viewport.FirstLane) * LaneHeight - gutterY / dpi.DpiScaleY;
             if (TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap) && bitmap is not null)
@@ -179,24 +183,29 @@ public sealed partial class TimelineSurface
                         context.Pop();
                     }
                 }
-                else if (!_backgroundWorkSuspended && _conductorLabelRequests.Add(key))
-                {
-                    CancellationToken token = _rasterRequestCancellation.Token;
-                    _ = RunConductorWork(Build, token).ContinueWith(task =>
-                    {
-                        _ = task.Exception;
-                        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-                        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
-                        {
-                            _conductorLabelRequests.Remove(key);
-                            if (!_backgroundWorkSuspended && ReferenceEquals(Snapshot, snapshot)) QueueRasterInvalidation();
-                        }));
-                    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-                }
+                else RequestConductorLabels(key, build, snapshot);
             }
-            else RequestRaster(key, Build, TimelineRasterRequestPriority.Visible);
+            else RequestRaster(key, build, TimelineRasterRequestPriority.Visible);
         }
         context.Pop();
+    }
+
+    private void RequestConductorLabels(
+        TimelineRasterCacheKey key,
+        Func<CancellationToken, TimelineRasterBuffer> build,
+        TimelineRenderSnapshot snapshot)
+    {
+        if (_backgroundWorkSuspended || !_conductorLabelRequests.Add(key)) return;
+        CancellationToken token = _rasterRequestCancellation.Token;
+        _ = RunConductorWork(build, token).ContinueWith(task =>
+        {
+            _ = task.Exception;
+            CancelablePresentationDispatch.Post(Dispatcher, token, () =>
+            {
+                _conductorLabelRequests.Remove(key);
+                if (!_backgroundWorkSuspended && ReferenceEquals(Snapshot, snapshot)) QueueRasterInvalidation();
+            });
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private bool TryHitConductorPoint(Point point, TimelineViewport viewport, out TimelineRenderItem item)
@@ -231,7 +240,10 @@ public sealed partial class TimelineSurface
         if (_backgroundWorkSuspended || _conductorHitKey == key) return false;
         _conductorHitCancellation?.Cancel();
         _conductorHitCancellation?.Dispose();
-        _conductorHitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_rasterRequestCancellation.Token);
+        // A semantic hit belongs to its source/query key, not the pixel epoch.
+        // First paint or a raster-only reset must not strand an otherwise valid
+        // hit behind a canceled token and a still-current pending key.
+        _conductorHitCancellation = new();
         CancellationTokenSource requestCancellation = _conductorHitCancellation;
         CancellationToken token = requestCancellation.Token;
         _conductorHitKey = key;
@@ -241,7 +253,7 @@ public sealed partial class TimelineSurface
             {
                 _ = task.Exception;
                 if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-                _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                CancelablePresentationDispatch.Post(Dispatcher, token, () =>
                 {
                     if (_backgroundWorkSuspended || _conductorHitKey != key || !ReferenceEquals(Snapshot, snapshot)
                         || !ReferenceEquals(_conductorHitCancellation, requestCancellation)) return;
@@ -260,7 +272,7 @@ public sealed partial class TimelineSurface
                     // Repainting alone does not update Cursor. A hover-only query has
                     // no deferred press to restore it, even when no point was hit.
                     RefreshHoverIntent();
-                }));
+                });
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         return false;
     }
@@ -281,6 +293,11 @@ public sealed partial class TimelineSurface
             _pendingConductorPress = null;
             if (IsMouseCaptured) ReleaseMouseCapture();
         }
+        CancelConductorRuler();
+    }
+
+    private void CancelConductorRuler()
+    {
         _conductorRulerCancellation?.Cancel();
         _conductorRulerCancellation?.Dispose();
         _conductorRulerCancellation = null;
@@ -302,7 +319,7 @@ public sealed partial class TimelineSurface
         }
         _conductorRulerCancellation?.Cancel();
         _conductorRulerCancellation?.Dispose();
-        _conductorRulerCancellation = CancellationTokenSource.CreateLinkedTokenSource(_rulerPrefetchCancellation.Token);
+        _conductorRulerCancellation = new();
         CancellationTokenSource requestCancellation = _conductorRulerCancellation;
         CancellationToken token = requestCancellation.Token;
         _conductorRulerKey = key;
@@ -326,7 +343,7 @@ public sealed partial class TimelineSurface
         {
             _ = task.Exception;
             if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-            _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            CancelablePresentationDispatch.Post(Dispatcher, token, () =>
             {
                 if (_backgroundWorkSuspended || _conductorRulerKey != key || !ReferenceEquals(RulerSnapshot, snapshot)
                     || !ReferenceEquals(_conductorRulerCancellation, requestCancellation)) return;
@@ -339,7 +356,7 @@ public sealed partial class TimelineSurface
                 _conductorRulerItems = task.Result;
                 _conductorRulerReady = true;
                 InvalidateVisual();
-            }));
+            });
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         return false;
     }

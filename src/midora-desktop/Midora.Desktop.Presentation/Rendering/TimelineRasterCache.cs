@@ -754,7 +754,8 @@ public static class TimelinePianoTileRasterizer
                     firstLane,
                     lastLaneExclusive,
                     summaries,
-                    out int sourceWorkCount))
+                    out int sourceWorkCount,
+                    cancellationToken))
             {
                 DrawAggregate(summaries);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1105,9 +1106,11 @@ public static class TimelineSegmentPreviewRasterizer
         int lod,
         long tileX,
         Color noteColor,
-        Color eventColor)
+        Color eventColor,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(preview);
+        cancellationToken.ThrowIfCancellationRequested();
         long contentWidth = GetFixedPreviewContentWidth(
             segmentLengthTicks,
             ticksPerQuarterNote,
@@ -1124,6 +1127,7 @@ public static class TimelineSegmentPreviewRasterizer
         long tileRight = checked(tileLeft + tileWidth);
         byte[] pixels = new byte[checked(tileWidth * Height * 4)];
         int rendered = 0;
+        int visited = 0;
         double normalizedStart = Math.Max(0, (tileLeft - 1d) / contentWidth);
         double normalizedEnd = Math.Min(
             Math.BitIncrement(1d),
@@ -1131,6 +1135,7 @@ public static class TimelineSegmentPreviewRasterizer
 
         preview.VisitNotes(normalizedStart, normalizedEnd, note =>
         {
+            if ((visited++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             long left = Math.Clamp(
                 RoundNormalizedBoundary(note.NormalizedStart, contentWidth),
                 0,
@@ -1167,6 +1172,7 @@ public static class TimelineSegmentPreviewRasterizer
         Array.Fill(eventHeights, -1);
         preview.VisitEvents(normalizedStart, normalizedEnd, value =>
         {
+            if ((visited++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             long column = Math.Clamp(
                 RoundNormalizedBoundary(value.NormalizedTick, contentWidth),
                 0,
@@ -1193,6 +1199,7 @@ public static class TimelineSegmentPreviewRasterizer
                 0.5);
             if (rendered < int.MaxValue) rendered++;
         }
+        cancellationToken.ThrowIfCancellationRequested();
         return new(tileWidth, Height, pixels, rendered);
     }
 
@@ -1763,7 +1770,8 @@ public static class TimelineEventPointTileRasterizer
                     0,
                     1,
                     summaries,
-                    out int sourceWorkCount))
+                    out int sourceWorkCount,
+                    cancellationToken))
             {
                 DrawAggregate(summaries);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -2006,9 +2014,11 @@ public static class TimelineConductorTileRasterizer
         double dpiScaleX,
         double dpiScaleY,
         Color fallbackColor,
-        Color borderColor)
+        Color borderColor,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
             throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
         if (!double.IsFinite(deviceLaneHeight) || deviceLaneHeight <= 0)
@@ -2022,7 +2032,8 @@ public static class TimelineConductorTileRasterizer
             snapshot,
             devicePixelsPerTick,
             tileX,
-            dpiScaleX);
+            dpiScaleX,
+            cancellationToken);
 
         byte[] pixels = new byte[checked(width * height * 4)];
         double radiusX = Math.Max(1, PointRadius * dpiScaleX);
@@ -2031,6 +2042,7 @@ public static class TimelineConductorTileRasterizer
         double outlineY = Math.Max(0.5, OutlineThickness * dpiScaleY);
         foreach (ConductorTilePoint point in points)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             double centerX = point.DeviceColumn - worldLeft;
             double normalizedY = 0.2 + Math.Clamp(point.Type, 0, 3) * 0.15;
             double centerY = gutterY + normalizedY * deviceLaneHeight;
@@ -2082,7 +2094,8 @@ public static class TimelineConductorTileRasterizer
         TimelineRenderSnapshot snapshot,
         double devicePixelsPerTick,
         long tileX,
-        double dpiScaleX)
+        double dpiScaleX,
+        CancellationToken cancellationToken = default)
     {
         int gutterX = GetGutter(dpiScaleX);
         double worldLeft = tileX * (double)TileSize - gutterX;
@@ -2092,8 +2105,10 @@ public static class TimelineConductorTileRasterizer
             startTick + 1,
             CeilingToLong(worldRight / devicePixelsPerTick));
         Dictionary<(long DeviceColumn, int Type), ConductorTilePoint> aggregated = [];
+        int visited = 0;
         snapshot.VisitConductorPreview(startTick, endTick, item =>
         {
+            if ((visited++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (item.Kind is not (TimelineItemKind.ConductorEvent or TimelineItemKind.Marker))
             {
                 return;
@@ -2113,7 +2128,7 @@ public static class TimelineConductorTileRasterizer
             {
                 aggregated[key] = point;
             }
-        });
+        }, cancellationToken);
         return aggregated.Values
             .OrderBy(value => value.Type)
             .ThenBy(value => value.DeviceColumn)
@@ -2156,9 +2171,11 @@ public static class TimelineVelocityTileRasterizer
         long tileX,
         Color normalColor,
         Color selectedColor,
-        Color borderColor)
+        Color borderColor,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        cancellationToken.ThrowIfCancellationRequested();
         double pixelsPerTick = TimelineRasterLod.GetScale(horizontalLod);
         double worldLeft = tileX * (double)TileSize - Gutter;
         long startTick = Math.Max(0, FloorToLong(worldLeft / pixelsPerTick));
@@ -2182,19 +2199,23 @@ public static class TimelineVelocityTileRasterizer
                     0,
                     1,
                     summaries,
-                    out int sourceWorkCount))
+                    out int sourceWorkCount,
+                    cancellationToken))
             {
                 DrawAggregate(summaries);
+                cancellationToken.ThrowIfCancellationRequested();
                 return new(RasterWidth, RasterHeight, pixels, sourceWorkCount);
             }
         }
         Dictionary<(int Center, int Top, bool Selected), TimelineRenderItem> columns = [];
+        int visited = 0;
         snapshot.VisitInto(startTick, endTick, 0, 1, Collect);
         foreach (TimelineRenderItem item in columns.Values
             .OrderBy(value => value.StartTick)
             .ThenBy(value => value.ZIndex)
             .ThenBy(value => value.Id))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             bool selected = selection?.Contains(item.Id)
                 ?? item.State.HasFlag(TimelineItemState.Selected);
             int rawCenter = checked((int)Math.Round(
@@ -2297,6 +2318,7 @@ public static class TimelineVelocityTileRasterizer
 
         void Collect(TimelineRenderItem item)
         {
+            if ((visited++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (item.Kind != TimelineItemKind.Velocity) return;
             bool selected = selection?.Contains(item.Id)
                 ?? item.State.HasFlag(TimelineItemState.Selected);
@@ -2567,6 +2589,7 @@ internal sealed class TimelineRasterCache
     private readonly object _gate = new();
     private readonly Dictionary<TimelineRasterCacheKey, CacheEntry> _completed = [];
     private readonly Dictionary<TimelineRasterCacheKey, PendingWork> _inFlight = [];
+    private readonly Dictionary<SubscriptionKey, Completion> _subscriptions = [];
     private readonly LinkedList<TimelineRasterCacheKey> _lru = [];
     private readonly Queue<TimelineRasterCacheKey> _visibleQueue = [];
     private readonly Queue<TimelineRasterCacheKey> _normalQueue = [];
@@ -2576,8 +2599,12 @@ internal sealed class TimelineRasterCache
     private long _generation;
     private int _speculativeInFlight;
     private int _runningSpeculative;
+    private int _runningCount;
+    private static long _nextConsumerId;
 
     public static TimelineRasterCache Shared { get; } = new();
+
+    internal static long CreateConsumerId() => Interlocked.Increment(ref _nextConsumerId);
 
     public TimelineRasterCache()
     {
@@ -2598,6 +2625,26 @@ internal sealed class TimelineRasterCache
     public int InFlightCount
     {
         get { lock (_gate) return _inFlight.Count; }
+    }
+
+    public int ActiveSubscriptionCount
+    {
+        get { lock (_gate) return _subscriptions.Count; }
+    }
+
+    public int QueuedCompletionCount
+    {
+        get { lock (_gate) return _subscriptions.Values.Count(static value => value.Queued); }
+    }
+
+    public int RunningCount
+    {
+        get { lock (_gate) return _runningCount; }
+    }
+
+    internal int QueuedKeyCount
+    {
+        get { lock (_gate) return _visibleQueue.Count + _normalQueue.Count + _backgroundQueue.Count; }
     }
 
     public bool TryGet(TimelineRasterCacheKey key, out BitmapSource? bitmap)
@@ -2622,14 +2669,16 @@ internal sealed class TimelineRasterCache
         Dispatcher dispatcher,
         Action completion,
         CancellationToken cancellationToken = default,
-        TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal)
+        TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal,
+        long consumerId = 0)
         => Request(
             key,
             _ => factory(),
             dispatcher,
             completion,
             cancellationToken,
-            priority);
+            priority,
+            consumerId);
 
     public bool Request(
         TimelineRasterCacheKey key,
@@ -2637,21 +2686,32 @@ internal sealed class TimelineRasterCache
         Dispatcher dispatcher,
         Action completion,
         CancellationToken cancellationToken = default,
-        TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal)
+        TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal,
+        long consumerId = 0)
     {
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(completion);
         if (cancellationToken.IsCancellationRequested) return false;
 
-        bool alreadyCompleted = false;
+        // Legacy callers remain independent. Surface callers supply one stable,
+        // opaque identity; the cancellation token identifies their generation.
+        if (consumerId == 0) consumerId = CreateConsumerId();
+        SubscriptionKey subscriptionKey = new(consumerId, key, cancellationToken);
+        Completion? readyCompletion = null;
         bool signalWorker = false;
         bool accepted = true;
         lock (_gate)
         {
-            if (_completed.ContainsKey(key))
+            if (cancellationToken.IsCancellationRequested) return false;
+            if (_subscriptions.ContainsKey(subscriptionKey))
             {
-                alreadyCompleted = true;
+                if (_inFlight.TryGetValue(key, out PendingWork? existing))
+                    signalWorker = PromoteLocked(key, existing, priority);
+            }
+            else if (_completed.ContainsKey(key))
+            {
+                readyCompletion = AddCompletionLocked(subscriptionKey, null, dispatcher, completion);
             }
             else if (_inFlight.TryGetValue(key, out PendingWork? pending))
             {
@@ -2661,27 +2721,15 @@ internal sealed class TimelineRasterCache
                     pending = CreatePendingLocked(
                         key,
                         factory,
-                        dispatcher,
-                        completion,
-                        cancellationToken,
                         priority);
+                    AddCompletionLocked(subscriptionKey, pending, dispatcher, completion);
                     signalWorker = true;
                 }
                 else
                 {
-                    AddCompletionLocked(key, pending, dispatcher, completion, cancellationToken);
+                    AddCompletionLocked(subscriptionKey, pending, dispatcher, completion);
                 }
-                if (!pending.Running && priority > pending.Priority)
-                {
-                    if (pending.Priority != TimelineRasterRequestPriority.Visible
-                        && priority == TimelineRasterRequestPriority.Visible)
-                    {
-                        _speculativeInFlight--;
-                    }
-                    pending.Priority = priority;
-                    EnqueueLocked(key, priority);
-                    signalWorker = true;
-                }
+                signalWorker |= PromoteLocked(key, pending, priority);
             }
             else if (_inFlight.Count >= MaximumInFlight
                 || priority != TimelineRasterRequestPriority.Visible
@@ -2691,82 +2739,112 @@ internal sealed class TimelineRasterCache
             }
             else
             {
-                _ = CreatePendingLocked(
+                PendingWork created = CreatePendingLocked(
                     key,
                     factory,
-                    dispatcher,
-                    completion,
-                    cancellationToken,
                     priority);
+                AddCompletionLocked(subscriptionKey, created, dispatcher, completion);
                 signalWorker = true;
             }
         }
         if (signalWorker) _workAvailable.Release();
-        if (alreadyCompleted && !cancellationToken.IsCancellationRequested)
-            dispatcher.BeginInvoke(completion, DispatcherPriority.Render);
+        if (readyCompletion is not null) QueueCompletion(readyCompletion);
         return accepted;
     }
 
     private PendingWork CreatePendingLocked(
         TimelineRasterCacheKey key,
         Func<CancellationToken, TimelineRasterBuffer> factory,
-        Dispatcher dispatcher,
-        Action completion,
-        CancellationToken cancellationToken,
         TimelineRasterRequestPriority priority)
     {
         PendingWork work = new(factory, _generation, priority);
         _inFlight[key] = work;
         if (priority != TimelineRasterRequestPriority.Visible)
             _speculativeInFlight++;
-        AddCompletionLocked(key, work, dispatcher, completion, cancellationToken);
         EnqueueLocked(key, priority);
         return work;
     }
 
-    private void AddCompletionLocked(
+    private bool PromoteLocked(
         TimelineRasterCacheKey key,
         PendingWork work,
-        Dispatcher dispatcher,
-        Action completion,
-        CancellationToken cancellationToken)
+        TimelineRasterRequestPriority priority)
     {
-        Completion consumer = new(dispatcher, completion, cancellationToken);
-        work.Completions.Add(consumer);
-        if (cancellationToken.CanBeCanceled)
-        {
-            consumer.Registration = cancellationToken.Register(
-                () => CancelIfUnobserved(key, work));
-        }
+        if (work.Running || priority <= work.Priority) return false;
+        if (work.Priority != TimelineRasterRequestPriority.Visible
+            && priority == TimelineRasterRequestPriority.Visible)
+            _speculativeInFlight--;
+        work.Priority = priority;
+        EnqueueLocked(key, priority);
+        return true;
     }
 
-    private void CancelIfUnobserved(TimelineRasterCacheKey key, PendingWork work)
+    private Completion AddCompletionLocked(
+        SubscriptionKey key,
+        PendingWork? work,
+        Dispatcher dispatcher,
+        Action completion)
     {
+        Completion consumer = new(key, _generation, dispatcher, completion, work);
+        _subscriptions.Add(key, consumer);
+        work?.Completions.Add(key, consumer);
+        if (key.Token.CanBeCanceled)
+        {
+            CancellationTokenRegistration registration = key.Token.UnsafeRegister(
+                _ => CancelSubscription(consumer), null);
+            if (consumer.Action is null) _ = registration.Unregister();
+            else consumer.Registration = registration;
+        }
+        return consumer;
+    }
+
+    private void CancelSubscription(Completion consumer)
+    {
+        DispatcherOperation? operation;
         lock (_gate)
         {
-            if (_inFlight.TryGetValue(key, out PendingWork? current)
-                && ReferenceEquals(current, work)
-                && !work.Completions.Any(static value =>
-                    !value.CancellationToken.IsCancellationRequested))
+            PendingWork? work = consumer.Work;
+            operation = RemoveSubscriptionLocked(consumer);
+            if (work is not null && work.Completions.Count == 0
+                && _inFlight.TryGetValue(consumer.Key.Key, out PendingWork? current)
+                && ReferenceEquals(current, work))
             {
-                work.ExecutionCancellation.Cancel();
-                if (!work.Running)
-                {
-                    RemovePendingLocked(key, work);
-                }
+                // CancelAsync marks the token immediately, without executing a
+                // factory's registered callbacks under the cache lock.
+                _ = work.ExecutionCancellation.CancelAsync();
+                RemovePendingLocked(consumer.Key.Key, work);
             }
         }
+        operation?.Abort();
+    }
+
+    private DispatcherOperation? RemoveSubscriptionLocked(Completion consumer)
+    {
+        if (_subscriptions.TryGetValue(consumer.Key, out Completion? current)
+            && ReferenceEquals(current, consumer))
+            _subscriptions.Remove(consumer.Key);
+        consumer.Work?.Completions.Remove(consumer.Key);
+        consumer.Work = null;
+        consumer.Action = null;
+        consumer.Dispatcher = null;
+        _ = consumer.Registration.Unregister();
+        consumer.Registration = default;
+        DispatcherOperation? operation = consumer.Operation;
+        consumer.Operation = null;
+        return operation;
     }
 
     private void RemovePendingLocked(TimelineRasterCacheKey key, PendingWork work)
     {
-        if (!_inFlight.Remove(key)) return;
-        foreach (Completion completion in work.Completions)
-            _ = completion.Registration.Unregister();
+        if (!_inFlight.TryGetValue(key, out PendingWork? current)
+            || !ReferenceEquals(current, work)) return;
+        _inFlight.Remove(key);
+        foreach (Completion completion in work.Completions.Values.ToArray())
+            RemoveSubscriptionLocked(completion);
         if (work.Priority != TimelineRasterRequestPriority.Visible)
             _speculativeInFlight = Math.Max(0, _speculativeInFlight - 1);
-        if (!work.Running)
-            work.ExecutionCancellation.Dispose();
+        if (!work.Running) work.ExecutionCancellation.Dispose();
+        work.Factory = null;
     }
 
     private async Task WorkerLoopAsync()
@@ -2807,6 +2885,7 @@ internal sealed class TimelineRasterCache
                         out work)))
             {
                 work!.Running = true;
+                _runningCount++;
                 if (work.Priority != TimelineRasterRequestPriority.Visible)
                     _runningSpeculative++;
                 return true;
@@ -2825,24 +2904,25 @@ internal sealed class TimelineRasterCache
         long bytes = 0;
         try
         {
-            bool hasLiveConsumer;
+            Func<CancellationToken, TimelineRasterBuffer>? factory;
             lock (_gate)
             {
-                hasLiveConsumer = _inFlight.TryGetValue(key, out PendingWork? pending)
+                factory = _inFlight.TryGetValue(key, out PendingWork? pending)
                     && ReferenceEquals(pending, work)
-                    && pending.Completions.Any(static value =>
-                        !value.CancellationToken.IsCancellationRequested);
+                    && work.Completions.Count > 0
+                        ? work.Factory
+                        : null;
             }
-            if (hasLiveConsumer)
+            if (factory is not null)
             {
-                TimelineRasterBuffer buffer = work.Factory(work.ExecutionCancellation.Token);
+                TimelineRasterBuffer buffer = factory(work.ExecutionCancellation.Token);
                 work.ExecutionCancellation.Token.ThrowIfCancellationRequested();
+                bool hasLiveConsumer;
                 lock (_gate)
                 {
                     hasLiveConsumer = _inFlight.TryGetValue(key, out PendingWork? pending)
                         && ReferenceEquals(pending, work)
-                        && pending.Completions.Any(static value =>
-                            !value.CancellationToken.IsCancellationRequested);
+                        && work.Completions.Count > 0;
                 }
                 if (hasLiveConsumer)
                 {
@@ -2859,10 +2939,14 @@ internal sealed class TimelineRasterCache
             Trace.TraceError($"Timeline rasterization failed: {exception}");
         }
 
-        List<Completion> callbacks = work.Completions;
+        Completion[] callbacks;
         bool signalQueuedWork = false;
         lock (_gate)
         {
+            callbacks = work.Completions.Values.ToArray();
+            work.Completions.Clear();
+            foreach (Completion callback in callbacks) callback.Work = null;
+            work.Factory = null;
             if (_inFlight.TryGetValue(key, out PendingWork? pending)
                 && ReferenceEquals(pending, work))
             {
@@ -2871,6 +2955,8 @@ internal sealed class TimelineRasterCache
                     _speculativeInFlight = Math.Max(0, _speculativeInFlight - 1);
                 if (bitmap is not null
                     && work.Generation == _generation
+                    && !work.ExecutionCancellation.IsCancellationRequested
+                    && callbacks.Length > 0
                     && bytes <= MaximumBytes)
                 {
                     LinkedListNode<TimelineRasterCacheKey> node = _lru.AddFirst(key);
@@ -2881,27 +2967,38 @@ internal sealed class TimelineRasterCache
             }
             if (work.Priority != TimelineRasterRequestPriority.Visible)
                 _runningSpeculative = Math.Max(0, _runningSpeculative - 1);
+            _runningCount--;
+            work.ExecutionCancellation.Dispose();
             signalQueuedWork = HasRunnableQueuedWorkLocked();
         }
         foreach (Completion callback in callbacks)
         {
-            callback.Registration.Dispose();
-            if (!callback.CancellationToken.IsCancellationRequested)
-                _ = callback.Dispatcher.BeginInvoke(callback.Action, DispatcherPriority.Render);
+            QueueCompletion(callback);
         }
-        work.ExecutionCancellation.Dispose();
         if (signalQueuedWork) _workAvailable.Release();
     }
 
     public void Clear()
     {
+        List<DispatcherOperation> operations = [];
         lock (_gate)
         {
             _generation = checked(_generation + 1);
+            foreach (Completion completion in _subscriptions.Values.ToArray())
+                if (RemoveSubscriptionLocked(completion) is { } operation) operations.Add(operation);
+            foreach (var pair in _inFlight.ToArray())
+            {
+                _ = pair.Value.ExecutionCancellation.CancelAsync();
+                RemovePendingLocked(pair.Key, pair.Value);
+            }
+            _visibleQueue.Clear();
+            _normalQueue.Clear();
+            _backgroundQueue.Clear();
             _completed.Clear();
             _lru.Clear();
             _currentBytes = 0;
         }
+        foreach (DispatcherOperation operation in operations) operation.Abort();
     }
 
     private void TrimLocked()
@@ -2932,6 +3029,88 @@ internal sealed class TimelineRasterCache
                 _backgroundQueue.Enqueue(key);
                 break;
         }
+        if (_visibleQueue.Count + _normalQueue.Count + _backgroundQueue.Count
+            > MaximumInFlight * 2)
+        {
+            CompactQueueLocked(_visibleQueue, TimelineRasterRequestPriority.Visible);
+            CompactQueueLocked(_normalQueue, TimelineRasterRequestPriority.Normal);
+            CompactQueueLocked(_backgroundQueue, TimelineRasterRequestPriority.Background);
+        }
+    }
+
+    private void CompactQueueLocked(
+        Queue<TimelineRasterCacheKey> queue,
+        TimelineRasterRequestPriority priority)
+    {
+        HashSet<TimelineRasterCacheKey> seen = [];
+        int count = queue.Count;
+        for (int index = 0; index < count; index++)
+        {
+            TimelineRasterCacheKey key = queue.Dequeue();
+            if (_inFlight.TryGetValue(key, out PendingWork? work)
+                && !work.Running && work.Priority == priority && seen.Add(key))
+                queue.Enqueue(key);
+        }
+    }
+
+    private void QueueCompletion(Completion completion)
+    {
+        Dispatcher? dispatcher;
+        lock (_gate)
+        {
+            if (completion.Action is null) return;
+            if (completion.Generation != _generation
+                || completion.Key.Token.IsCancellationRequested)
+            {
+                RemoveSubscriptionLocked(completion);
+                return;
+            }
+            dispatcher = completion.Dispatcher;
+            completion.Queued = true;
+        }
+        if (dispatcher is null || dispatcher.HasShutdownStarted)
+        {
+            CancelSubscription(completion);
+            return;
+        }
+        try
+        {
+            // The queued delegate holds only a revocable delivery. Cancelling
+            // clears its owner callback even while the Dispatcher is blocked.
+            DispatcherOperation operation = dispatcher.BeginInvoke(
+                () => DeliverCompletion(completion), DispatcherPriority.Render);
+            operation.Aborted += (_, _) => CancelSubscription(completion);
+            bool revoked;
+            lock (_gate)
+            {
+                revoked = completion.Action is null;
+                if (!revoked) completion.Operation = operation;
+            }
+            if (revoked) operation.Abort();
+            if (operation.Status == DispatcherOperationStatus.Aborted)
+                CancelSubscription(completion);
+        }
+        catch (InvalidOperationException)
+        {
+            CancelSubscription(completion);
+        }
+    }
+
+    private void DeliverCompletion(Completion completion)
+    {
+        Action? action;
+        lock (_gate)
+        {
+            action = completion.Generation == _generation
+                && !completion.Key.Token.IsCancellationRequested
+                    ? completion.Action
+                    : null;
+            RemoveSubscriptionLocked(completion);
+        }
+        // Surface cancellation and delivery are serialized on its Dispatcher.
+        // The additional token test also closes cancellation during dequeue.
+        if (Volatile.Read(ref _generation) == completion.Generation
+            && !completion.Key.Token.IsCancellationRequested) action?.Invoke();
     }
 
     private bool TryDequeueLocked(
@@ -2964,14 +3143,25 @@ internal sealed class TimelineRasterCache
         long Bytes,
         LinkedListNode<TimelineRasterCacheKey> Node);
 
+    private readonly record struct SubscriptionKey(
+        long ConsumerId,
+        TimelineRasterCacheKey Key,
+        CancellationToken Token);
+
     private sealed class Completion(
+        SubscriptionKey key,
+        long generation,
         Dispatcher dispatcher,
         Action action,
-        CancellationToken cancellationToken)
+        PendingWork? work)
     {
-        public Dispatcher Dispatcher { get; } = dispatcher;
-        public Action Action { get; } = action;
-        public CancellationToken CancellationToken { get; } = cancellationToken;
+        public SubscriptionKey Key { get; } = key;
+        public long Generation { get; } = generation;
+        public Dispatcher? Dispatcher { get; set; } = dispatcher;
+        public Action? Action { get; set; } = action;
+        public PendingWork? Work { get; set; } = work;
+        public bool Queued { get; set; }
+        public DispatcherOperation? Operation { get; set; }
         public CancellationTokenRegistration Registration { get; set; }
     }
 
@@ -2980,10 +3170,10 @@ internal sealed class TimelineRasterCache
         long generation,
         TimelineRasterRequestPriority priority)
     {
-        public Func<CancellationToken, TimelineRasterBuffer> Factory { get; } = factory;
+        public Func<CancellationToken, TimelineRasterBuffer>? Factory { get; set; } = factory;
         public long Generation { get; } = generation;
         public TimelineRasterRequestPriority Priority { get; set; } = priority;
-        public List<Completion> Completions { get; } = [];
+        public Dictionary<SubscriptionKey, Completion> Completions { get; } = [];
         public CancellationTokenSource ExecutionCancellation { get; } = new();
         public bool Running { get; set; }
     }
@@ -2994,5 +3184,8 @@ public static class TimelineRasterCacheSession
     public static long CurrentBytes => TimelineRasterCache.Shared.CurrentBytes;
     public static int CompletedCount => TimelineRasterCache.Shared.CompletedCount;
     public static int InFlightCount => TimelineRasterCache.Shared.InFlightCount;
+    public static int ActiveSubscriptionCount => TimelineRasterCache.Shared.ActiveSubscriptionCount;
+    public static int QueuedCompletionCount => TimelineRasterCache.Shared.QueuedCompletionCount;
+    public static int RunningCount => TimelineRasterCache.Shared.RunningCount;
     public static void Clear() => TimelineRasterCache.Shared.Clear();
 }

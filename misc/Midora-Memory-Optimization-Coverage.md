@@ -94,3 +94,22 @@
 工程侧承担完整自动正确性、重复性能测量、失败 / 取消、容器计数和资源归因。用户在阶段 2 完成后执行验收 A 的少量代表性音乐工作流；本阶段不要求用户重测整份表。
 
 需人工确认的是真实操作手感和视觉变化；计数、字节等价及大规模内存归因由自动证据覆盖。若发现新增 UI 延迟 / 首次长尾，即使 M01 峰值变小也不能视为验收通过。
+
+## 6. 阶段 2：M02～M05 生命周期补测
+
+实现及最终通过数量见 [阶段 2 报告](Midora-Memory-Stage2-Validation-Report-2026-09-08.md)。以下补充 O31～O33、O39 的工程入口，不替代后续预算、History 或全部大选区操作的验证。
+
+| 所有者 / 边界 | 自动入口 | 核心断言 |
+| --- | --- | --- |
+| Workspace / Project / shared EditorSettings | WorkspaceLifecycleTests | 100 次循环和 Project 替换；幂等 Dispose、handler 解除、弱引用释放；隐藏保留状态；关闭 VM 不拖住 Project |
+| 选区与 Lane discovery 完成通知 | WorkspaceLifecycleTests、SelectionPresentationLifecycleTests | 取消后无需 pump 即断开捕获图；旧修订/关闭后不得重新发布 selection metrics 或 lane 结果 |
+| 非瓦片完成与 UI 合并信号 | PresentationDispatchLifetimeTests、ConductorInteractionTests | 排队回调可撤销；合并信号只弱持 Surface；Conductor 语义查询独立于 raster epoch，来源/卸载仍取消 |
+| MainWindow 命令和延迟焦点 | TimelineCommandTargetTests | 弱持 Surface/VM；要求活动实例、DataContext 相同；旧目标无效且不阻止回收 |
+| 真实视觉树和 Modal 返回 | HostedWorkspaceLifecycleTests（由 WpfInteractionRegressionTests 的 App/STA 入口执行） | 隐藏 HwndSource 中 Loaded/Unloaded、同模板 Surface 重用、Properties/Batch 逻辑焦点、关闭后的延迟返回 |
+| Onion 与 All Tracks | OnionLifetimeTests、TimelineOnionLifetimeTests、OnionWorkspaceTests | hidden/disabled/zero opacity/nosources 释放投影；保留设置及合法 stale index；构建关闭、进度合并与重入保护 |
+| 瓦片共享计算 / 独立订阅 | TimelineRasterSubscriptionTests | 60k Request 只保留 6 订阅/3 计算；部分/最后消费者取消、已排通知撤销、新代竞争、Clear、队列存储有界 |
+| 低缩放实际扫描取消 | RasterAggregationCancellationTests、TimelineRasterAggregateCancellationTests | 逻辑/模板/Direct overlay/pack/bounded 查询逐页/节点/最多 256 条检查；未取消的聚合、work count、像素不变 |
+| 两层概览与现有图像行为 | TimelineRenderingTests、TimelineOnionTests、OnionProbe | 概览 coarse barrier、三种 Piano/Velocity/Event、高亮、叠层、DPI、Raw/Compiled；生产缓存精度和 256 MiB 预算不变 |
+| 真 WPF 长循环 / 大源对照 | eng/MemoryStage2Probe | 同旧/新 DLL 和模板、每 Project 100 次、两个 Project；18M 大样本、自然/GC 后内存和时间分报 |
+
+本阶段不触及 O01～O30 的编辑算法；对应公共测试用于检查生命周期改动的间接回归，不据此声明所有操作的有限内存预算已收口。阶段 1＋2 的 MEM-A01～A08 已由用户粗略验收通过，精细编曲验收留到发布前；本轮仅补修 All Tracks 激活焦点，不推进阶段 3。

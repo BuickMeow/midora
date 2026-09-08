@@ -500,13 +500,12 @@ public partial class MainWindow
             || _session.Project is not { } project) return;
         // Read-only projection with a frozen single identity; the real mixed
         // Workspace selection is never temporarily replaced.
-        TimelineWorkspaceViewModel target = new(timeline.Key, timeline.Header, timeline.Mode);
+        using TimelineWorkspaceViewModel target = new(timeline.Key, timeline.Header, timeline.Mode);
         target.Selection.Replace(id);
         ObjectPropertiesViewModel properties = new();
         ObjectPropertiesProjection.Rebuild(properties, project, target, _instrumentCatalogResolver);
         ObjectPropertiesDialog dialog = new(properties, _ => true) { Owner = this };
         ShowModalDialog(dialog);
-        target.CancelBackgroundPresentationWork();
         RestoreModalCommandFocus(workspace, _lastTimelineCommandSurface);
     }
 }

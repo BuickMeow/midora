@@ -105,7 +105,8 @@ public sealed class TimelineOnionTests(ITestOutputHelper output)
         public long MaximumEndTick => 1000;
         public ulong ContentFingerprint => 1;
         public bool TryAccumulateRasterColumns(TimelineRasterAggregateKind kind, TimelineRasterColumnProjection projection,
-            int first, int last, Span<TimelineRasterColumnSummary> destination, out int work)
+            int first, int last, Span<TimelineRasterColumnSummary> destination, out int work,
+            CancellationToken cancellationToken = default)
         {
             Used = true; work = 1;
             Assert.Equal(TimelineRasterAggregateKind.PianoNotes, kind);

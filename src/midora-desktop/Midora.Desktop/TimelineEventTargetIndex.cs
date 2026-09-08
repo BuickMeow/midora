@@ -145,8 +145,10 @@ internal sealed class TimelineEventTargetLaneIndex
 
     public int AccumulateRasterColumns(
         TimelineRasterColumnProjection projection,
-        Span<TimelineRasterColumnSummary> destination)
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         destination.Clear();
         if (_root is null || destination.IsEmpty) return 0;
         int work = 0;
@@ -154,7 +156,8 @@ internal sealed class TimelineEventTargetLaneIndex
             _root,
             projection,
             destination,
-            ref work);
+            ref work,
+            cancellationToken);
         return work;
     }
 
@@ -162,8 +165,10 @@ internal sealed class TimelineEventTargetLaneIndex
         AggregateNode node,
         TimelineRasterColumnProjection projection,
         Span<TimelineRasterColumnSummary> destination,
-        ref int work)
+        ref int work,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (node.MaximumEndTick <= projection.StartTick
             || node.MinimumTick >= projection.EndTick) return;
         work++;
@@ -182,13 +187,14 @@ internal sealed class TimelineEventTargetLaneIndex
         }
         if (node.Left is not null)
         {
-            Accumulate(node.Left, projection, destination, ref work);
-            Accumulate(node.Right!, projection, destination, ref work);
+            Accumulate(node.Left, projection, destination, ref work, cancellationToken);
+            Accumulate(node.Right!, projection, destination, ref work, cancellationToken);
             return;
         }
         int last = checked(node.First + node.Count);
         for (int index = node.First; index < last; index++)
         {
+            if ((index & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             TimelineEventTargetPoint point = _points[index];
             if (point.Tick < projection.StartTick || point.Tick >= projection.EndTick) continue;
             long pointEnd = point.Tick == long.MaxValue ? long.MaxValue : point.Tick + 1;

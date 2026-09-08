@@ -292,7 +292,8 @@ public sealed partial class TimelineSurface : Control
         nameof(RulerSnapshot),
         typeof(TimelineRenderSnapshot),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender,
+            static (sender, _) => ((TimelineSurface)sender).CancelConductorRuler()));
 
     public static readonly DependencyProperty StartTickProperty = DependencyProperty.Register(
         nameof(StartTick),
@@ -749,6 +750,7 @@ public sealed partial class TimelineSurface : Control
     private bool _laneHeaderDragRequiresRebind;
     private int? _externalArrangementInsertionIndex;
     private readonly HashSet<TimelineRasterCacheKey> _requestedRasterKeys = [];
+    private readonly long _rasterConsumerId = TimelineRasterCache.CreateConsumerId();
     // Fingerprint work is isolated per surface.  A slow or non-cooperatively
     // cancellable source owned by a closing tab must not head-of-line block
     // every other timeline in the process.
@@ -850,6 +852,7 @@ public sealed partial class TimelineSurface : Control
         CancelPendingRightGesture(cancelDelayedMenu: true);
 
         _rasterRequestCancellation.Cancel();
+        _selectionRasterRequestCancellation.Cancel();
         _exactPrefetchCancellation.Cancel();
         _rulerPrefetchCancellation.Cancel();
         _pendingGestureCancellation.Cancel();
@@ -1383,7 +1386,7 @@ public sealed partial class TimelineSurface : Control
                 surface.CancelDelayedContextMenu();
                 surface.CancelConductorHit();
             }
-            if (args.Property == LaneHeaderWidthOverrideProperty)
+            if (args.Property == LaneHeaderWidthOverrideProperty || args.Property == SurfaceModeProperty)
             {
                 surface.CancelConductorHit();
             }
@@ -1446,13 +1449,13 @@ public sealed partial class TimelineSurface : Control
     {
         if (_backgroundWorkSuspended || _viewportPrefetchQueued) return;
         _viewportPrefetchQueued = true;
-        _ = Dispatcher.BeginInvoke(
-            () =>
+        QueueWeakSurfaceSignal(
+            static surface =>
             {
-                _viewportPrefetchQueued = false;
-                if (!_backgroundWorkSuspended)
+                surface._viewportPrefetchQueued = false;
+                if (!surface._backgroundWorkSuspended)
                 {
-                    ScheduleVisibleExactPrefetch();
+                    surface.ScheduleVisibleExactPrefetch();
                 }
             },
             DispatcherPriority.Background);
@@ -1460,6 +1463,7 @@ public sealed partial class TimelineSurface : Control
 
     private void ResetRasterRequests(bool scheduleArrangementWarmup)
     {
+        _conductorLabelRequests.Clear();
         _rasterRequestCancellation.Cancel();
         _rasterRequestCancellation.Dispose();
         _rasterRequestCancellation = new();
@@ -1519,9 +1523,13 @@ public sealed partial class TimelineSurface : Control
 
     private void RestartPendingRasterWork()
     {
+        _conductorLabelRequests.Clear();
         _rasterRequestCancellation.Cancel();
         _rasterRequestCancellation.Dispose();
         _rasterRequestCancellation = new();
+        _selectionRasterRequestCancellation.Cancel();
+        _selectionRasterRequestCancellation.Dispose();
+        _selectionRasterRequestCancellation = new();
         _requestedRasterKeys.Clear();
         _preparedTileFingerprints.Clear();
         _pendingTileFingerprints.Clear();
@@ -1615,7 +1623,8 @@ public sealed partial class TimelineSurface : Control
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    _ = Dispatcher.BeginInvoke(
+                    _ = task.Exception;
+                    CancelablePresentationDispatch.Post(Dispatcher, cancellationToken,
                         () =>
                         {
                             if (generation != _exactPrefetchGeneration)
@@ -1674,7 +1683,10 @@ public sealed partial class TimelineSurface : Control
         _ = Task.Run(
             () => snapshot.PrefetchRange(startTick, endTick, 0, 1, cancellationToken),
             cancellationToken).ContinueWith(
-                task => _ = Dispatcher.BeginInvoke(
+                task =>
+                {
+                    _ = task.Exception;
+                    CancelablePresentationDispatch.Post(Dispatcher, cancellationToken,
                     () =>
                     {
                         if (generation != _rulerPrefetchGeneration) return;
@@ -1693,7 +1705,8 @@ public sealed partial class TimelineSurface : Control
                         }
                         InvalidateVisual();
                     },
-                    DispatcherPriority.Render),
+                    DispatcherPriority.Render);
+                },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
@@ -2875,14 +2888,15 @@ public sealed partial class TimelineSurface : Control
             return;
         }
 
+        CancellationToken cancellationToken = cancellation.Token;
         _ = Task.Run(
                 () => QueryRightClickContextTarget(
                     snapshot,
                     tick,
                     lane,
                     pointProjection,
-                    cancellation.Token),
-                cancellation.Token)
+                    cancellationToken),
+                cancellationToken)
             .ContinueWith(
                 task =>
                 {
@@ -2890,25 +2904,23 @@ public sealed partial class TimelineSurface : Control
                     if (task.IsFaulted)
                     {
                         _ = task.Exception;
-                        _ = Dispatcher.BeginInvoke(
-                            DispatcherPriority.Input,
-                            new Action(() =>
+                        CancelablePresentationDispatch.Post(Dispatcher, cancellationToken,
+                            () =>
                             {
                                 if (generation == _delayedContextMenuGeneration)
                                 {
                                     CancelDelayedContextMenu();
                                 }
-                            }));
+                            }, DispatcherPriority.Input);
                         return;
                     }
-                    _ = Dispatcher.BeginInvoke(
-                        DispatcherPriority.Input,
-                        new Action(() => CompleteDelayedContextMenuQuery(
+                    CancelablePresentationDispatch.Post(Dispatcher, cancellationToken,
+                        () => CompleteDelayedContextMenuQuery(
                             generation,
                             snapshot,
                             tick,
                             lane,
-                            task.Result)));
+                            task.Result), DispatcherPriority.Input);
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
@@ -4223,7 +4235,8 @@ public sealed partial class TimelineSurface : Control
                 task =>
                 {
                     if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
-                    _ = dispatcher.BeginInvoke(
+                    _ = task.Exception;
+                    CancelablePresentationDispatch.Post(dispatcher, cancellationToken,
                         () =>
                         {
                             bool currentRequest = gestureToken == _gestureToken;
@@ -5006,7 +5019,8 @@ public sealed partial class TimelineSurface : Control
                 }
             },
             cancellationToken,
-            priority);
+            priority,
+            consumerId: _rasterConsumerId);
         if (!accepted)
         {
             _requestedRasterKeys.Remove(key);
@@ -5365,7 +5379,7 @@ public sealed partial class TimelineSurface : Control
                 continue;
             }
             long requestTile = tile;
-            RequestRaster(key, () => TimelineConductorTileRasterizer.Rasterize(
+            RequestRaster(key, token => TimelineConductorTileRasterizer.Rasterize(
                 snapshot,
                 devicePixelsPerTick,
                 deviceLaneHeight,
@@ -5373,7 +5387,8 @@ public sealed partial class TimelineSurface : Control
                 rasterDpiScaleX,
                 rasterDpiScaleY,
                 fallback,
-                border));
+                border,
+                token));
         }
         context.Pop();
     }
@@ -5731,32 +5746,29 @@ public sealed partial class TimelineSurface : Control
                 cancellationToken.ThrowIfCancellationRequested();
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    _pendingTileFingerprints.Remove(key);
                     if (_backgroundWorkSuspended
                         || cancellationToken.IsCancellationRequested
                         || !ReferenceEquals(Snapshot, snapshot))
                     {
                         return;
                     }
+                    _pendingTileFingerprints.Remove(key);
                     PublishPreparedTileFingerprint(key, value);
                     QueueRasterInvalidation();
                 }, DispatcherPriority.Background, cancellationToken);
             }
-            catch (OperationCanceledException)
-            {
-                if (!Dispatcher.HasShutdownStarted)
-                {
-                    _ = Dispatcher.BeginInvoke(
-                        () => _pendingTileFingerprints.Remove(key),
-                        DispatcherPriority.Background);
-                }
-            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             catch
             {
                 if (!Dispatcher.HasShutdownStarted)
                 {
-                    _ = Dispatcher.BeginInvoke(
-                        () => _pendingTileFingerprints.Remove(key),
+                    CancelablePresentationDispatch.Post(Dispatcher, cancellationToken,
+                        () =>
+                        {
+                            if (!cancellationToken.IsCancellationRequested
+                                && ReferenceEquals(Snapshot, snapshot))
+                                _pendingTileFingerprints.Remove(key);
+                        },
                         DispatcherPriority.Background);
                 }
             }
@@ -5786,6 +5798,7 @@ public sealed partial class TimelineSurface : Control
     {
         if (_backgroundWorkSuspended) return;
         TimelineRasterCacheKey key = request.Key;
+        MidoraId segmentId = preview.SegmentId;
         if (!_requestedRasterKeys.Add(key)) return;
         bool accepted = TimelineRasterCache.Shared.Request(
             key,
@@ -5795,13 +5808,14 @@ public sealed partial class TimelineSurface : Control
             {
                 _requestedRasterKeys.Remove(key);
                 if (!_backgroundWorkSuspended
-                    && Snapshot?.SegmentPreviews.TryGetValue(preview.SegmentId, out _) == true)
+                    && Snapshot?.SegmentPreviews.TryGetValue(segmentId, out _) == true)
                 {
                     QueueRasterInvalidation();
                 }
             },
             _rasterRequestCancellation.Token,
-            TimelineRasterRequestPriority.Visible);
+            TimelineRasterRequestPriority.Visible,
+            consumerId: _rasterConsumerId);
         if (!accepted)
         {
             _requestedRasterKeys.Remove(key);
@@ -5812,13 +5826,22 @@ public sealed partial class TimelineSurface : Control
     {
         if (_backgroundWorkSuspended || _rasterInvalidationQueued) return;
         _rasterInvalidationQueued = true;
-        _ = Dispatcher.BeginInvoke(
-            () =>
+        QueueWeakSurfaceSignal(
+            static surface =>
             {
-                _rasterInvalidationQueued = false;
-                if (!_backgroundWorkSuspended) InvalidateVisual();
+                surface._rasterInvalidationQueued = false;
+                if (!surface._backgroundWorkSuspended) surface.InvalidateVisual();
             },
             DispatcherPriority.Render);
+    }
+
+    private void QueueWeakSurfaceSignal(Action<TimelineSurface> callback, DispatcherPriority priority)
+    {
+        WeakReference<TimelineSurface> owner = new(this);
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (owner.TryGetTarget(out TimelineSurface? surface)) callback(surface);
+        }, priority);
     }
 
     private void ScheduleSegmentPreviewWarmup()
@@ -5969,7 +5992,8 @@ public sealed partial class TimelineSurface : Control
                     PumpSegmentPreviewWarmup(generation);
                 },
                 _segmentPreviewWarmupPlanCancellation?.Token ?? default,
-                TimelineRasterRequestPriority.Background);
+                TimelineRasterRequestPriority.Background,
+                consumerId: _rasterConsumerId);
             if (accepted) continue;
             _segmentPreviewWarmupInFlight--;
             _segmentPreviewWarmupQueue.Enqueue(request);
@@ -5982,16 +6006,16 @@ public sealed partial class TimelineSurface : Control
     {
         if (_backgroundWorkSuspended || _segmentPreviewWarmupRetryScheduled) return;
         _segmentPreviewWarmupRetryScheduled = true;
-        _ = Dispatcher.BeginInvoke(
-            () =>
+        QueueWeakSurfaceSignal(
+            surface =>
             {
-                if (_backgroundWorkSuspended
-                    || generation != _segmentPreviewWarmupGeneration)
+                if (surface._backgroundWorkSuspended
+                    || generation != surface._segmentPreviewWarmupGeneration)
                 {
                     return;
                 }
-                _segmentPreviewWarmupRetryScheduled = false;
-                PumpSegmentPreviewWarmup(generation);
+                surface._segmentPreviewWarmupRetryScheduled = false;
+                surface.PumpSegmentPreviewWarmup(generation);
             },
             DispatcherPriority.ApplicationIdle);
     }
@@ -6033,14 +6057,15 @@ public sealed partial class TimelineSurface : Control
             96);
         return new(
             key,
-            () => TimelineSegmentPreviewRasterizer.RasterizeFixedPreviewTile(
+            token => TimelineSegmentPreviewRasterizer.RasterizeFixedPreviewTile(
                 preview,
                 segmentLengthTicks,
                 ticksPerQuarterNote,
                 lod,
                 tile,
                 noteColor,
-                eventColor));
+                eventColor,
+                token));
     }
 
     private void DrawVelocityTiles(
@@ -6173,14 +6198,15 @@ public sealed partial class TimelineSurface : Control
                 if (visible) currentFrameComplete = false;
                 RequestRaster(
                     key,
-                    () => TimelineVelocityTileRasterizer.Rasterize(
+                    token => TimelineVelocityTileRasterizer.Rasterize(
                         snapshot,
                         selection,
                         horizontalLod,
                         requestTileX,
                         normalColor,
                         selectedColor,
-                        borderColor),
+                        borderColor,
+                        token),
                     visible
                         ? TimelineRasterRequestPriority.Visible
                         : TimelineRasterRequestPriority.Normal);
@@ -7170,7 +7196,10 @@ public sealed partial class TimelineSurface : Control
                 return edits;
             },
             cancellationToken).ContinueWith(
-                task => _ = Dispatcher.BeginInvoke(
+                task =>
+                {
+                    _ = task.Exception;
+                    CancelablePresentationDispatch.Post(Dispatcher, cancellationToken,
                     () =>
                     {
                         if (task.IsFaulted)
@@ -7200,7 +7229,8 @@ public sealed partial class TimelineSurface : Control
                         RefreshHoverIntent();
                         InvalidateVisual();
                     },
-                    DispatcherPriority.Render),
+                    DispatcherPriority.Render);
+                },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
@@ -7657,6 +7687,8 @@ public sealed partial class TimelineSurface : Control
                     continue;
                 }
                 complete = false;
+                int requestTileX = tileX;
+                int requestTileY = tileY;
                 RequestResizePreviewRaster(
                     key,
                     cancellationToken => TimelineResizePreviewRasterizer.Rasterize(
@@ -7671,8 +7703,8 @@ public sealed partial class TimelineSurface : Control
                         devicePixelsPerTick,
                         laneTops,
                         laneHeights,
-                        tileX,
-                        tileY,
+                        requestTileX,
+                        requestTileY,
                         color,
                         cancellationToken));
             }
@@ -7721,7 +7753,8 @@ public sealed partial class TimelineSurface : Control
                     QueueRasterInvalidation();
             },
             _resizePreviewCancellation.Token,
-            TimelineRasterRequestPriority.Visible);
+            TimelineRasterRequestPriority.Visible,
+            consumerId: _rasterConsumerId);
         if (!accepted) _requestedResizePreviewKeys.Remove(key);
     }
 
@@ -8300,7 +8333,7 @@ public sealed partial class TimelineSurface : Control
                     {
                         return;
                     }
-                    _ = Dispatcher.BeginInvoke(
+                    CancelablePresentationDispatch.Post(Dispatcher, cancellationToken,
                         () =>
                         {
                             if (_backgroundWorkSuspended
@@ -11647,7 +11680,7 @@ public sealed partial class TimelineSurface : Control
 
     private readonly record struct SegmentPreviewWarmupRequest(
         TimelineRasterCacheKey Key,
-        Func<TimelineRasterBuffer> Factory);
+        Func<CancellationToken, TimelineRasterBuffer> Factory);
 
     private readonly record struct SegmentPreviewDetailTile(
         Rect Destination,

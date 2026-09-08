@@ -271,12 +271,14 @@ public sealed class LogicalNoteQuerySnapshot : ITimelineObjectSource<LogicalNote
         TimelineRasterColumnProjection projection,
         int minimumNote,
         int maximumNote,
-        Span<TimelineRasterColumnSummary> destination) =>
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default) =>
         _values.AccumulateRasterColumns(
             projection,
             minimumNote,
             maximumNote,
-            destination);
+            destination,
+            cancellationToken: cancellationToken);
 
     internal int CountCandidateSpatialBlocks(
         long startTick,
@@ -418,23 +420,27 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
         TimelineRasterColumnProjection projection,
         int minimumNote,
         int maximumNote,
-        Span<TimelineRasterColumnSummary> destination) =>
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default) =>
         _values.AccumulateRasterColumns(
             projection,
             minimumNote,
             maximumNote,
             destination,
-            NoteCategory);
+            NoteCategory,
+            cancellationToken);
 
     public int AccumulateEventRasterColumns(
         TimelineRasterColumnProjection projection,
-        Span<TimelineRasterColumnSummary> destination) =>
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default) =>
         _values.AccumulateRasterColumns(
             projection,
             int.MinValue,
             int.MaxValue,
             destination,
-            EventCategory);
+            EventCategory,
+            cancellationToken);
 
 }
 
@@ -511,8 +517,9 @@ public sealed class CurvePointQuerySnapshot : ITimelineObjectSource<CurvePointSn
 
     public int AccumulateRasterColumns(
         TimelineRasterColumnProjection projection,
-        Span<TimelineRasterColumnSummary> destination) =>
-        _values.AccumulateRasterColumns(projection, 0, 0, destination);
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default) =>
+        _values.AccumulateRasterColumns(projection, 0, 0, destination, cancellationToken: cancellationToken);
 
     internal int CountCandidateSpatialBlocks(long startTick, long endTick) =>
         _values.CountCandidateSpatialBlocks(startTick, endTick, 0, 0);
@@ -2452,12 +2459,15 @@ internal sealed class PagedTimelineValuePage<TValue>
         int minimumLane,
         int maximumLane,
         ulong requiredCategoryMask,
-        Span<TimelineRasterColumnSummary> destination)
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         int visited = 0;
         int end = checked(block.First + block.Count);
         for (int spatialIndex = block.First; spatialIndex < end; spatialIndex++)
         {
+            if ((spatialIndex & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             int localIndex = _spatialOrder[spatialIndex];
             TValue value = Values[localIndex];
             if (_getStart(value) >= projection.EndTick) break;
@@ -2495,12 +2505,15 @@ internal sealed class PagedTimelineValuePage<TValue>
         ulong requiredCategoryMask,
         PersistentTimelineIdDeltaMap<TValue> excluded,
         Func<TValue, MidoraId> getId,
-        Span<TimelineRasterColumnSummary> destination)
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         int visited = 0;
         int end = checked(block.First + block.Count);
         for (int spatialIndex = block.First; spatialIndex < end; spatialIndex++)
         {
+            if ((spatialIndex & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             TValue value = Values[_spatialOrder[spatialIndex]];
             if (excluded.TryGetValue(getId(value), out _)) continue;
             if (_getStart(value) >= projection.EndTick) break;
@@ -3566,8 +3579,10 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
         int minimumLane,
         int maximumLane,
         Span<TimelineRasterColumnSummary> destination,
-        ulong requiredCategoryMask = ulong.MaxValue)
+        ulong requiredCategoryMask = ulong.MaxValue,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         destination.Clear();
         if (destination.IsEmpty || maximumLane < minimumLane)
             return 0;
@@ -3579,7 +3594,8 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
                 projection.EndTick,
                 minimumLane,
                 maximumLane,
-                requiredCategoryMask))
+                requiredCategoryMask,
+                cancellationToken))
             {
                 work += candidate.Page.AccumulateSpatialBlockRasterColumnsExcluding(
                     candidate.Block,
@@ -3589,14 +3605,16 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
                     requiredCategoryMask,
                     _spatialValueOverlay,
                     _getId,
-                    destination);
+                    destination,
+                    cancellationToken);
             }
             work += _spatialOverlayIndex.AccumulateRasterColumns(
                 projection,
                 minimumLane,
                 maximumLane,
                 requiredCategoryMask,
-                destination);
+                destination,
+                cancellationToken);
             return work;
         }
         return _spatialIndex.AccumulateRasterColumns(
@@ -3604,7 +3622,8 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
             minimumLane,
             maximumLane,
             requiredCategoryMask,
-            destination);
+            destination,
+            cancellationToken);
     }
 
     public void AccumulateStartColumns(long extent, Span<byte> destination)
@@ -3811,8 +3830,10 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
         long endTick,
         int minimumLane,
         int maximumLane,
-        ulong requiredCategoryMask)
+        ulong requiredCategoryMask,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_root is null || endTick <= startTick || maximumLane < minimumLane)
             return [];
         List<PagedTimelineSpatialBlockReference<TValue>> result = [];
@@ -3823,7 +3844,8 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
             minimumLane,
             maximumLane,
             requiredCategoryMask,
-            result);
+            result,
+            cancellationToken);
         return result;
     }
 
@@ -3872,8 +3894,10 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
         int minimumLane,
         int maximumLane,
         ulong requiredCategoryMask,
-        Span<TimelineRasterColumnSummary> destination)
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_root is null
             || destination.IsEmpty
             || maximumLane < minimumLane)
@@ -3892,7 +3916,8 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
             laneMaskLow,
             laneMaskHigh,
             ref work,
-            destination);
+            destination,
+            cancellationToken);
         return work;
     }
 
@@ -3905,8 +3930,10 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
         ulong queryLaneMaskLow,
         ulong queryLaneMaskHigh,
         ref int work,
-        Span<TimelineRasterColumnSummary> destination)
+        Span<TimelineRasterColumnSummary> destination,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (node is null
             || node.MaximumEndTick <= projection.StartTick
             || node.MinimumStartTick >= projection.EndTick
@@ -3960,7 +3987,8 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
             queryLaneMaskLow,
             queryLaneMaskHigh,
             ref work,
-            destination);
+            destination,
+            cancellationToken);
 
         PagedTimelineSpatialBlockMetadata block = node.Entry.Block;
         if (block.MaximumEndTick > projection.StartTick
@@ -4009,7 +4037,8 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
                     minimumLane,
                     maximumLane,
                     requiredCategoryMask,
-                    destination);
+                    destination,
+                    cancellationToken);
             }
         }
 
@@ -4022,7 +4051,8 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
             queryLaneMaskLow,
             queryLaneMaskHigh,
             ref work,
-            destination);
+            destination,
+            cancellationToken);
     }
 
     private void Query(
@@ -4032,8 +4062,10 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
         int minimumLane,
         int maximumLane,
         ulong requiredCategoryMask,
-        List<PagedTimelineSpatialBlockReference<TValue>> destination)
+        List<PagedTimelineSpatialBlockReference<TValue>> destination,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (node is null) return;
         if (node.MaximumEndTick <= startTick
             || node.MinimumStartTick >= endTick
@@ -4050,7 +4082,8 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
             minimumLane,
             maximumLane,
             requiredCategoryMask,
-            destination);
+            destination,
+            cancellationToken);
         PagedTimelineSpatialBlockMetadata block = node.Entry.Block;
         if (block.MinimumStartTick < endTick
             && block.MaximumEndTick > startTick
@@ -4067,7 +4100,8 @@ internal sealed partial class PagedTimelineSpatialBlockIndex<TValue>
             minimumLane,
             maximumLane,
             requiredCategoryMask,
-            destination);
+            destination,
+            cancellationToken);
     }
 
     private static void QueryStarts(

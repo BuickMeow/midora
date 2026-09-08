@@ -122,7 +122,7 @@ internal static class Program
             }
             Console.WriteLine("Ghost row pixel alignment passed: 3/9/15/32 DIP keys, 96/120/144/192 DPI render targets.");
         }
-        finally { vm.CancelBackgroundPresentationWork(); timeline.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent)); }
+        finally { vm.Dispose(); timeline.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent)); }
     }
     private static void Check(int count)
     {
@@ -184,7 +184,7 @@ internal static class Program
             vm.RetryBuild(); vm.CancelBuild(); Pump();
             if (vm.IsBuilding) throw new InvalidOperationException("Cancel did not end preparation.");
         }
-        vm.CancelBackgroundPresentationWork(); timeline.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+        vm.Dispose(); timeline.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
     }
     private static void Wait(Func<bool> condition)
     {
@@ -246,7 +246,7 @@ internal static class Program
         if (timeline.OnionMissingTileCount != 0) throw new InvalidOperationException("Raw-to-Compiled lost a reusable MIDI tile.");
         Console.WriteLine($"Hybrid view ready including dispatcher + first frame: {preparationMs:F1}ms; {rawTracks.Length} raw track snapshots reused; 0 missing tiles.");
         }
-        finally { vm.CancelBackgroundPresentationWork(); timeline.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent)); }
+        finally { vm.Dispose(); timeline.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent)); }
         TimelineRasterCacheSession.Clear();
     }
     private static void Pump()

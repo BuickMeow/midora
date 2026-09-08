@@ -297,6 +297,38 @@ public sealed class SelectionPresentationLifecycleTests
     }
 
     [Fact]
+    public void DisposedSelectionIsUnavailableWhileLiveEmptySelectionRemainsComplete()
+    {
+        using ProbeWorkspace workspace = new();
+        workspace.RefreshSelectionPresentation();
+        Assert.True(workspace.SelectionSnapshot.MetricsAreComplete);
+
+        workspace.Selection.Replace(new MidoraId(1));
+        workspace.PublishMaterializedSelection(
+            new Dictionary<TimelineItemKind, TimelineSelectionMetrics>(),
+            metricsAreComplete: true,
+            renderIndex: TimelineSelectionRenderIndex.Create([
+                new(new MidoraId(1), TimelineItemKind.DirectMidiNote,
+                    0, 1, 60, 100, 0, TimelineItemState.None)]));
+        Assert.True(workspace.SelectionSnapshot.HasRenderIndex);
+
+        workspace.Dispose();
+        TimelineSelectionSnapshot released = workspace.SelectionSnapshot;
+        Assert.Empty(workspace.Selection.Ids);
+        Assert.Empty(released.Ids);
+        Assert.Equal(workspace.Selection.Revision, released.Revision);
+        Assert.False(released.HasRenderIndex);
+        Assert.False(released.MetricsAreComplete);
+
+        workspace.RefreshSelectionPresentation();
+        workspace.PublishMaterializedSelection(
+            new Dictionary<TimelineItemKind, TimelineSelectionMetrics>(),
+            metricsAreComplete: true);
+        workspace.Dispose();
+        Assert.Same(released, workspace.SelectionSnapshot);
+    }
+
+    [Fact]
     public void ClosingWorkspaceCancelsDeferredSelectionMetricsBeforePublication()
     {
         RunOnSta(() =>
@@ -318,11 +350,17 @@ public sealed class SelectionPresentationLifecycleTests
 
             Assert.True(source.Started.Wait(TimeSpan.FromSeconds(5)));
             session.CloseWorkspace(workspace);
+            TimelineSelectionSnapshot released = workspace.SelectionSnapshot;
+            Assert.True(workspace.IsDisposed);
+            Assert.Empty(released.Ids);
+            Assert.False(released.HasRenderIndex);
+            Assert.False(released.MetricsAreComplete);
             source.Release.Set();
 
             Assert.True(source.Finished.Wait(TimeSpan.FromSeconds(5)));
             DrainDispatcher();
             Assert.DoesNotContain(workspace, session.Workspaces);
+            Assert.Same(released, workspace.SelectionSnapshot);
             Assert.False(workspace.SelectionSnapshot.MetricsAreComplete);
             session.DisposeAsync().AsTask().GetAwaiter().GetResult();
         });

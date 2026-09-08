@@ -69,7 +69,12 @@ public partial class MainWindow : Window
     private MidoraId? _arrangementSharedGroupContextId;
     private MidoraId? _logicalTrackShortcutTrackId;
     private (ArrangementLaneKind Kind, MidoraId Id)? _arrangementHeaderShortcut;
-    private TimelineSurface? _pendingTimelineAltReleaseFocus;
+    private readonly TimelineCommandTarget _pendingTimelineAltTarget = new();
+    private TimelineSurface? _pendingTimelineAltReleaseFocus
+    {
+        get => _pendingTimelineAltTarget.Resolve(_session.ActiveWorkspace);
+        set => _pendingTimelineAltTarget.Set(value);
+    }
     private bool _synchronizingInstrumentStructureSelection;
     private bool _followPlaybackViewportInteractionActive;
     private CancellationTokenSource? _instrumentLoopCommitDelay;
@@ -77,7 +82,12 @@ public partial class MainWindow : Window
     private long _nextProjectRuntimeInformationRefresh;
     private TimelineSelectionOperationContext? _timelineSelectionOperationContext;
     private TimelineSelectionOperationContext? _timelineQuantizeOperationContext;
-    private TimelineSurface? _lastTimelineCommandSurface;
+    private readonly TimelineCommandTarget _lastTimelineCommandTarget = new();
+    private TimelineSurface? _lastTimelineCommandSurface
+    {
+        get => _lastTimelineCommandTarget.Resolve(_session.ActiveWorkspace);
+        set => _lastTimelineCommandTarget.Set(value);
+    }
 
     private enum TimelineSelectionObjectKind
     {
@@ -181,6 +191,7 @@ public partial class MainWindow : Window
     protected override async void OnClosed(EventArgs e)
     {
         _session.PropertyChanged -= OnClipboardSessionChanged;
+        ClearTimelineCommandTargets();
         _projectClipboard?.Dispose();
         _projectClipboard = null;
         _clipboardDocument = null;
@@ -9427,20 +9438,16 @@ public partial class MainWindow : Window
         WorkspaceViewModel? sourceWorkspace,
         TimelineSurface? sourceSurface)
     {
-        if (sourceWorkspace is null || sourceSurface is null) return;
+        if (sourceWorkspace is null || sourceSurface is null
+            || !ReferenceEquals(sourceSurface.DataContext, sourceWorkspace)) return;
+        TimelineCommandTarget target = new();
+        target.Set(sourceSurface);
         _ = Dispatcher.BeginInvoke(
             DispatcherPriority.Input,
             new Action(() =>
             {
-                if (!ReferenceEquals(_session.ActiveWorkspace, sourceWorkspace)
-                    || !_session.Workspaces.Contains(sourceWorkspace)
-                    || !sourceSurface.IsVisible
-                    || !sourceSurface.IsEnabled
-                    || !sourceSurface.Focusable)
-                {
-                    return;
-                }
-                sourceSurface.Focus();
+                if (_session.ActiveWorkspace is { } active && _session.Workspaces.Contains(active))
+                    target.RestoreFocus(active);
             }));
     }
 
@@ -9675,14 +9682,13 @@ public partial class MainWindow : Window
 
         _pendingTimelineAltReleaseFocus = null;
         e.Handled = true;
+        TimelineCommandTarget target = new();
+        target.Set(surface);
         _ = Dispatcher.BeginInvoke(
             DispatcherPriority.Input,
             new Action(() =>
             {
-                if (IsActive && surface.IsVisible && surface.IsEnabled && surface.Focusable)
-                {
-                    surface.Focus();
-                }
+                if (IsActive) target.RestoreFocus(_session.ActiveWorkspace);
             }));
     }
 
@@ -9973,10 +9979,19 @@ public partial class MainWindow : Window
 
     private void OnClipboardSessionChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(DesktopSessionController.ActiveWorkspace)) ClearTimelineCommandTargets();
         if (_clipboardDocument is null || ReferenceEquals(_clipboardDocument, _session.Document)) return;
         _projectClipboard?.Dispose();
         _projectClipboard = null;
         _clipboardDocument = null;
+    }
+
+    private void ClearTimelineCommandTargets()
+    {
+        _lastTimelineCommandTarget.Clear();
+        _pendingTimelineAltTarget.Clear();
+        _timelineSelectionOperationContext = null;
+        _timelineQuantizeOperationContext = null;
     }
 
     private async void StartClipboardTransfer(ProjectDocumentSession document,

@@ -691,6 +691,7 @@ public sealed class WpfInteractionRegressionTests
                 AssertSharedTaskProgressStyleResolvesInPropertiesBamlAndRealMainWindowOverlayMarkup(application);
                 TimelineGenerationDialogTests.VerifyThemeConstructionDraftAndValidation();
                 TimelineObjectListIntegrationTests.VerifyActualMainWindowTemplatesAndHandlers();
+                HostedWorkspaceLifecycleTests.VerifyLoadedTemplatesAndModalReturnTargets();
             }
             finally
             {

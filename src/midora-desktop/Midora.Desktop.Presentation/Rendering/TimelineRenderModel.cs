@@ -609,7 +609,8 @@ public interface ITimelineRasterAggregateSource
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount);
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default);
 }
 
 public readonly record struct TimelineSelectionMetrics(
@@ -985,6 +986,21 @@ public sealed class TimelineSelectionSnapshot
     private readonly CompressedMidoraIdSet _ids;
     private readonly Dictionary<TimelineItemKind, TimelineSelectionMetrics> _metrics;
     private readonly TimelineSelectionRenderIndex? _renderIndex;
+
+    private TimelineSelectionSnapshot(long revision)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(revision);
+        Revision = revision;
+        _ids = CompressedMidoraIdSet.Empty;
+        _metrics = [];
+    }
+
+    /// <summary>
+    /// Creates the source-free terminal presentation of a released owner.
+    /// Its metrics are unavailable, unlike a live empty selection whose
+    /// metrics are complete without requiring a scan.
+    /// </summary>
+    public static TimelineSelectionSnapshot CreateUnavailable(long revision) => new(revision);
 
     public TimelineSelectionSnapshot(
         long revision,
@@ -1461,12 +1477,18 @@ public sealed class TimelineRenderSnapshot
             _itemSource?.MaximumEndTick ?? 0),
         Math.Max(_overviewSource?.MaximumEndTick ?? 0, _conductorPreviewSource?.MaximumEndTick ?? 0));
 
-    internal void VisitConductorPreview(long startTick, long endTick, Action<TimelineRenderItem> visitor)
+    internal void VisitConductorPreview(long startTick, long endTick, Action<TimelineRenderItem> visitor,
+        CancellationToken cancellationToken = default)
     {
+        int visited = 0;
         foreach (TimelineRenderItem item in Items)
+        {
+            if ((visited++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (item.StartTick >= startTick && item.StartTick < endTick
                 && item.Kind is TimelineItemKind.ConductorEvent or TimelineItemKind.Marker)
                 visitor(item);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
         _conductorPreviewSource?.VisitInto(startTick, endTick, 0, 1, visitor);
     }
 
@@ -1937,8 +1959,10 @@ public sealed class TimelineRenderSnapshot
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
-        out int sourceWorkCount)
+        out int sourceWorkCount,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         destination.Clear();
         sourceWorkCount = 0;
         if (destination.IsEmpty || lastLaneExclusive <= firstLane)
@@ -1947,14 +1971,15 @@ public sealed class TimelineRenderSnapshot
             return false;
 
         List<TimelineRenderItem> materialized = [];
-        Index.QueryInto(
-            projection.StartTick,
-            projection.EndTick,
-            firstLane,
-            lastLaneExclusive,
-            materialized);
+        Index.VisitInto(projection.StartTick, projection.EndTick, firstLane, lastLaneExclusive,
+            item =>
+            {
+                if ((materialized.Count & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                materialized.Add(item);
+            });
         foreach (TimelineRenderItem item in materialized)
         {
+            if ((sourceWorkCount & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (!MatchesAggregateKind(item.Kind, kind)) continue;
             int lane = kind == TimelineRasterAggregateKind.PianoNotes ? item.Lane : 0;
             ulong low = lane is >= 0 and < 64 ? 1UL << lane : 0;
@@ -1979,7 +2004,8 @@ public sealed class TimelineRenderSnapshot
                 firstLane,
                 lastLaneExclusive,
                 destination,
-                out int externalWork)
+                out int externalWork,
+                cancellationToken)
                 && AddWork(ref sourceWorkCount, externalWork);
     }
 

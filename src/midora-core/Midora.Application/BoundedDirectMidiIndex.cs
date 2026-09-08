@@ -450,20 +450,24 @@ internal sealed class BoundedDirectMidiIndex<T> where T : unmanaged
             }
     }
 
-    public IEnumerable<T> Query(long start, long end, int minKey = 0, int maxKey = 127)
+    public IEnumerable<T> Query(long start, long end, int minKey = 0, int maxKey = 127,
+        CancellationToken cancellationToken = default)
     {
         foreach (Leaf leaf in _leaves)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (leaf.MaximumTick <= start || leaf.MinimumTick >= end
                 || leaf.MaximumKey < minKey || leaf.MinimumKey > maxKey) continue;
             for (int index = 0; index < leaf.Count;)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int absolute = leaf.First + index;
                 ReadOnlyMemory<T> page = leaf.Source.ReadPage(absolute / leaf.Source.PageCapacity);
                 int offset = absolute % leaf.Source.PageCapacity;
                 int take = Math.Min(leaf.Count - index, page.Length - offset);
                 for (int local = 0; local < take; local++)
                 {
+                    if ((local & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
                     T value = page.Span[offset + local];
                     var bounds = _bounds(value);
                     if (bounds.Start < end && bounds.End > start && bounds.Key >= minKey && bounds.Key <= maxKey)

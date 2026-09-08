@@ -98,7 +98,7 @@ public static class TimelineOnionRasterizer
                     var projection = new TimelineRasterColumnProjection(left, right, left,
                         ((double)left + clip.Shift) * pixelsPerTick - originX, pixelsPerTick, Width);
                     if (aggregate.TryAccumulateRasterColumns(TimelineRasterAggregateKind.PianoNotes,
-                        projection, first, last, summaries, out int work))
+                        projection, first, last, summaries, out int work, cancellationToken))
                     {
                         candidates = (int)Math.Min(int.MaxValue, (long)candidates + work);
                         for (int lane = first; lane < last; lane++)

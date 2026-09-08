@@ -142,6 +142,11 @@ public sealed partial class DesktopSessionController
         {
             if (!ReferenceEquals(context, _context)) return;
             if (!Workspaces.Contains(workspace)) continue;
+            if (workspace.IsDisposed || workspace.IsPresentationSuspended)
+            {
+                workspace.LastOnionRevision = (-1, -1, null);
+                continue;
+            }
             var stamp = (context.Document.PublicationRevision, presentation.Revision,
                 workspace is InstrumentWorkspaceViewModel owner ? owner.ActiveSubVoiceId : null);
             bool changed = workspace.LastOnionRevision != stamp;
@@ -159,13 +164,17 @@ public sealed partial class DesktopSessionController
                 var preset = state.TrackOnionPresets.FirstOrDefault(p => p.TargetTrackId == target.Track);
                 workspace.CanConfigureOnion = true;
                 workspace.IsOnionEnabled = preset?.Enabled == true;
-                workspace.OnionSnapshot = preset is { Enabled: true }
-                    ? new(_onionIdentity + ":" + workspace.Key,
-                        OnionPresentation.CaptureTracks(project,
-                            ResolveOnionSources(preset.SourceMode, target.Track, preset.SourceTrackIds,
-                                project.TracksInArrangementOrder().Select(t => t.TrackId))
-                                .Where(id => id != target.Track).ToHashSet(), target.Offset), preset.Opacity)
-                    : null;
+                if (workspace.IsDisposed || workspace.IsPresentationSuspended || workspace.LastOnionRevision != stamp
+                    || !ReferenceEquals(context, _context)) continue;
+                var sources = preset is { Enabled: true, Opacity: > 0 }
+                    ? ResolveOnionSources(preset.SourceMode, target.Track, preset.SourceTrackIds,
+                        project.TracksInArrangementOrder().Select(t => t.TrackId))
+                        .Where(id => id != target.Track).ToHashSet() : [];
+                var tracks = sources.Count > 0 ? OnionPresentation.CaptureTracks(project, sources, target.Offset) : [];
+                if (workspace.IsDisposed || workspace.IsPresentationSuspended || workspace.LastOnionRevision != stamp
+                    || !ReferenceEquals(context, _context)) continue;
+                workspace.OnionSnapshot = tracks.Count > 0
+                    ? new(_onionIdentity + ":" + workspace.Key, tracks, preset!.Opacity) : null;
             }
             else if (changed && workspace is InstrumentWorkspaceViewModel instrument
                 && project.EventInstruments.FirstOrDefault(i => i.Id == instrument.ObjectId) is { } definition)
@@ -174,17 +183,21 @@ public sealed partial class DesktopSessionController
                     && p.TargetSubVoiceId == instrument.ActiveSubVoiceId);
                 workspace.CanConfigureOnion = instrument.ActiveSubVoiceId is { } active && definition.SubVoices.Any(v => v.Id == active);
                 workspace.IsOnionEnabled = preset?.Enabled == true;
-                var sources = preset is { Enabled: true }
+                if (workspace.IsDisposed || workspace.IsPresentationSuspended || workspace.LastOnionRevision != stamp
+                    || !ReferenceEquals(context, _context)) continue;
+                var sources = preset is { Enabled: true, Opacity: > 0 }
                     ? ResolveOnionSources(preset.SourceMode, preset.TargetSubVoiceId, preset.SourceSubVoiceIds,
                         definition.SubVoices.Select(v => v.Id)).ToHashSet() : [];
-                workspace.OnionSnapshot = preset is { Enabled: true }
-                    ? new(_onionIdentity + ":" + workspace.Key + ":" + preset.TargetSubVoiceId,
-                        definition.SubVoices.Select((voice, order) => (voice, order))
-                            .Where(p => p.voice.Id != preset.TargetSubVoiceId && sources.Contains(p.voice.Id))
-                            .Select(p => new TimelineOnionTrack(p.voice.Id, OnionPresentation.VoiceColors[p.order % OnionPresentation.VoiceColors.Length],
-                                [new(new PagedTemplateNoteTimelineItemSource(p.voice, TemplateNoteTimelineProjection.Notes),
-                                    0, definition.TemplateLengthTicks, 0)])), preset.Opacity)
-                    : null;
+                var tracks = sources.Count > 0
+                    ? definition.SubVoices.Select((voice, order) => (voice, order))
+                        .Where(p => p.voice.Id != preset!.TargetSubVoiceId && sources.Contains(p.voice.Id))
+                        .Select(p => new TimelineOnionTrack(p.voice.Id, OnionPresentation.VoiceColors[p.order % OnionPresentation.VoiceColors.Length],
+                            [new(new PagedTemplateNoteTimelineItemSource(p.voice, TemplateNoteTimelineProjection.Notes),
+                                0, definition.TemplateLengthTicks, 0)])).ToArray() : [];
+                if (workspace.IsDisposed || workspace.IsPresentationSuspended || workspace.LastOnionRevision != stamp
+                    || !ReferenceEquals(context, _context)) continue;
+                workspace.OnionSnapshot = tracks.Length > 0
+                    ? new(_onionIdentity + ":" + workspace.Key + ":" + preset!.TargetSubVoiceId, tracks, preset.Opacity) : null;
             }
         }
     }

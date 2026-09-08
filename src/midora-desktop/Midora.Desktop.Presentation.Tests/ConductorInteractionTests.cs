@@ -291,6 +291,61 @@ public sealed class ConductorInteractionTests
     }
 
     [Theory]
+    [InlineData("RestartPendingRasterWork")]
+    [InlineData("ResetRasterRequests")]
+    public void RasterEpochResetDoesNotCancelCurrentConductorHover(string resetMethod)
+    {
+        RunOnSta(() =>
+        {
+            using MidoraProject project = new(192);
+            for (int tick = 1; tick < 1000; tick++) project.Conductor.Tempos.Add(new(project, tick, 120));
+            TimelineSurface surface = Surface(new ConductorTimelineProjection(project.Conductor, 1, 0, 240).TempoSnapshot);
+            surface.TickSpan = 51200;
+            typeof(TimelineSurface).GetField("_hoverPoint", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(surface, new Point(58, 152));
+            try
+            {
+                Invoke(surface, "RefreshHoverIntent");
+                var cancellation = Assert.IsAssignableFrom<CancellationTokenSource>(Field(surface, "_conductorHitCancellation"));
+                if (resetMethod == "ResetRasterRequests") Invoke(surface, resetMethod, false);
+                else Invoke(surface, resetMethod);
+                Assert.False(cancellation.IsCancellationRequested);
+                PumpUntil(() => Field(surface, "_conductorHitReady") is true);
+                Assert.False(Field(surface, "_exactQueryPending") is true);
+                Assert.Equal(Cursors.SizeNS, surface.Cursor);
+            }
+            finally { Cleanup(surface); }
+        });
+    }
+
+    [Fact]
+    public void ConductorRulerSurvivesRasterResetButSourceReplacementCancelsIt()
+    {
+        RunOnSta(() =>
+        {
+            using MidoraProject project = new(192);
+            var projection = new ConductorTimelineProjection(project.Conductor, 1, 0, 240);
+            TimelineSurface surface = Surface(projection.TempoSnapshot);
+            surface.RulerSnapshot = projection.RulerSnapshot;
+            try
+            {
+                object?[] arguments = [null];
+                Assert.True((bool)Invoke(surface, "TryCreateViewport", arguments)!);
+                _ = Invoke(surface, "TryPrepareConductorRuler", projection.RulerSnapshot, arguments[0]);
+                var cancellation = Assert.IsAssignableFrom<CancellationTokenSource>(Field(surface, "_conductorRulerCancellation"));
+                Invoke(surface, "ResetRasterRequests", false);
+                Assert.False(cancellation.IsCancellationRequested);
+                PumpUntil(() => Field(surface, "_conductorRulerReady") is true);
+                surface.RulerSnapshot = null;
+                Assert.True(cancellation.IsCancellationRequested);
+                Assert.Null(Field(surface, "_conductorRulerKey"));
+                Assert.False(Field(surface, "_conductorRulerReady") is true);
+            }
+            finally { Cleanup(surface); }
+        });
+    }
+
+    [Theory]
     [InlineData(88, false)]
     [InlineData(152, true)]
     [InlineData(216, false)]

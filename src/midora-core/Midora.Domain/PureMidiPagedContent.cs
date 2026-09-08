@@ -1971,6 +1971,25 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         }
     }
 
+    /// <summary>
+    /// Captures the committed formal sequence now and streams values without
+    /// creating editable objects. Includes hidden content and preserves order.
+    /// The source owner must remain alive while the sequence is consumed.
+    /// </summary>
+    public IEnumerable<DirectMidiNoteValue> EnumerateValues(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_snapshotPublicationSync)
+        {
+            if (_batchChangeDepth != 0)
+                throw new InvalidOperationException("Cannot capture Direct MIDI Note values during an uncommitted batch change.");
+            return PureMidiReadOnlyValues.Enumerate(
+                _source, _clearSource ? 0 : _source?.NoteCount ?? 0,
+                static (source, index) => source.GetNote(index), static value => value.Id,
+                _formalRemovedSourceIds, _formalReplacements, _formalAdded, cancellationToken);
+        }
+    }
+
     public DirectMidiNoteObjectSource CreateObjectSource()
     {
         lock (_snapshotPublicationSync)
@@ -3579,6 +3598,22 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         }
     }
 
+    /// <summary>Captures committed values in formal order without editable facades.
+    /// Consume within the source owner's lifetime; includes hidden content.</summary>
+    public IEnumerable<DirectMidiChannelEventValue> EnumerateValues(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_snapshotPublicationSync)
+        {
+            if (_batchChangeDepth != 0)
+                throw new InvalidOperationException("Cannot capture Direct MIDI Event values during an uncommitted batch change.");
+            return PureMidiReadOnlyValues.Enumerate(
+                _source, _clearSource ? 0 : _source?.ChannelEventCount ?? 0,
+                static (source, index) => source.GetChannelEvent(index), static value => value.Id,
+                _formalRemovedSourceIds, _formalReplacements, _formalAdded, cancellationToken);
+        }
+    }
+
     public DirectMidiChannelEventObjectSource CreateObjectSource()
     {
         lock (_snapshotPublicationSync)
@@ -5113,6 +5148,22 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
                 _generation);
             if (_batchChangeDepth == 0) _querySnapshot = snapshot;
             return snapshot;
+        }
+    }
+
+    /// <summary>Captures committed values in formal order without editable facades
+    /// or payload copies. Consume within the source owner's lifetime.</summary>
+    public IEnumerable<OpaqueMidiEventValue> EnumerateValues(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_snapshotPublicationSync)
+        {
+            if (_batchChangeDepth != 0)
+                throw new InvalidOperationException("Cannot capture opaque MIDI Event values during an uncommitted batch change.");
+            return PureMidiReadOnlyValues.Enumerate(
+                _source, _clearSource ? 0 : _source?.OpaqueEventCount ?? 0,
+                static (source, index) => source.GetOpaqueEvent(index), static value => value.Id,
+                _formalRemovedSourceIds, _formalReplacements, _formalAdded, cancellationToken);
         }
     }
 

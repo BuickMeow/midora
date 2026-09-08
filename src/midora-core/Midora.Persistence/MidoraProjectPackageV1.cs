@@ -411,7 +411,7 @@ public sealed class MidoraProjectPackageV1
 
         try
         {
-            ValidateSupportedProject(project);
+            ValidateSupportedProject(project, cancellationToken);
             _ = ProjectPresentationCodecV3.ValidateAndCanonicalize(presentation, project);
         }
         catch (Exception exception) when (exception is InvalidDataException
@@ -834,7 +834,8 @@ public sealed class MidoraProjectPackageV1
                 projectIndex,
                 project,
                 conductorFallback ? null : project.Conductor,
-                storedNextStableId);
+                storedNextStableId,
+                cancellationToken);
             project.RestoreNextStableId(storedNextStableId);
             if (conductorFallback)
             {
@@ -1047,7 +1048,7 @@ public sealed class MidoraProjectPackageV1
         return new(content, pureMidiPackEntries);
     }
 
-    private static void ValidateSupportedProject(MidoraProject project)
+    private static void ValidateSupportedProject(MidoraProject project, CancellationToken cancellationToken)
     {
         if (project.DamagedEventInstruments.Count != 0
             || project.DamagedEventInstrumentUsages.Count != 0
@@ -1089,7 +1090,7 @@ public sealed class MidoraProjectPackageV1
         }
         foreach (PureMidiTrack track in project.PureMidiTracks)
         {
-            foreach (MidoraId id in EnumeratePureMidiTrackIds(track))
+            foreach (MidoraId id in EnumeratePureMidiTrackIds(track, cancellationToken))
             {
                 AddId(id, project.NextStableId, ids, "Pure MIDI Track object");
             }
@@ -2346,7 +2347,8 @@ public sealed class MidoraProjectPackageV1
         ProjectJsonV1 projectIndex,
         MidoraProject project,
         ConductorTrack? conductor,
-        long nextStableId)
+        long nextStableId,
+        CancellationToken cancellationToken)
     {
         StableIdSetV1 ids = new();
         if (conductor is not null)
@@ -2433,7 +2435,7 @@ public sealed class MidoraProjectPackageV1
             {
                 if (midiTracks.TryGetValue(id, out PureMidiTrack? midiTrack))
                 {
-                    foreach (MidoraId nestedId in EnumeratePureMidiTrackIds(midiTrack).Skip(1))
+                    foreach (MidoraId nestedId in EnumeratePureMidiTrackIds(midiTrack, cancellationToken).Skip(1))
                     {
                         AddId(nestedId, nextStableId, ids, "Pure MIDI Track nested object");
                     }
@@ -2511,18 +2513,21 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
-    private static IEnumerable<MidoraId> EnumeratePureMidiTrackIds(PureMidiTrack track)
+    private static IEnumerable<MidoraId> EnumeratePureMidiTrackIds(
+        PureMidiTrack track, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         yield return track.Id;
         foreach (MidiSegment segment in track.Segments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             yield return segment.Id;
-            foreach (DirectMidiNote note in segment.Notes) yield return note.Id;
-            foreach (DirectMidiChannelEvent directEvent in segment.ChannelEvents)
+            foreach (DirectMidiNoteValue note in segment.Notes.EnumerateValues(cancellationToken)) yield return note.Id;
+            foreach (DirectMidiChannelEventValue directEvent in segment.ChannelEvents.EnumerateValues(cancellationToken))
             {
                 yield return directEvent.Id;
             }
-            foreach (OpaqueMidiEvent opaque in segment.OpaqueEvents) yield return opaque.Id;
+            foreach (OpaqueMidiEventValue opaque in segment.OpaqueEvents.EnumerateValues(cancellationToken)) yield return opaque.Id;
         }
     }
 

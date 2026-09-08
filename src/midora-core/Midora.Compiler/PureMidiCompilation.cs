@@ -182,7 +182,7 @@ public sealed partial class MidoraCompiler
                 foreach (MidiSegment segment in trackPlan.Segments)
                 {
                     long contentEnd = checked(segment.ContentOffsetTick + segment.LengthTicks);
-                    foreach (OpaqueMidiEvent value in segment.OpaqueEvents
+                    foreach (OpaqueMidiEventValue value in segment.OpaqueEvents.EnumerateValues(cancellationToken)
                         .Where(value => value.Tick >= segment.ContentOffsetTick
                             && value.Tick < contentEnd)
                         .OrderBy(value => value.Tick)
@@ -1070,7 +1070,7 @@ public sealed partial class MidoraCompiler
     {
         long contentEnd = checked(segment.ContentOffsetTick + segment.LengthTicks);
         long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
-        foreach (DirectMidiNote note in segment.Notes)
+        foreach (DirectMidiNoteValue note in segment.Notes.EnumerateValues(cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (note.StartTick < segment.ContentOffsetTick || note.StartTick >= contentEnd)
@@ -1114,7 +1114,7 @@ public sealed partial class MidoraCompiler
         }
 
         Dictionary<byte, Queue<SourceReference>> rawNotes = [];
-        foreach (DirectMidiChannelEvent value in segment.ChannelEvents
+        foreach (DirectMidiChannelEventValue value in segment.ChannelEvents.EnumerateValues(cancellationToken)
             .Where(value => value.Tick >= segment.ContentOffsetTick && value.Tick < contentEnd)
             .OrderBy(value => value.Tick)
             .ThenBy(value => value.Order)

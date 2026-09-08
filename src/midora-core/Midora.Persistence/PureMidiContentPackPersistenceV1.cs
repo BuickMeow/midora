@@ -120,50 +120,21 @@ internal static class PureMidiContentPackPersistenceV1
         CancellationToken cancellationToken)
     {
         using PureMidiContentPackWriter writer = new(filePath, cancellationToken);
-        long recordIndex = 0;
         foreach (MidiSegment segment in track.Segments)
         {
-            foreach (DirectMidiNote value in segment.Notes)
+            foreach (DirectMidiNoteValue value in segment.Notes.EnumerateValues(cancellationToken))
             {
-                CheckCancellation();
-                writer.AddNote(segment.Id, new(
-                    value.Id,
-                    value.StartTick,
-                    value.LengthTicks,
-                    value.Key,
-                    value.NoteOnVelocity,
-                    value.NoteOffVelocity,
-                    value.NoteOnOrder,
-                    value.NoteOffOrder));
+                writer.AddNote(segment.Id, value);
             }
-            foreach (DirectMidiChannelEvent value in segment.ChannelEvents)
+            foreach (DirectMidiChannelEventValue value in segment.ChannelEvents.EnumerateValues(cancellationToken))
             {
-                CheckCancellation();
-                writer.AddChannelEvent(segment.Id, new(
-                    value.Id,
-                    value.Tick,
-                    value.Kind,
-                    value.Data1,
-                    value.Data2,
-                    value.Order));
+                writer.AddChannelEvent(segment.Id, value);
             }
-            foreach (OpaqueMidiEvent value in segment.OpaqueEvents)
+            foreach (OpaqueMidiEventValue value in segment.OpaqueEvents.EnumerateValues(cancellationToken))
             {
-                CheckCancellation();
-                writer.AddOpaqueEvent(segment.Id, new(
-                    value.Id,
-                    value.Tick,
-                    value.Kind,
-                    value.MetaType,
-                    value.Payload,
-                    value.Order));
+                writer.AddOpaqueEvent(segment.Id, value);
             }
         }
         using PureMidiContentPack completed = writer.Complete();
-
-        void CheckCancellation()
-        {
-            if ((recordIndex++ & 0xfff) == 0) cancellationToken.ThrowIfCancellationRequested();
-        }
     }
 }

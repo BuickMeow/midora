@@ -8,7 +8,7 @@ using Xunit;
 
 namespace Midora.Desktop.Tests;
 
-public sealed class VirtualDiagnosticRowsTests
+public sealed partial class VirtualDiagnosticRowsTests
 {
     [Fact]
     public void WpfListViewDoesNotMaterializeFiftyMillionDiagnosticRows()

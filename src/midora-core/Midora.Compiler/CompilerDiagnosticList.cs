@@ -8,36 +8,36 @@ namespace Midora.Compiler;
 /// An immutable logical diagnostic sequence. Repeated overlap diagnostics share
 /// compact sources and ranges; Count and enumeration still include every pair.
 /// </summary>
-public sealed class CompilerDiagnosticList : IReadOnlyList<CompilerDiagnostic>, IRetainedStorageSource
+public sealed class CompilerDiagnosticList : ICompilerDiagnosticSequence, IRetainedStorageSource
 {
     private readonly DiagnosticSource[] _sources;
     private readonly DiagnosticRange[] _ranges;
-    private readonly int[] _severityCounts;
+    private readonly long[] _severityCounts;
 
     private CompilerDiagnosticList(DiagnosticSource[] sources, DiagnosticRange[] ranges)
     {
         _sources = sources;
         _ranges = ranges;
-        _severityCounts = new int[4];
+        _severityCounts = new long[4];
         foreach (DiagnosticRange range in ranges)
         {
             DiagnosticSource source = sources[range.SourceIndex];
             for (int severity = 0; severity < _severityCounts.Length; severity++)
-                _severityCounts[severity] = checked(_severityCounts[severity]
-                    + source.CountSeverity(range.Start, range.Count, (DiagnosticSeverity)severity));
+                _severityCounts[severity] = DiagnosticCapacityExceededException.Add(_severityCounts[severity],
+                    source.CountSeverity(range.Start, range.Count, (DiagnosticSeverity)severity));
         }
     }
 
     public static CompilerDiagnosticList Empty { get; } = new([], []);
-    public int Count => _ranges.Length == 0 ? 0 : _ranges[^1].EndExclusive;
-    public int SourceRecordCount => _sources.Sum(static source => source.Count);
+    public long Count => _ranges.Length == 0 ? 0 : _ranges[^1].EndExclusive;
+    public long SourceRecordCount => _sources.Sum(static source => (long)source.Count);
     public int RangeCount => _ranges.Length;
 
-    public CompilerDiagnostic this[int index]
+    public CompilerDiagnostic this[long index]
     {
         get
         {
-            if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+            if ((ulong)index >= (ulong)Count) throw new ArgumentOutOfRangeException(nameof(index));
             int low = 0;
             int high = _ranges.Length - 1;
             while (low < high)
@@ -48,22 +48,25 @@ public sealed class CompilerDiagnosticList : IReadOnlyList<CompilerDiagnostic>, 
             }
             DiagnosticRange range = _ranges[low];
             return _sources[range.SourceIndex].Get(
-                range.Start + index - (range.EndExclusive - range.Count));
+                checked(range.Start + (int)(index - (range.EndExclusive - range.Count))));
         }
     }
 
-    public int CountSeverity(DiagnosticSeverity severity) => _severityCounts[(int)severity];
+    public CompilerDiagnostic this[int index] => this[(long)index];
+    public CompilerDiagnostic this[Index index] => this[index.IsFromEnd ? Count - index.Value : index.Value];
 
-    public static int CountSeverity(IReadOnlyList<CompilerDiagnostic> diagnostics, DiagnosticSeverity severity) =>
+    public long CountSeverity(DiagnosticSeverity severity) => _severityCounts[(int)severity];
+
+    public static long CountSeverity(IEnumerable<CompilerDiagnostic> diagnostics, DiagnosticSeverity severity) =>
         diagnostics is CompilerDiagnosticList compact
             ? compact.CountSeverity(severity)
-            : diagnostics.Count(value => value.Severity == severity);
+            : diagnostics.LongCount(value => value.Severity == severity);
 
-    internal static CompilerDiagnosticList FromFrozen(IReadOnlyList<CompilerDiagnostic> diagnostics)
+    internal static CompilerDiagnosticList FromFrozen(IEnumerable<CompilerDiagnostic> diagnostics)
     {
         if (diagnostics is CompilerDiagnosticList compact) return compact;
-        if (diagnostics.Count == 0) return Empty;
         CompilerDiagnostic[] values = diagnostics as CompilerDiagnostic[] ?? diagnostics.ToArray();
+        if (values.Length == 0) return Empty;
         return new([new ArrayDiagnosticSource(values)], [new(0, 0, values.Length, values.Length)]);
     }
 
@@ -180,13 +183,13 @@ public sealed class CompilerDiagnosticList : IReadOnlyList<CompilerDiagnostic>, 
         MidoraId TrackId, MidoraId SegmentId, MidoraId InstanceId,
         MidoraId InstrumentId, long StartTick);
 
-    private readonly record struct DiagnosticRange(int SourceIndex, int Start, int Count, int EndExclusive);
+    private readonly record struct DiagnosticRange(int SourceIndex, int Start, int Count, long EndExclusive);
 
     internal sealed class Builder
     {
         private readonly List<DiagnosticSource> _sources = [];
         private readonly List<DiagnosticRange> _ranges = [];
-        private int _count;
+        private long _count;
         public int SourceCount => _sources.Count;
         internal int AddSource(DiagnosticSource source)
         {
@@ -203,8 +206,9 @@ public sealed class CompilerDiagnosticList : IReadOnlyList<CompilerDiagnostic>, 
                 || start > _sources[sourceIndex].Count - count)
                 throw new ArgumentOutOfRangeException(nameof(sourceIndex));
             if (count == 0) return;
-            _count = checked(_count + count);
-            _ranges.Add(new(sourceIndex, start, count, _count));
+            long nextCount = DiagnosticCapacityExceededException.Add(_count, count);
+            _ranges.Add(new(sourceIndex, start, count, nextCount));
+            _count = nextCount;
         }
         public CompilerDiagnosticList Build() => _count == 0 ? Empty : new(_sources.ToArray(), _ranges.ToArray());
     }

@@ -99,8 +99,8 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
     private long? _pendingSelectionHistoryCaptureStateId;
     private bool _workspaceSelectionHistoryPruneRequested;
     private string? _projectTreeStructureStamp;
-    private int _compilerErrorCount;
-    private int _compilerWarningCount;
+    private long _compilerErrorCount;
+    private long _compilerWarningCount;
     private readonly MidoraProjectPackageV1 _packages =
         new(MidoraSoftwareVersion.InformationalVersion);
     private readonly ProjectCreationCoordinator _creation;
@@ -306,8 +306,8 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
                         : null);
         }
     }
-    public int ErrorCount => _compilerErrorCount;
-    public int WarningCount => _compilerWarningCount;
+    public long ErrorCount => _compilerErrorCount;
+    public long WarningCount => _compilerWarningCount;
     public bool HasErrors => ErrorCount > 0;
     public bool HasWarnings => WarningCount > 0;
     public string IssueSummary => $"{ErrorCount} Errors, {WarningCount} Warnings";
@@ -2973,7 +2973,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         DiagnosticRefreshCount++;
         lock (_modelRefreshGate)
         {
-            IReadOnlyList<CompilerDiagnostic> source = _context?.Compilation.LastAttempt.Diagnostics
+            ICompilerDiagnosticSequence source = _context?.Compilation.LastAttempt.Diagnostics
                 ?? CompilerDiagnosticList.Empty;
             VirtualDiagnosticRows diagnostics = new(source, _context?.Compilation.IsCompilationCurrent ?? false);
             CompilerDiagnostics = diagnostics;
@@ -3361,6 +3361,8 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
                 }
                 RefreshCompilationProperties();
                 RefreshOnionPresentations();
+                if (refreshContext.Compilation.DiagnosticCapacityFailureMessage is string capacityFailure)
+                    SetStatusMessage("Compile Project: " + capacityFailure, isError: true);
             }
 
             if ((kinds & ModelRefreshKind.Playback) != 0)

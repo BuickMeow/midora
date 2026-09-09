@@ -328,6 +328,10 @@ Diagnostics 是独立 Workspace，不在主窗口底部复制紧凑列表。它�
 
 主动切换到 Diagnostics Workspace 时，键盘焦点必须落在非编辑的 Workspace 表面，不得自动进入搜索框、筛选下拉框或其他命令控件。用户主动 Compile、Play 或 Preview 失败时可激活 Diagnostics，但不得抢键盘焦点或自动跳转来源；后台 Information、Warning 和普通非阻塞 Error 只更新状态栏计数。
 
+筛选后数量不超过 `Int32.MaxValue` 时保留连续虚拟列表；超过时每页 **4096** 行，提供 Previous、Next 和一基页码跳转，并显示当前全局行范围、筛选后总数及全源总数。搜索、严重程度、状态和来源范围筛选始终作用于完整诊断，而非当前页；状态栏保持 Whole Project 精确 Int64 统计，不随页码改变。列表与筛选只按需生成行，不得创建与逻辑诊断总数成比例的 WPF 控件。
+
+页码无效时保留当前页并显示就地错误；有效换页清除旧页行选择，恢复非编辑 Workspace 表面焦点。未改筛选或诊断修订时，普通 Tab 切换保留页码。更换诊断修订或筛选后从结果第一页开始；旧页/旧修订行不得映射为新来源。页码、筛选和行缓存只属于会话状态，不进入 Project Modified、Undo 或持久化。
+
 主窗口不设置 Tasks Tab 或 Task History 表。一次只存在一个前台任务；必要时由模态 Task overlay 展示当前任务。只有任务明确支持安全取消时才显示可响应的 Cancel。没有可靠总量时使用 indeterminate 动画；有可靠当前值与总量时才显示 determinate 进度。Save / Save Copy 进入不可取消事务后不得显示不可响应的 Cancel 控件。任务状态属于 Runtime Data，不保存、不进入 Undo/Redo。
 
 提交 Application Preferences 时，只有 SoundFont（包括 target）、实时音频或音频缓存配置实际变化才显示标题为 `Saving Settings` 的不可取消模态 Task overlay；其覆盖程序设置持久化、旧 Worker 释放、新 Worker 启动、Enabled SF2/SFZ 加载与设备探测的完整时段。纯 UI 或最近目录设置不得触发该 overlay。

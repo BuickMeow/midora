@@ -23,20 +23,20 @@ public sealed class MidiExportTaskResult
 {
     internal MidiExportTaskResult(
         MidiExportTaskStatus status,
-        IReadOnlyList<CompilerDiagnostic> compilerDiagnostics,
+        IEnumerable<CompilerDiagnostic> compilerDiagnostics,
         MidiExportArtifactDiagnostic[] artifactDiagnostics,
         MidiExportOutputResult? output,
         MidiExportOutputException? outputFailure)
     {
         Status = status;
-        CompilerDiagnostics = compilerDiagnostics;
+        CompilerDiagnostics = CompilerDiagnosticSequence.Wrap(compilerDiagnostics);
         ArtifactDiagnostics = Array.AsReadOnly(artifactDiagnostics);
         Output = output;
         OutputFailure = outputFailure;
     }
 
     public MidiExportTaskStatus Status { get; }
-    public IReadOnlyList<CompilerDiagnostic> CompilerDiagnostics { get; }
+    public ICompilerDiagnosticSequence CompilerDiagnostics { get; }
     public ReadOnlyCollection<MidiExportArtifactDiagnostic> ArtifactDiagnostics { get; }
     public MidiExportOutputResult? Output { get; }
     public MidiExportOutputException? OutputFailure { get; }

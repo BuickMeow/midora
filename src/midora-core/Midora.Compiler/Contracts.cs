@@ -497,7 +497,7 @@ public sealed partial class CanonicalCompiledResult
         CanonicalMidiEvent[] events,
         CanonicalConductor conductor,
         ChannelUnitAllocation[] allocations,
-        IReadOnlyList<CompilerDiagnostic> diagnostics,
+        IEnumerable<CompilerDiagnostic> diagnostics,
         bool isPartial,
         bool isConsumable,
         CompilationFailureStage? failureStage,
@@ -549,7 +549,7 @@ public sealed partial class CanonicalCompiledResult
         CountNoteOns(_events) + (_pagedEventSource?.NoteOnEventCount ?? 0));
     public ReadOnlySpan<CanonicalTempo> Tempos => Conductor.Tempos;
     public ReadOnlySpan<ChannelUnitAllocation> Allocations => _allocations;
-    public IReadOnlyList<CompilerDiagnostic> Diagnostics => _diagnostics;
+    public ICompilerDiagnosticSequence Diagnostics => _diagnostics;
     public ReadOnlySpan<CanonicalSmfTrackDescriptor> SmfTracks => _smfTracks;
     public ReadOnlySpan<CanonicalOpaqueMidiEvent> OpaqueMidiEvents => _opaqueMidiEvents;
     public ReadOnlySpan<CanonicalMidiChannelModeSystemExclusiveEvent>

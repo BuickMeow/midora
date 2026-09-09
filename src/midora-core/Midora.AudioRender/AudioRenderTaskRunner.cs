@@ -56,14 +56,14 @@ public sealed class AudioRenderOutputResult
         AudioRenderOutputStatus status,
         long frameCount,
         long? fileByteCount,
-        IReadOnlyList<CompilerDiagnostic> compilerDiagnostics,
+        IEnumerable<CompilerDiagnostic> compilerDiagnostics,
         AudioRenderDiagnostic[] diagnostics)
     {
         Target = target;
         Status = status;
         FrameCount = frameCount;
         FileByteCount = fileByteCount;
-        CompilerDiagnostics = compilerDiagnostics;
+        CompilerDiagnostics = CompilerDiagnosticSequence.Wrap(compilerDiagnostics);
         Diagnostics = Array.AsReadOnly(diagnostics);
     }
 
@@ -71,7 +71,7 @@ public sealed class AudioRenderOutputResult
     public AudioRenderOutputStatus Status { get; }
     public long FrameCount { get; }
     public long? FileByteCount { get; }
-    public IReadOnlyList<CompilerDiagnostic> CompilerDiagnostics { get; }
+    public ICompilerDiagnosticSequence CompilerDiagnostics { get; }
     public ReadOnlyCollection<AudioRenderDiagnostic> Diagnostics { get; }
 }
 
@@ -638,7 +638,7 @@ public sealed class AudioRenderTaskRunner
                 AudioRenderOutputStatus.NotStarted,
                 frameCount,
                 null,
-                compilation?.Diagnostics ?? [],
+                compilation?.Diagnostics ?? CompilerDiagnosticList.Empty,
                 []);
         }).ToList();
 

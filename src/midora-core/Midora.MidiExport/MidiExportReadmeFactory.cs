@@ -88,42 +88,52 @@ public static class MidiExportReadmeFactory
 
 }
 
-/// <summary>Frozen canonical diagnostics; repeated values are projected on demand.</summary>
+/// <summary>Only the first 1000 Warning/Info texts; the full count remains exact.</summary>
 internal sealed class MidiExportReadmeDiagnosticProjection(
-    IReadOnlyList<CompilerDiagnostic> source) : IReadOnlyList<MidiExportReadmeDiagnostic>
+    MidiExportReadmeDiagnostic[] prefix, long totalCount) : IReadOnlyList<MidiExportReadmeDiagnostic>
 {
     public static MidiExportReadmeDiagnosticProjection Create(
-        IReadOnlyList<CompilerDiagnostic> source,
+        IEnumerable<CompilerDiagnostic> source,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (source is CompilerDiagnosticList compact)
         {
-            int included = checked(compact.CountSeverity(DiagnosticSeverity.Warning)
+            long included = checked(compact.CountSeverity(DiagnosticSeverity.Warning)
                 + compact.CountSeverity(DiagnosticSeverity.Info));
-            if (included == 0) return new(CompilerDiagnosticList.Empty);
-            if (included == compact.Count) return new(compact);
-            return new(compact.Filter(
+            if (included == 0) return new([], 0);
+            CompilerDiagnosticList selected = included == compact.Count ? compact : compact.Filter(
                 static value => value.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Info,
-                cancellationToken));
+                cancellationToken);
+            MidiExportReadmeDiagnostic[] prefix = new MidiExportReadmeDiagnostic[
+                (int)Math.Min(included, MidiExportReadmeBuilder.MaximumDiagnosticRows)];
+            for (int index = 0; index < prefix.Length; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                prefix[index] = Project(selected[index]);
+            }
+            return new(prefix, included);
         }
-        List<CompilerDiagnostic> diagnostics = [];
-        for (int index = 0; index < source.Count; index++)
+        List<MidiExportReadmeDiagnostic> diagnostics = [];
+        long total = 0;
+        foreach (CompilerDiagnostic diagnostic in source)
         {
-            if ((index & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
-            CompilerDiagnostic diagnostic = source[index];
+            cancellationToken.ThrowIfCancellationRequested();
             if (diagnostic.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Info)
-                diagnostics.Add(diagnostic);
+            {
+                total = checked(total + 1);
+                if (diagnostics.Count < MidiExportReadmeBuilder.MaximumDiagnosticRows)
+                    diagnostics.Add(Project(diagnostic));
+            }
         }
-        return new(diagnostics.ToArray());
+        return new(diagnostics.ToArray(), total);
     }
 
-    public int Count => source.Count;
-    public MidiExportReadmeDiagnostic this[int index] => Project(source[index]);
-    public IEnumerator<MidiExportReadmeDiagnostic> GetEnumerator()
-    {
-        foreach (CompilerDiagnostic diagnostic in source) yield return Project(diagnostic);
-    }
+    public int Count => prefix.Length;
+    public long TotalCount => totalCount;
+    public MidiExportReadmeDiagnostic this[int index] => prefix[index];
+    public IEnumerator<MidiExportReadmeDiagnostic> GetEnumerator() =>
+        ((IEnumerable<MidiExportReadmeDiagnostic>)prefix).GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     private static MidiExportReadmeDiagnostic Project(CompilerDiagnostic value) =>
         new(value.Severity.ToString(), value.Code, value.Message);

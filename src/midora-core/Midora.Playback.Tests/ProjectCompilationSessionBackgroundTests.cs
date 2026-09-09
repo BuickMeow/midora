@@ -631,6 +631,42 @@ public sealed class ProjectCompilationSessionBackgroundTests
         Assert.Equal(0, session.LastCompilationTelemetry.ReusedTrackCount);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DiagnosticCapacityFailureKeepsLastCompleteResultAndReportsOnlyItsOwnCause(bool capacity)
+    {
+        var (project, track, first, _) = CreateNoteProject(8);
+        using (project)
+        using (ProjectCompilationSession session = new(project,
+            executionMode: ProjectCompilationExecutionMode.Background, backgroundDebounce: TimeSpan.Zero))
+        {
+            CanonicalCompiledResult previous = session.LastAttempt;
+            Exception injected = capacity ? new DiagnosticCapacityExceededException()
+                : new OverflowException("An unrelated numeric operation overflowed.");
+            session.CompilationStartingForTests = _ => throw injected;
+            ProjectChangeSet changes = new();
+            changes.TrackIds.Add(track.Id);
+            _ = session.ApplyEdit(_ => first.Velocity = 77, changes);
+            InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => session.EnsureCurrentCompilationAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Same(injected, failure.InnerException);
+            Assert.Same(previous, session.LastAttempt);
+            Assert.False(session.IsCompilationCurrent);
+            Assert.Equal(capacity ? injected.Message : null, session.DiagnosticCapacityFailureMessage);
+            Assert.Equal(capacity ? injected.Message : "The current Project revision could not be compiled.", failure.Message);
+            session.CompilationStartingForTests = null;
+            CanonicalCompiledResult recovered = await session.RecompileAsync(new ProjectChangeSet())
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Null(session.DiagnosticCapacityFailureMessage);
+            Assert.True(session.IsCompilationCurrent);
+            using MidoraCompiler verifier = new();
+            CanonicalCompiledResult full = verifier.CompileFull(project);
+            Assert.Equal(full.Fingerprint, recovered.Fingerprint);
+            Assert.True(full.Events.SequenceEqual(recovered.Events));
+        }
+    }
+
     [Fact]
     public async Task BackgroundCompilationNeverExecutesLegacyFreeCSharpAndCanRecover()
     {

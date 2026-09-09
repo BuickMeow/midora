@@ -125,6 +125,7 @@
 | INV-114 | Event Instrument Loop 的时间映射独立于长 / 短 / 等长音分类：除短音 One-Shot 外，实际实例局部 Gate horizon 超过 Loop End 即允许跳回并重复半开 Loop，不得以 `Gate Length > Template Length` 为前提。原始事件、Value Curve、状态型映射与 Mapping TemplateTick 必须一致；Envelope 不随 Loop 重启，Logical Parameter 按实际内容 Tick 求值。等长音 / EndAtTemplate / Segment 结束仍优先；已循环的短音 Tail 从 Gate End 接模板 `[Loop End, Template Length)`，持续 Note 不重触发。 |
 | INV-115 | Track/SubVoice 洋葱皮是独立只读投影：按 source 暴露范围与正式层顺序映射，目标音符始终在上；不参与选择/命中/编辑/编译/音频，也不污染普通编辑瓦片。后台查询、位图、在途任务和 compiled 索引必须有界、可取消并随会话释放。 |
 | INV-116 | All Tracks Compiled 为混合只读显示：Logical 只从完整成功 canonical 按 Port/Channel/Key FIFO 展开并用正式 NoteOn source Track 着色；Pure MIDI 复用当前源音符，不建立整曲 FIFO 索引、不宣称源 Gate 等于最终流配对。保留跨可视起点的 Note，旧 Logical 标为 stale。播放指针/跟随不重建音符缓存；标尺/内容单击仅复用既有 Seek。Onion 的手选列表与 custom/previous/next 显示模式分别保存，快捷命令不得改写手选列表；独立 presentation schema 2 只随显式保存写入，v1 读为 custom。Duplicate remap、dormant/Undo 与损坏隔离按 §18.11/§16.7.5 执行，不改变音乐 Modified/Undo、canonical、播放和导出语义。 |
+| INV-117 | 完整诊断逻辑序列、ordinal 与严重程度统计使用非负 Int64，保持顺序、重复、来源与失败策略；计数超限明确失败，不发布不完整新结果。WPF 仅对超过 Int32.MaxValue 的筛选结果使用 4096 行分页，筛选和状态统计仍针对全源。MIDI README 仅输出前 1000 条 Warning/Info 文本及精确总数/省略数，不截断正式诊断，不改变音乐语义、Warning-as-error 或 Project 持久化。 |
 
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
@@ -142,6 +143,7 @@
 | Release、Loop、Envelope、Overlap | 第 10 章；Loop 进入条件见 §10.9.5、INV-114 |
 | Logical Track、Logical Segment、裁剪与 Logical Note | 第 11 章 |
 | CompileContext、资源分配、Compiled Result | 第 12 章 |
+| Int64 完整诊断、超限失败、有界 WPF 分页、README 前 1000 条 | §12.19.10、§14.15.4、§17.5；INV-117 |
 | 播放、预览、held Preview 因果 Gate、BASSMIDI、程序级 Playback Preferences、输出设备、采样率、buffer、Limiter | 第 9、12、13、17、20 章 |
 | MIDI 文件结构与导出 | 第 14、23 章 |
 | 普通 RIFF/WAVE、自定义采样率与离线渲染 | 第 15 章 |

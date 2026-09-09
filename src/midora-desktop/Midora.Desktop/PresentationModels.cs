@@ -4117,7 +4117,10 @@ public sealed class DiagnosticsWorkspaceViewModel()
     private CancellationTokenSource _filterCancellation = new();
     private long _filterGeneration;
     private bool _isFiltering;
+    private bool _diagnosticFilterDirty = true;
     private string? _filterError;
+    private string _diagnosticPageText = "1";
+    private string _diagnosticPageError = string.Empty;
     private CompressedMidoraIdSet _workspaceScopeIds = CompressedMidoraIdSet.Empty;
     private CompressedMidoraIdSet _selectionScopeIds = CompressedMidoraIdSet.Empty;
     private string _searchText = string.Empty;
@@ -4126,6 +4129,38 @@ public sealed class DiagnosticsWorkspaceViewModel()
     private string _scopeFilter = "Whole Project";
     public IReadOnlyList<DiagnosticRow> Diagnostics => _diagnostics;
     public bool IsFiltering => _isFiltering;
+    public bool IsDiagnosticPagingVisible => _diagnostics.IsPaged;
+    public bool CanGoToDiagnosticPage => IsDiagnosticPagingVisible && !_isFiltering;
+    public bool CanPreviousDiagnosticPage => CanGoToDiagnosticPage && _diagnostics.PageIndex > 0;
+    public bool CanNextDiagnosticPage => CanGoToDiagnosticPage && _diagnostics.PageIndex < _diagnostics.PageCount - 1;
+    public string DiagnosticPageSummary => $"Page {_diagnostics.PageIndex + 1:N0} of {_diagnostics.PageCount:N0}";
+    public string DiagnosticPageError => _diagnosticPageError;
+    public string DiagnosticPageText
+    {
+        get => _diagnosticPageText;
+        set => Set(ref _diagnosticPageText, value ?? string.Empty);
+    }
+
+    public bool GoToDiagnosticPage()
+    {
+        if (!CanGoToDiagnosticPage) return false;
+        if (!long.TryParse(DiagnosticPageText, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out long page)
+            || page < 1 || page > _diagnostics.PageCount)
+        {
+            _diagnosticPageError = $"Enter a page number from 1 to {_diagnostics.PageCount:N0}.";
+            Raise(nameof(DiagnosticPageError));
+            return false;
+        }
+        PublishDiagnostics(_diagnostics.GetPage(page - 1));
+        return true;
+    }
+
+    public void MoveDiagnosticPage(bool next)
+    {
+        if (next ? !CanNextDiagnosticPage : !CanPreviousDiagnosticPage) return;
+        PublishDiagnostics(_diagnostics.GetPage(_diagnostics.PageIndex + (next ? 1 : -1)));
+    }
     public IReadOnlyList<string> SeverityFilters { get; } = ["All severities", "Error", "Warning", "Information"];
     public IReadOnlyList<string> StatusFilters { get; } =
         ["All statuses", "Active", "Prior Result", "Resolved", "Runtime History"];
@@ -4156,8 +4191,10 @@ public sealed class DiagnosticsWorkspaceViewModel()
     public string Summary => _filterError is not null
         ? $"Diagnostic filter failed: {_filterError}"
         : _isFiltering
-            ? $"Filtering {_allDiagnostics.Count} diagnostic(s)..."
-            : $"Showing {Diagnostics.Count} of {_allDiagnostics.Count} diagnostic(s)";
+            ? $"Filtering {_allDiagnostics.TotalCount} diagnostic(s)..."
+            : _diagnostics.IsPaged
+                ? $"Rows {_diagnostics.StartOrdinal + 1:N0}–{_diagnostics.StartOrdinal + _diagnostics.Count:N0} of {_diagnostics.TotalCount:N0} matching diagnostics ({_allDiagnostics.TotalCount:N0} total)"
+                : $"Showing {_diagnostics.TotalCount} of {_allDiagnostics.TotalCount} diagnostic(s)";
 
     public override void Rebuild(MidoraProject project, long revision)
     {
@@ -4178,11 +4215,12 @@ public sealed class DiagnosticsWorkspaceViewModel()
         _selectionScopeIds = workspace?.Selection.SharedIds ?? CompressedMidoraIdSet.Empty;
         _workspaceScopeIds = workspace?.ObjectId is MidoraId objectId
             ? _selectionScopeIds.Add(objectId) : _selectionScopeIds;
-        ApplyFilter();
+        if (ScopeFilter is "Current Workspace" or "Current Selection") ApplyFilter();
     }
 
     private void ApplyFilter()
     {
+        _diagnosticFilterDirty = true;
         _filterCancellation.Cancel();
         _filterCancellation.Dispose();
         _filterCancellation = new();
@@ -4190,6 +4228,7 @@ public sealed class DiagnosticsWorkspaceViewModel()
         _filterError = null;
         _isFiltering = false;
         Raise(nameof(IsFiltering));
+        RaiseDiagnosticPagingProperties();
         if (IsDisposed || IsPresentationSuspended)
         {
             Raise(nameof(Summary));
@@ -4240,6 +4279,7 @@ public sealed class DiagnosticsWorkspaceViewModel()
         }
         _isFiltering = true;
         Raise(nameof(IsFiltering));
+        RaiseDiagnosticPagingProperties();
         Raise(nameof(Summary));
         _ = Task.Run(() => source.Filter(Matches, token), token).ContinueWith(task =>
         {
@@ -4250,6 +4290,7 @@ public sealed class DiagnosticsWorkspaceViewModel()
                     || generation != _filterGeneration) return;
                 _isFiltering = false;
                 Raise(nameof(IsFiltering));
+                RaiseDiagnosticPagingProperties();
                 if (task.IsFaulted)
                 {
                     _filterError = task.Exception?.GetBaseException().Message ?? "Unknown failure";
@@ -4262,24 +4303,40 @@ public sealed class DiagnosticsWorkspaceViewModel()
 
     private void PublishDiagnostics(VirtualDiagnosticRows diagnostics)
     {
+        _diagnosticFilterDirty = false;
         _diagnostics = diagnostics;
+        _diagnosticPageError = string.Empty;
+        DiagnosticPageText = (diagnostics.PageIndex + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
         Raise(nameof(Diagnostics));
         Raise(nameof(Summary));
+        RaiseDiagnosticPagingProperties();
+    }
+
+    private void RaiseDiagnosticPagingProperties()
+    {
+        Raise(nameof(IsDiagnosticPagingVisible));
+        Raise(nameof(CanGoToDiagnosticPage));
+        Raise(nameof(CanPreviousDiagnosticPage));
+        Raise(nameof(CanNextDiagnosticPage));
+        Raise(nameof(DiagnosticPageSummary));
+        Raise(nameof(DiagnosticPageError));
     }
 
     protected override void OnPresentationSuspended()
     {
+        _diagnosticFilterDirty |= _isFiltering;
         _filterCancellation.Cancel();
         _filterGeneration++;
         _isFiltering = false;
         Raise(nameof(IsFiltering));
+        RaiseDiagnosticPagingProperties();
         Raise(nameof(Summary));
         base.OnPresentationSuspended();
     }
 
     protected override void OnPresentationResumed()
     {
-        ApplyFilter();
+        if (_diagnosticFilterDirty) ApplyFilter();
         base.OnPresentationResumed();
     }
 

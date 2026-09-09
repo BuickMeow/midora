@@ -184,6 +184,15 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         }
     }
     public CompilerRunTelemetry LastCompilationTelemetry => _compiler.LastTelemetry;
+    public string? DiagnosticCapacityFailureMessage
+    {
+        get
+        {
+            lock (_sync)
+                return _backgroundCompilationFailure is DiagnosticCapacityExceededException failure
+                    ? failure.Message : null;
+        }
+    }
     public ProjectCompilationExecutionMode ExecutionMode => _executionMode;
     public ProjectCompilationState CompilationState
     {
@@ -484,7 +493,9 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             if (failure is not null)
             {
                 throw new InvalidOperationException(
-                    "The current Project revision could not be compiled.",
+                    failure is DiagnosticCapacityExceededException
+                        ? failure.Message
+                        : "The current Project revision could not be compiled.",
                     failure);
             }
             await stateChanged.WaitAsync(cancellationToken).ConfigureAwait(false);

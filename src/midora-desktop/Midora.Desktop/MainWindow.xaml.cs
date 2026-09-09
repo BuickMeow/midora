@@ -8933,6 +8933,50 @@ public partial class MainWindow : Window
         _ = ShowModalDialog(dialog);
     }
 
+    private void OnDiagnosticListPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (sender is not ListBox listBox || e.Handled) return;
+        // The shared ScrollViewer router uses pixel-sized offsets; this virtual
+        // list uses item offsets, so handle the wheel before it reaches that router.
+        ListBoxWheelScroll.ScrollOneItemPerNotch(listBox, e);
+        e.Handled = true;
+    }
+
+    private void OnPreviousDiagnosticPageClick(object sender, RoutedEventArgs e) =>
+        ChangeDiagnosticPage(sender, false);
+
+    private void OnNextDiagnosticPageClick(object sender, RoutedEventArgs e) =>
+        ChangeDiagnosticPage(sender, true);
+
+    private void ChangeDiagnosticPage(object sender, bool next)
+    {
+        if (sender is not FrameworkElement { DataContext: DiagnosticsWorkspaceViewModel workspace }) return;
+        _session.SelectedDiagnostic = null;
+        workspace.MoveDiagnosticPage(next);
+        RestoreDiagnosticsPageFocus();
+    }
+
+    private void OnGoToDiagnosticPageClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: DiagnosticsWorkspaceViewModel workspace }
+            || !workspace.GoToDiagnosticPage()) return;
+        _session.SelectedDiagnostic = null;
+        RestoreDiagnosticsPageFocus();
+    }
+
+    private void OnDiagnosticPageKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        OnGoToDiagnosticPageClick(sender, e);
+    }
+
+    private void RestoreDiagnosticsPageFocus()
+    {
+        if (_session.ActiveWorkspace is DiagnosticsWorkspaceViewModel)
+            FindWorkspaceElement<FrameworkElement>("DiagnosticsWorkspaceFocusTarget")?.Focus();
+    }
+
     private void OnDiagnosticDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is ListBox { SelectedItem: DiagnosticRow diagnostic })

@@ -50,6 +50,8 @@ public sealed class MidiExportReadmeRequest
     public required IReadOnlyList<MidiExportReadmeTrack> Tracks { get; init; }
     public required IReadOnlyList<MidiExportReadmePortMapping> PortMappings { get; init; }
     public required IReadOnlyList<MidiExportReadmeDiagnostic> Diagnostics { get; init; }
+    /// <summary>Full Warning/Info count when Diagnostics holds only a bounded prefix.</summary>
+    public long? TotalDiagnosticCount { get; init; }
     public required IReadOnlyList<string> FileNames { get; init; }
     public required string CreatedWithSoftwareVersion { get; init; }
     public required string LastSavedWithSoftwareVersion { get; init; }
@@ -59,6 +61,7 @@ public sealed class MidiExportReadmeRequest
 
 public static class MidiExportReadmeBuilder
 {
+    public const int MaximumDiagnosticRows = 1_000;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public static byte[] Build(MidiExportReadmeRequest request)
@@ -180,15 +183,24 @@ public static class MidiExportReadmeBuilder
         AppendLine(output);
         AppendLine(output, "## Diagnostics");
         AppendLine(output);
-        if (request.Diagnostics.Count == 0)
+        long diagnosticCount = GetTotalDiagnosticCount(request);
+        if (diagnosticCount == 0)
         {
             AppendLine(output, "- No Warning or Information diagnostics.");
         }
         else
         {
-            foreach (MidiExportReadmeDiagnostic diagnostic in request.Diagnostics)
+            int shown = (int)Math.Min(diagnosticCount, MaximumDiagnosticRows);
+            if (diagnosticCount > shown)
+            {
+                AppendLine(output, FormattableString.Invariant(
+                    $"Showing the first {shown:N0} of {diagnosticCount:N0} diagnostics. {diagnosticCount - shown:N0} additional diagnostics are omitted. View the complete list in Midora."));
+                AppendLine(output);
+            }
+            for (int index = 0; index < shown; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                MidiExportReadmeDiagnostic diagnostic = request.Diagnostics[index];
                 ValidateDiagnostic(diagnostic);
                 AppendLine(output, $"- [{Escape(diagnostic.Severity)}] {Escape(diagnostic.Code)}: " +
                     Escape(diagnostic.Message));
@@ -221,33 +233,39 @@ public static class MidiExportReadmeBuilder
         output.Flush();
     }
 
-    internal static MidiExportReadmeRequest Freeze(MidiExportReadmeRequest source) => new()
+    internal static MidiExportReadmeRequest Freeze(MidiExportReadmeRequest source)
     {
-        ProjectName = source.ProjectName,
-        ProjectVersion = source.ProjectVersion,
-        AuthorOrTeam = source.AuthorOrTeam,
-        OriginalWork = source.OriginalWork,
-        Copyright = source.Copyright,
-        NoteOnEventCount = source.NoteOnEventCount,
-        Mode = source.Mode,
-        RangeSource = source.RangeSource,
-        StartTick = source.StartTick,
-        EndTick = source.EndTick,
-        Routing = source.Routing,
-        TicksPerQuarterNote = source.TicksPerQuarterNote,
-        TempoEventCount = source.TempoEventCount,
-        TimeSignatureEventCount = source.TimeSignatureEventCount,
-        KeySignatureEventCount = source.KeySignatureEventCount,
-        Tracks = source.Tracks.ToArray(),
-        PortMappings = source.PortMappings.ToArray(),
-        Diagnostics = source.Diagnostics is MidiExportReadmeDiagnosticProjection
-            ? source.Diagnostics : source.Diagnostics.ToArray(),
-        FileNames = source.FileNames.ToArray(),
-        CreatedWithSoftwareVersion = source.CreatedWithSoftwareVersion,
-        LastSavedWithSoftwareVersion = source.LastSavedWithSoftwareVersion,
-        ExportSoftwareVersion = source.ExportSoftwareVersion,
-        ExportedAtUtc = source.ExportedAtUtc
-    };
+        ArgumentNullException.ThrowIfNull(source);
+        ValidateDiagnosticPrefix(source);
+        return new()
+        {
+            ProjectName = source.ProjectName,
+            ProjectVersion = source.ProjectVersion,
+            AuthorOrTeam = source.AuthorOrTeam,
+            OriginalWork = source.OriginalWork,
+            Copyright = source.Copyright,
+            NoteOnEventCount = source.NoteOnEventCount,
+            Mode = source.Mode,
+            RangeSource = source.RangeSource,
+            StartTick = source.StartTick,
+            EndTick = source.EndTick,
+            Routing = source.Routing,
+            TicksPerQuarterNote = source.TicksPerQuarterNote,
+            TempoEventCount = source.TempoEventCount,
+            TimeSignatureEventCount = source.TimeSignatureEventCount,
+            KeySignatureEventCount = source.KeySignatureEventCount,
+            Tracks = source.Tracks.ToArray(),
+            PortMappings = source.PortMappings.ToArray(),
+            Diagnostics = source.Diagnostics is MidiExportReadmeDiagnosticProjection
+                ? source.Diagnostics : source.Diagnostics.Take(MaximumDiagnosticRows).ToArray(),
+            TotalDiagnosticCount = GetTotalDiagnosticCount(source),
+            FileNames = source.FileNames.ToArray(),
+            CreatedWithSoftwareVersion = source.CreatedWithSoftwareVersion,
+            LastSavedWithSoftwareVersion = source.LastSavedWithSoftwareVersion,
+            ExportSoftwareVersion = source.ExportSoftwareVersion,
+            ExportedAtUtc = source.ExportedAtUtc
+        };
+    }
 
     private static void Validate(MidiExportReadmeRequest request, CancellationToken cancellationToken)
     {
@@ -259,7 +277,7 @@ public static class MidiExportReadmeBuilder
         ArgumentOutOfRangeException.ThrowIfNegative(request.NoteOnEventCount);
         ArgumentNullException.ThrowIfNull(request.Tracks);
         ArgumentNullException.ThrowIfNull(request.PortMappings);
-        ArgumentNullException.ThrowIfNull(request.Diagnostics);
+        ValidateDiagnosticPrefix(request);
         ArgumentNullException.ThrowIfNull(request.FileNames);
         ArgumentNullException.ThrowIfNull(request.CreatedWithSoftwareVersion);
         ArgumentNullException.ThrowIfNull(request.LastSavedWithSoftwareVersion);
@@ -299,6 +317,23 @@ public static class MidiExportReadmeBuilder
             ArgumentException.ThrowIfNullOrEmpty(fileName);
         }
     }
+
+    private static void ValidateDiagnosticPrefix(MidiExportReadmeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request.Diagnostics);
+        long total = GetTotalDiagnosticCount(request);
+        ArgumentOutOfRangeException.ThrowIfNegative(total);
+        if (request.Diagnostics is MidiExportReadmeDiagnosticProjection projection && total != projection.TotalCount)
+            throw new ArgumentException("The diagnostic total differs from the frozen projection.", nameof(request));
+        if (total < request.Diagnostics.Count
+            || request.Diagnostics.Count < Math.Min(total, MaximumDiagnosticRows))
+            throw new ArgumentException("The diagnostic prefix and full count are inconsistent.", nameof(request));
+    }
+
+    private static long GetTotalDiagnosticCount(MidiExportReadmeRequest request) =>
+        request.TotalDiagnosticCount
+        ?? (request.Diagnostics as MidiExportReadmeDiagnosticProjection)?.TotalCount
+        ?? request.Diagnostics.Count;
 
     private static void ValidateDiagnostic(MidiExportReadmeDiagnostic diagnostic)
     {

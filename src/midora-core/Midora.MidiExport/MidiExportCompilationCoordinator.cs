@@ -52,7 +52,7 @@ public sealed class MidiExportCompilationResult
     public ReadOnlyCollection<MidiExportLogicalTrackLayout> Layouts { get; }
     public ReadOnlyCollection<MidiExportTrackSnapshot> Tracks { get; }
     public ReadOnlyCollection<byte> UsedZeroBasedPorts { get; }
-    public IReadOnlyList<CompilerDiagnostic> Diagnostics => CompiledResult.Diagnostics;
+    public ICompilerDiagnosticSequence Diagnostics => CompiledResult.Diagnostics;
 }
 
 public sealed class MidiExportCompilationCoordinator

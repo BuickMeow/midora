@@ -1071,14 +1071,14 @@
     </DataTemplate>
 
     <DataTemplate DataType="{x:Type local:DiagnosticsWorkspaceViewModel}">
-      <Grid Margin="8" Tag="DiagnosticsWorkspaceFocusTarget" Focusable="True" FocusVisualStyle="{x:Null}"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="26"/><RowDefinition Height="132"/></Grid.RowDefinitions>
+      <Grid Margin="8" Tag="DiagnosticsWorkspaceFocusTarget" Focusable="True" FocusVisualStyle="{x:Null}"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="132"/></Grid.RowDefinitions>
       <Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="135"/><ColumnDefinition Width="145"/><ColumnDefinition Width="155"/></Grid.ColumnDefinitions>
         <TextBox Margin="0,0,6,0" ToolTip="Search severity, category, code, message, or source" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
         <ComboBox Grid.Column="1" Margin="0,0,6,0" ItemsSource="{Binding SeverityFilters}" SelectedItem="{Binding SeverityFilter}" ToolTip="Severity filter"/>
         <ComboBox Grid.Column="2" Margin="0,0,6,0" ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" ToolTip="Activity filter"/>
         <ComboBox Grid.Column="3" ItemsSource="{Binding ScopeFilters}" SelectedItem="{Binding ScopeFilter}" ToolTip="Scope filter"/>
       </Grid>
-      <ListBox x:Name="DiagnosticList" Grid.Row="1" ItemsSource="{Binding Diagnostics}" SelectedItem="{Binding DataContext.SelectedDiagnostic, RelativeSource={RelativeSource AncestorType={x:Type Window}}, Mode=TwoWay}" MouseDoubleClick="OnDiagnosticDoubleClick" ContextMenu="{StaticResource DiagnosticContextMenu}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+      <ListBox x:Name="DiagnosticList" Grid.Row="1" ItemsSource="{Binding Diagnostics}" SelectedItem="{Binding DataContext.SelectedDiagnostic, RelativeSource={RelativeSource AncestorType={x:Type Window}}, Mode=TwoWay}" MouseDoubleClick="OnDiagnosticDoubleClick" PreviewMouseWheel="OnDiagnosticListPreviewMouseWheel" ContextMenu="{StaticResource DiagnosticContextMenu}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Item" ScrollViewer.CanContentScroll="True">
         <ListBox.ItemTemplate>
           <DataTemplate><Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="82"/><ColumnDefinition Width="90"/><ColumnDefinition Width="96"/><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
@@ -1091,7 +1091,21 @@
         </ListBox.ItemTemplate>
       </ListBox>
       <Border Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"><Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Diagnostics.Count}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style><StackPanel><TextBlock HorizontalAlignment="Center" Style="{StaticResource Text.Section}" Text="No diagnostics"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Compile the Project or clear the current search."/></StackPanel></Border>
-      <Border Grid.Row="2" Padding="8,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding Summary}"/></Border>
+      <Border Grid.Row="2" Padding="8,0" MinHeight="26" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1">
+        <StackPanel>
+          <TextBlock Margin="0,5" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding Summary}" TextWrapping="Wrap"/>
+          <StackPanel Margin="0,0,0,5" Visibility="{Binding IsDiagnosticPagingVisible, Converter={StaticResource BooleanToVisibility}}">
+            <WrapPanel VerticalAlignment="Center">
+              <Button Height="26" Padding="8,0" Margin="0,0,6,0" Content="Previous" IsEnabled="{Binding CanPreviousDiagnosticPage}" Click="OnPreviousDiagnosticPageClick"/>
+              <Button Height="26" Padding="8,0" Margin="0,0,10,0" Content="Next" IsEnabled="{Binding CanNextDiagnosticPage}" Click="OnNextDiagnosticPageClick"/>
+              <TextBlock Margin="0,0,12,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding DiagnosticPageSummary}"/>
+              <TextBox x:Name="DiagnosticPageInput" Width="130" MinHeight="26" Margin="0,0,6,0" VerticalAlignment="Center" Text="{Binding DiagnosticPageText, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanGoToDiagnosticPage}" ToolTip="Page number (1-based)" PreviewKeyDown="OnDiagnosticPageKeyDown"/>
+              <Button Height="26" Padding="8,0" Content="Go" IsEnabled="{Binding CanGoToDiagnosticPage}" Click="OnGoToDiagnosticPageClick"/>
+            </WrapPanel>
+            <TextBlock Margin="0,3,0,0" Style="{StaticResource Text.Caption}" Foreground="{StaticResource Brush.Red.Hover}" Text="{Binding DiagnosticPageError}" TextWrapping="Wrap"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
       <Border Grid.Row="3" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
         <Grid>
           <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Text="Select a diagnostic to inspect its details.">

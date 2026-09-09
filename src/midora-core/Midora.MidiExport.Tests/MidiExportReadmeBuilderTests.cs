@@ -5,7 +5,7 @@ using Midora.Domain;
 
 namespace Midora.MidiExport.Tests;
 
-public sealed class MidiExportReadmeBuilderTests
+public sealed partial class MidiExportReadmeBuilderTests
 {
     [Fact]
     public void BuildsDeterministicStrictUtf8ReadmeFromFrozenTaskSnapshot()
@@ -120,8 +120,8 @@ public sealed class MidiExportReadmeBuilderTests
         CountingReadmeDiagnostics diagnostics = new(5_000);
         using CountingWriteStream output = new();
         MidiExportReadmeBuilder.WriteTo(output, Clone(CreateRequest(), diagnostics: diagnostics));
-        Assert.Equal(5_000, diagnostics.ReadCount);
-        Assert.True(output.TotalBytes > 100_000);
+        Assert.Equal(1_000, diagnostics.ReadCount);
+        Assert.InRange(output.TotalBytes, 50_000, 200_000);
         Assert.InRange(output.MaximumWriteBytes, 1, 65_536);
 
         using CancellationTokenSource cancellation = new();
@@ -136,7 +136,7 @@ public sealed class MidiExportReadmeBuilderTests
     }
 
     [Fact]
-    public void ReadmeProjectionKeepsAllRepeatedWarningsWithoutAnExpandedArray()
+    public void ReadmeProjectionKeepsExactCountAndOnlyTheBoundedWarningPrefix()
     {
         CompilerDiagnosticList.Builder builder = new();
         CompilerDiagnosticList.OverlapDiagnosticSourceValue[] sources = Enumerable.Range(0, 1_000)
@@ -148,11 +148,13 @@ public sealed class MidiExportReadmeBuilderTests
             builder.AddRange(source, index + 1, sources.Length - index - 1);
         CompilerDiagnosticList compact = builder.Build();
         MidiExportReadmeDiagnosticProjection projected = MidiExportReadmeDiagnosticProjection.Create(compact);
-        Assert.Equal(499_500, projected.Count);
+        Assert.Equal(1_000, projected.Count);
+        Assert.Equal(499_500, projected.TotalCount);
         Assert.Equal("Warning", projected[0].Severity);
         Assert.Equal("MIDORA2201", projected[^1].Code);
         MidiExportReadmeRequest frozen = MidiExportReadmeBuilder.Freeze(Clone(CreateRequest(), diagnostics: projected));
         Assert.Same(projected, frozen.Diagnostics);
+        Assert.Equal(499_500, frozen.TotalDiagnosticCount);
     }
 
     private sealed class CountingReadmeDiagnostics(int count, Action<int>? onRead = null)
@@ -233,7 +235,8 @@ public sealed class MidiExportReadmeBuilderTests
         MidiExportReadmeRequest source,
         long? startTick = null,
         long? endTick = null,
-        IReadOnlyList<MidiExportReadmeDiagnostic>? diagnostics = null) => new()
+        IReadOnlyList<MidiExportReadmeDiagnostic>? diagnostics = null,
+        long? totalDiagnosticCount = null) => new()
         {
             ProjectName = source.ProjectName,
             ProjectVersion = source.ProjectVersion,
@@ -253,6 +256,7 @@ public sealed class MidiExportReadmeBuilderTests
             Tracks = source.Tracks,
             PortMappings = source.PortMappings,
             Diagnostics = diagnostics ?? source.Diagnostics,
+            TotalDiagnosticCount = totalDiagnosticCount ?? (diagnostics is null ? source.TotalDiagnosticCount : null),
             FileNames = source.FileNames,
             CreatedWithSoftwareVersion = source.CreatedWithSoftwareVersion,
             LastSavedWithSoftwareVersion = source.LastSavedWithSoftwareVersion,

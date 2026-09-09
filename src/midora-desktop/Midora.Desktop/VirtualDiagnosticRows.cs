@@ -8,25 +8,35 @@ namespace Midora.Desktop;
 internal sealed class VirtualDiagnosticRows : IReadOnlyList<DiagnosticRow>, IList
 {
     private const int CacheCapacity = 256;
+    public const int PageSize = 4_096;
     private static readonly ConditionalWeakTable<DiagnosticRow, RowOrdinal> RowOrdinals = new();
     private readonly object _identity = new();
-    private readonly IReadOnlyList<CompilerDiagnostic>? _compilerDiagnostics;
+    private readonly ICompilerDiagnosticSequence? _compilerDiagnostics;
     private readonly IReadOnlyList<DiagnosticRow>? _rows;
     private readonly bool _isCurrent;
     private readonly int[] _cacheIndexes = Enumerable.Repeat(-1, CacheCapacity).ToArray();
     private readonly DiagnosticRow?[] _cache = new DiagnosticRow[CacheCapacity];
 
-    public VirtualDiagnosticRows(IReadOnlyList<CompilerDiagnostic> diagnostics, bool isCurrent)
+    public VirtualDiagnosticRows(IEnumerable<CompilerDiagnostic> diagnostics, bool isCurrent)
+        : this(CompilerDiagnosticSequence.Wrap(diagnostics), isCurrent, 0) { }
+
+    private VirtualDiagnosticRows(ICompilerDiagnosticSequence diagnostics, bool isCurrent, long startOrdinal)
     {
         _compilerDiagnostics = diagnostics;
         _isCurrent = isCurrent;
+        StartOrdinal = startOrdinal;
     }
 
     public VirtualDiagnosticRows(IReadOnlyList<DiagnosticRow> rows) => _rows = rows;
     public static VirtualDiagnosticRows Empty { get; } = new(Array.Empty<DiagnosticRow>());
-    public int Count => _compilerDiagnostics?.Count ?? _rows!.Count;
-    public int SourceRecordCount => _compilerDiagnostics is CompilerDiagnosticList compact
-        ? compact.SourceRecordCount : Count;
+    public long TotalCount => _compilerDiagnostics?.Count ?? _rows!.Count;
+    public bool IsPaged => TotalCount > int.MaxValue;
+    public long StartOrdinal { get; }
+    public long PageIndex => StartOrdinal / PageSize;
+    public long PageCount => IsPaged ? (TotalCount - 1) / PageSize + 1 : 1;
+    public int Count => IsPaged ? (int)Math.Min(PageSize, TotalCount - StartOrdinal) : (int)TotalCount;
+    public long SourceRecordCount => _compilerDiagnostics is CompilerDiagnosticList compact
+        ? compact.SourceRecordCount : TotalCount;
     public bool? UniformIsCurrent => _compilerDiagnostics is not null ? _isCurrent : null;
     internal int CachedRowCount => _cache.Count(static row => row is not null);
 
@@ -38,12 +48,19 @@ internal sealed class VirtualDiagnosticRows : IReadOnlyList<DiagnosticRow>, ILis
             if (_rows is not null) return _rows[index];
             int slot = index % CacheCapacity;
             if (_cacheIndexes[slot] == index) return _cache[slot]!;
-            DiagnosticRow row = DiagnosticProjection.FromCompiler(_compilerDiagnostics![index], _isCurrent);
+            DiagnosticRow row = DiagnosticProjection.FromCompiler(_compilerDiagnostics![StartOrdinal + index], _isCurrent);
             RowOrdinals.Add(row, new(_identity, index));
             _cacheIndexes[slot] = index;
             _cache[slot] = row;
             return row;
         }
+    }
+
+    public VirtualDiagnosticRows GetPage(long pageIndex)
+    {
+        if (pageIndex < 0 || pageIndex >= PageCount) throw new ArgumentOutOfRangeException(nameof(pageIndex));
+        return pageIndex == PageIndex ? this
+            : new VirtualDiagnosticRows(_compilerDiagnostics!, _isCurrent, checked(pageIndex * PageSize));
     }
 
     public VirtualDiagnosticRows Filter(Func<DiagnosticRow, bool> predicate, CancellationToken cancellationToken)
@@ -55,7 +72,7 @@ internal sealed class VirtualDiagnosticRows : IReadOnlyList<DiagnosticRow>, ILis
         if (_compilerDiagnostics is not null)
         {
             List<CompilerDiagnostic> selected = [];
-            for (int index = 0; index < _compilerDiagnostics.Count; index++)
+            for (long index = 0; index < _compilerDiagnostics.Count; index++)
             {
                 if ((index & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
                 CompilerDiagnostic diagnostic = _compilerDiagnostics[index];

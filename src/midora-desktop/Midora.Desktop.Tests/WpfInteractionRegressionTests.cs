@@ -1156,6 +1156,24 @@ public sealed class WpfInteractionRegressionTests
     }
 
     [Fact]
+    public void DiagnosticsUseSingleItemWheelScrollingWithoutDisablingVirtualization()
+    {
+        XDocument document = XDocument.Load(Path.Combine(FindRepositoryRoot(),
+            "src", "midora-desktop", "Midora.Desktop", "MainWindow.xaml"));
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        XElement list = document.Descendants(presentation + "ListBox")
+            .Single(element => (string?)element.Attribute(x + "Name") == "DiagnosticList");
+
+        Assert.Equal("OnDiagnosticListPreviewMouseWheel", (string?)list.Attribute("PreviewMouseWheel"));
+        Assert.Equal("True", (string?)list.Attribute("ScrollViewer.CanContentScroll"));
+        Assert.Equal("Item", (string?)list.Attribute("VirtualizingPanel.ScrollUnit"));
+        Assert.Equal("True", (string?)list.Attribute("VirtualizingPanel.IsVirtualizing"));
+        Assert.Equal("Recycling", (string?)list.Attribute("VirtualizingPanel.VirtualizationMode"));
+        Assert.Equal("OnDiagnosticDoubleClick", (string?)list.Attribute("MouseDoubleClick"));
+    }
+
+    [Fact]
     public void ComboDropDownWheelAdvancesByOneScrollLine()
     {
         RunOnSta(() =>

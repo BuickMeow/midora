@@ -27,11 +27,11 @@ public sealed class CompilationRejectedExceptionTests
             new CompilationRejectedException(diagnostics).Message);
     }
 
-    private sealed class CountedDiagnostics : IReadOnlyList<CompilerDiagnostic>
+    private sealed class CountedDiagnostics : ICompilerDiagnosticSequence
     {
         public int Reads { get; private set; }
-        public int Count => 1_000_000;
-        public CompilerDiagnostic this[int index]
+        public long Count => 1_000_000;
+        public CompilerDiagnostic this[long index]
         {
             get { Reads++; return new("TEST", DiagnosticSeverity.Error, "Repeated diagnostic.", new(Tick: index)); }
         }

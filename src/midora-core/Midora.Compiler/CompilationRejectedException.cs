@@ -5,12 +5,15 @@ namespace Midora.Compiler;
 /// <summary>A bounded message with the complete, potentially virtual diagnostic sequence retained separately.</summary>
 public sealed class CompilationRejectedException : InvalidOperationException
 {
-    public IReadOnlyList<CompilerDiagnostic> Diagnostics { get; }
+    public ICompilerDiagnosticSequence Diagnostics { get; }
 
-    public CompilationRejectedException(IReadOnlyList<CompilerDiagnostic> diagnostics)
+    public CompilationRejectedException(IEnumerable<CompilerDiagnostic> diagnostics)
+        : this(CompilerDiagnosticSequence.Wrap(diagnostics)) { }
+
+    private CompilationRejectedException(ICompilerDiagnosticSequence diagnostics)
         : base(Format(diagnostics)) => Diagnostics = diagnostics;
 
-    private static string Format(IReadOnlyList<CompilerDiagnostic> diagnostics)
+    private static string Format(ICompilerDiagnosticSequence diagnostics)
     {
         ArgumentNullException.ThrowIfNull(diagnostics);
         const int maximumMessageRows = 32;

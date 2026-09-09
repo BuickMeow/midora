@@ -3,6 +3,8 @@
 文档修订日期：2026-08-08
 性质：需求理解、现状审阅和实施建议；不是 SRS 的替代品。
 
+> 2026-09-10 后续工作：顺序仍为 **Logical 编译结果内存优化 → 极端 Tick 防护 → 新一轮需求**。第二项同时纳入已定案的 SMF 导出超长 delta 填充、MTrk 数据区 `0xFFFFFFFF` 字节硬上限/不拆分、导出级错误与汇总提示；Compiler 不增加 SMF delta/字节大小扫描。当前只完成文档，代码待实施。详见 [下一步台账](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md) 和 [SMF 边界设计](Midora-SMF-Export-Timing-Padding-and-Size-Limits-Architecture-Decisions.md)。
+
 > 现状提示（2026-08-08）：本文后续“当前进度/尚未实现”描述保留为历史路线记录，已经过时；不得据此判定源码缺口。当前权威实施状态见 `misc/Midora-Non-UI-Implementation-Tracker.md`，§7～§12 逐节证据见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
 >
 > UI 阶段现状（2026-08-22）：正式 `Midora.Desktop`、共享 `Midora.Desktop.Presentation` 及其测试项目已经建立。主窗口、Project 生命周期、工作区、事务式对象 Properties、独立 Diagnostics、单前台 Task overlay、Preferences、MIDI/Audio 输出工作流和第 18 章主要编辑器已接入正式 Domain/Application/Compiler/consumer 入口；Arrangement、Segment、SubVoice、Logical Parameter 和 Conductor 的大量对象编辑采用专用渲染表面。生产主窗口已删除 Global Inspector、Bottom Panel 与 Details/Tasks；Style Gallery 继续作为同一共享主题的历史视觉样例，不是生产依赖。当前 UI 需求映射与验证证据见 `misc/Midora-WPF-UI-Requirement-Trace.md`，架构决定见 `misc/Midora-WPF-UI-Architecture-Decisions.md`。

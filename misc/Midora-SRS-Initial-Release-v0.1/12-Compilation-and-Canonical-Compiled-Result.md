@@ -1587,7 +1587,7 @@ Mute / Solo 过滤
 ### 12.23.2 MIDI 导出器
 MIDI 导出器可以在 canonical compiled result 基础上做：
 ```text
-拆分 MIDI Track
+按冻结 SMF Track Projection 组织 MIDI Track
 写 Port meta event
 Track 命名
 文件命名
@@ -1595,6 +1595,8 @@ Track 命名
 导出格式整理
 ```
 但不得改变编译语义，也不得回读 Project 重新推断 Pure MIDI Track 拓扑、Root 归属、Track EOT 或同 tick 顺序。
+
+SMF delta-time 填充与文件编码限制属于导出器，见 §14.12.2、§14.12.8～9。Compiler 不为超长 delta 扫描相邻事件、不计算 MTrk 字节长度、不产生占位 Meta，也不因 MTrk 超过 `0xFFFFFFFF` 字节而拒绝编译；Full/Incremental 的音乐结果、诊断和 fingerprint 不受影响。MTrk 不因超限拆分，只让该次 MIDI 导出失败。TPQ、Tempo、事件值和安全 Tick 算术等既有语义检查不取消。
 ### 12.23.3 音频渲染器
 音频渲染应使用与播放一致的 compiled result 语义。
 播放与音频渲染的差异只应体现在：

@@ -2,6 +2,8 @@
 
 日期：2026-09-09。性质：非规范性状态台账和工作顺序记录；不改变音乐语义、文件格式或产品版本。
 
+2026-09-10 补充：新增 §4.1，记录用户已批准、尚未实施的 SMF 导出编码边界；本次同时获准更新 SRS，导出线格式兼容策略改变，但 Project/canonical 音乐语义及产品/持久化版本不变。其余验收与 §5 验证数字仍是 2026-09-09 的历史记录。
+
 ## 1. 本轮授权与基线
 
 - 用户要求本轮先完成文档收尾；不实施产品代码，不提交、推送或本地发布，不使用 computer-use。
@@ -75,7 +77,17 @@
 
 源码依据：[网格算术](../src/midora-core/Midora.Domain/ProjectTimelineGrid.cs)、[TimelineSurface](../src/midora-desktop/Midora.Desktop.Presentation/Controls/TimelineSurface.cs)、[应用异常入口](../src/midora-desktop/Midora.Desktop/App.xaml.cs)。历史边界记录见 [阶段 8 来源模式与导航](Midora-Stage8-Onion-Source-Modes-and-Navigation-2026-09-08.md)。
 
-## 5. 本轮文档验证
+### 4.1 后续定案：SMF delta 与文件大小边界（2026-09-10）
+
+用户确认并授权更新 SRS；本次仍只做文档，不启动产品代码实施。完整需求、ADR、当前源码缺口及验证矩阵见 [SMF 导出边界设计](Midora-SMF-Export-Timing-Padding-and-Size-Limits-Architecture-Decisions.md)。
+
+- 超过 `0x0FFFFFFF` 的事件间隔仅在导出编码时以空 Text Meta `FF 01 00` 分段，保持原事件 Tick/顺序/EOT；覆盖所有 Track 和最后事件到 EOT 的尾段。Compiler 不增加间隔扫描，canonical/播放/音频不包含占位。
+- 单个 MTrk 数据区硬上限为 `0xFFFFFFFF = 4,294,967,295` 字节，不含 8 字节头，不是整个文件的大小上限。用户明确决定不做 MTrk 拆分；超限只使本次 MIDI 导出原子失败，编译不感知。
+- 其他 MIDI 硬限制保持拒绝；提前安全计算占位成本，避免巨大 Tick 间隔触发无界占位循环/写盘。所有导出路径须支持取消、有界编码、准确错误归属；成功填充只给导出级 Info/README 汇总。
+- 此项纳入既定的第二步“极端 Tick 防护”，**不改变 Logical 编译结果内存优化先行的顺序**。UI 网格溢出与 SMF 编码分别验证；不得为规避二者给 Project 添加 VLQ 级绝对 Tick 上限，也不得用全局 catch 或静默截断替代。
+- 新测试必须替换旧“超长 delta 无占位失败”预期，并独立保留 payload/MTrk 超限、分页延迟失败、取消与多文件原子性测试；未实施前旧测试只能证明旧代码行为。
+
+## 5. 本轮文档验证（2026-09-09 历史记录）
 
 - 同步 17 份既有 Markdown，新增本台账；没有修改 `src`、`eng`、脚本、schema/descriptor、版本源或发布产物。SRS 仅将 INV-091 的过期 presentation writer 版本同步到既有 INV-116，不新增语义。
 - `git diff --check` 通过；新增/修改文字中的 37 个本地文件链接均可解析，0 个缺失目标。历史测试结果保留，不重新计数或改写失败记录。

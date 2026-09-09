@@ -584,6 +584,8 @@ Pure MIDI MTrk 顺序固定为 global Arrangement order 过滤 Pure MIDI Track �
 
 Conductor、被选择 Pure MIDI Track 与实际 Logical Unit MTrk 的合计数量必须可由 SMF MThd 的 unsigned 16-bit `ntrks` 表示；超出时导出在创建 staging 文件前整体失败，不得合并用户 Track 规避上限。
 
+每个 MTrk 数据区固定受 `0xFFFFFFFF = 4,294,967,295` 字节上限约束，不包含 8 字节 chunk 头。不得为了容纳更多字节拆分 Pure MIDI Track、Logical Unit Track 或 Conductor；超限仅令本次导出原子失败，Compiler 不统计该编码大小或拒绝编译。这不是整个 SMF 文件大小上限，完整边界见 §14.12.8～9。
+
 ### 23.12.3 Track Name、Port 与 Root metadata
 
 Pure MIDI MTrk 的 Track Name 必须是冻结 canonical descriptor 中的用户 Track 名称，不得改成 `Port P / Channel C`。每个 MTrk 写对应 Root 的 MIDI Port Meta，Channel status 使用该 Root 的 Channel。
@@ -621,6 +623,8 @@ Percussion Root 的 Channel 10 MTrk 不得写 Normal Part 初始化。初始化�
 ### 23.12.6 Direct events 与 opaque events
 
 Pure MIDI MTrk 原样编码 canonical 中的完整 Channel Voice Event，包括 CC91、CC93、Channel Pressure、Poly Pressure 和 Channel Mode。合法 opaque SysEx/Meta 按冻结 payload、tick 和 Track 内顺序重新导出；导出器不得把 opaque payload 解释为 Midora 业务对象。
+
+仅为编码超长 delta，允许按 §14.12.2 插入固定空 Text Meta；不得改变上述原事件或将占位回写源 Project/canonical。重新导入时按合法 opaque Meta 保留，不能仅凭 `FF 01 00` 就删除用户原有空文本，不保证字节级 round-trip。单条 payload 长度超限仍拒绝，不能使用 delta 填充规则拆开 payload。
 
 ### 23.12.7 跨 MTrk 同 tick 兼容 Warning
 

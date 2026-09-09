@@ -39,7 +39,7 @@
 | Q-NUI-018 | 采用推荐方案；Recent Projects 使用独立本机 MRU 文件与现有更新/去重策略。 |
 | Q-NUI-019 | 采用推荐方案：Time Signature 变化 tick 立即开启新 Bar，允许前一小节缩短；另新增规则：每个发生在小节中途、因而截断旧小节的 Time Signature 变化都产生一条 Warning。 |
 | Q-NUI-020 | 采用推荐方案；初版 Global Event Scope Defaults 保持不可编辑的版本化空 marker，作用域继续由各正式事件语义固定。 |
-| Q-NUI-021 | 采用推荐方案；超过 SMF 四字节 VLQ 上限的 delta 继续结构化失败，不插入非 canonical Meta spacer。 |
+| Q-NUI-021 | 2026-08-07 的严格失败决定已于 2026-09-10 被取代：超长 delta 仅在导出时插入空 Text Meta；MTrk 不拆分，数据区超 0xFFFFFFFF 字节只令导出失败，编译不感知。规范已同步，代码待实施；见 ADR-SMF-001～002。 |
 | Q-NUI-022 | 采用推荐方案；held Preview 使用因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则。2026-08-07 进一步确认 Segment Editor 左侧 Pitch Ruler 琴键与单个 Logical Note 放置预览均复用该逻辑，并属于初版范围。非 UI 全链已经实施并通过进程内、托管 Worker 和 Native AOT Worker 自动回归。 |
 | Q-NUI-023 | 选择备选 A：直接把开发期 v1 的领域、创建与 schema 合法范围收窄为 `1..32767`，拒绝高 TPQ v1。当前处于开发期，没有既有兼容承诺，不创建新版本或迁移。 |
 | Q-NUI-024 | Midora 稳定 ID 的核心值改为单个 C# `long`；不再以 `Guid`、`UInt128` 或两个 `ulong` 承载。Project 范围内的持久化单调递增 ID 足够满足身份需求。 |
@@ -740,19 +740,16 @@ Q-NUI-026～027 是本轮新增问题；其后 Q-NUI-002～025 的状态、产�
 ### Q-NUI-021：超过 SMF 四字节 VLQ 上限的 MIDI Track 长间隔
 
 - 类型：大决定
-- 状态：待确认；只暂停“超长 delta 继续导出”的兼容分支
+- 状态：已定案；旧严格拒绝实现仍在，新导出填充规则待实施，不再等待用户选择
 - 发现日期：2026-08-06
-- SRS 依据：第 14.12.2、14.18.5、14.19 节；导出器必须把每条 Track 的绝对 tick 转为非负 delta time，编码后自校验，编码失败不得发布最终文件并进入导出编码诊断。
-- 已确认事实：SMF 的四字节 variable-length quantity 最大值为 `0x0FFFFFFF`（268,435,455）；当前 `StandardMidiFile` 对任意单个事件间隔或最后事件到 EOT 的 delta 超过该值时抛出 `MidoraMidiException`。`CanonicalMidiFileExporter` 已把它转换为结构化 Encoding 诊断，Artifact/Task 在输出事务开始前失败，不会留下 partial 或最终文件。SRS 没有规定如何表示超过该上限的长间隔，也没有把 Project tick/endTick 限制到该值。
-- 不确定点：初版应把无法单个编码的长 delta 作为导出编码 Error，还是在每个超长空白区间中插入一个或多个零副作用 Meta Event，把间隔拆成多个合法 delta 后继续导出；若插入，占位 Meta 的类型、数据、tick、Track Name/Conductor 与事件 Track 的统一规则也未定义。
-- 影响范围：可导出 Project 的时间范围、生成 SMF 的事件集合与字节兼容、第三方播放器行为、golden bytes、自校验，以及“导出器不得在 canonical 之外追加内容”的边界解释。该选择不改变 canonical compiled result、播放或音频渲染。
-- 推荐方案：初版保持当前严格失败；只要任一 Track 的相邻输出事件或 EOT delta 超过 `0x0FFFFFFF`，整个对应 MIDI artifact 以结构化 Encoding Error 失败，不插入未由 SRS 规定的占位事件。后续若需要超长工程兼容，再通过明确规格修订规定一种固定、可识别且无通道副作用的 Meta spacer，并锁定 golden bytes。
-- 推荐依据与限制：当前行为完全保留 canonical 事件集合，失败原子且诊断路径已经存在；不会假定 sequencer 对任意占位 Meta 的兼容行为。限制是 TPQ=960 时单个无事件间隔约 194 天（120 BPM）以上的极端工程不能导出，尽管编译、播放时间模型和音频长度预检可用更大的 tick。
-- 备选方案及差异：A. 使用固定 Sequencer-Specific Meta spacer 拆分；可覆盖超长间隔，但会新增非 canonical 厂商数据并永久锁定字节契约。B. 使用空 Text Meta spacer；实现简单但第三方软件可能展示大量空文本，且仍是额外导出内容。C. 使用多个 Tempo/Port/Track Name Meta 重申现状；会污染正式语义或违反现有 Meta 放置规则，不推荐。D. 把 Project/endTick 全局限制到 VLQ 上限；会无必要地限制播放、音频渲染和 canonical 模型，不推荐。
-- 当前实施状态：现有边界拒绝、Encoding 诊断、无最终输出和 `StandardMidiFile` 最大/越界单元测试保留；未实现 Meta spacer，也未扩大 Project 约束。
-- 需要产品所有者回答：是否采用推荐的“超长 delta 严格导出失败”方案？若要求继续导出，请从 A/B 中选择占位类型，或提供固定的 Meta bytes 与可见性要求。
-- 产品回答：待填写。
-- 最终处理与提交：待回答后补 exporter/task 级边界测试，并按决定保持失败或实现确定性拆分。
+- SRS 依据：§14.12.2、§14.12.8～9、§14.15.7、§14.19.8、§12.23.2、§23.12 和 INV-118；详细决定与验证计划见 [ADR-SMF-001～002](Midora-SMF-Export-Timing-Padding-and-Size-Limits-Architecture-Decisions.md)。
+- 当前源码事实：四字节 VLQ 上限为 `0x0FFFFFFF`（268,435,455）。`StandardMidiFile` 仍直接拒绝超长事件/EOT delta；MTrk 大小目前写完整条 Track 后才检查。延迟分页编码的异常归属仍需与立即编码路径一起修正，不能承诺所有失败都已在写入事务之前被预检。
+- 历史决定：2026-08-07 采用严格失败、不插占位，已有相应 exporter/task 测试。历史测试结果保留，但已不代表新规则验收通过。
+- 产品回答：2026-09-10 改为固定零长度 Text Meta `FF 01 00` 填充每条 Track 的首段、事件间段和 EOT 尾段；不修改原事件 Tick/顺序，不改变编译、canonical、播放或音频渲染，也不增加编译 delta 扫描。
+- 大小决定：用户明确撤回 MTrk 拆分方向。单个数据区最多 `0xFFFFFFFF` 字节（不含 8 字节头），超过时只拒绝本次 MIDI 导出，不拆 Track/文件、不截断、不扩大到整个文件限制，编译不感知。TPQ、Tempo、事件值、单条 payload、ntrks 等其余硬限制仍拒绝。
+- 资源与提示：先用安全整数算术判断占位成本与 Track 字节预算，再有界流式写入并支持取消；成功只给导出级汇总 Info/README，不逐条输出占位。空 Text 重新导入按既有 opaque 规则保留，不擅自删除来源空文本。
+- 需要产品所有者回答：无；不重新开放已决定的拆分或占位类型选项。
+- 最终处理：本轮仅更新文档/SRS，未修改源码或测试、未提交/推送；产品实现排入 Logical 编译结果内存优化之后的极端 Tick 防护工作。
 
 ### Q-NUI-022：虚拟键盘按住预览的未知 Gate Length 与实时 canonical 语义
 

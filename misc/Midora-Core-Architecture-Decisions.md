@@ -189,7 +189,9 @@ Requirement trace：
 
 `metadata.json` v1 同时冻结项目名称、用户版本、作者/团队、原作、版权、备注、UTC 创建 / 修改时间和总耗时字段。会话内部保留 100 ns `TimeSpan` tick 余数，生成持久快照时向下取完整毫秒；重复取快照不会重复累计同一区间，系统墙钟校时不改变累计值。
 
-## 12. ADR-CORE-010（已接受，21A/22A；Pure MIDI 拓扑部分由 ADR-PMIDI-007 取代）：SMF Type 1 兼容编码档
+## 12. ADR-CORE-010（已接受，21A/22A；Pure MIDI 拓扑与超长 delta 部分由后续决定取代）：SMF Type 1 兼容编码档
+
+2026-09-10 修订：Pure MIDI 拓扑继续以 ADR-PMIDI-007 及后续 global order 决定为准；超长 delta 改由 [ADR-SMF-001～002](Midora-SMF-Export-Timing-Padding-and-Size-Limits-Architecture-Decisions.md) 规定：仅在导出时用空 Text Meta `FF 01 00` 分段，MTrk 数据区保留 `0xFFFFFFFF` 字节上限且绝不按大小拆分，超限只拒绝本次导出。Compiler 不新增间隔扫描或编码字节检查。新规则已进入 SRS/INV-118，产品代码与新测试待实施；下文历史垂直切片的完成范围不代表此项已实现。
 
 决定：初版 `.mid` 编码固定使用 SMF Type 1 和 Project TPQ。Tempo 以十进制 `60,000,000 / BPM` 计算，并只对最终 microseconds-per-quarter-note 执行一次 `AwayFromZero`；舍入结果超出 `1..0xFFFFFF` 时整体失败。Time Signature 固定写 `cc=24`、`bb=8`。同 tick 的 Bank/Program 字节顺序固定为 CC0、CC32、Program Change。所有文本 Meta 使用严格 UTF-8；事件 Track 只写 Track Name 与 MIDI Port Meta，不写 Device Name / Program Name。每个 Channel Event 都显式写 status byte，不使用 Running Status。
 
@@ -198,7 +200,7 @@ Requirement trace：
 - 输入：用途为 `MidiExport`、成功、完整、可消费且已冻结 SMF Track Projection 的 `CanonicalCompiledResult`。编码器不读取 Project、播放状态、SoundFont、设备或 Mute/Solo。
 - 正式输出：范围起点重基为 MIDI tick 0 的确定性 SMF Type 1 字节；Track 0 为 Conductor，随后为 Pure MIDI ExportTrack MTrks，再为 Logical Unit MTrks。Logical Unit 仍一 Unit 一 Track、按 Port→Channel；Pure MIDI 一 Track 一 MTrk、按 Root/Track 顺序并使用自身 EOT。
 - 边界：Channel Event 逐条保持 canonical 子序列和真实 NoteOff velocity 0；RPN/NRPN/Pitch Bend Range 使用 canonical 已展开的标准 CC；导出器不得折叠状态，不得在 canonical 外追加 All Notes Off、All Sound Off、Reset All Controllers 或其他 Channel 清理。Track Name 的最终可见字符串由上层工作流显式提供，编码器不隐藏选择命名模板。
-- 失败条件：非 MidiExport 上下文、不可消费/partial 结果、非法 TPQ、超出四字节 VLQ 的事件间隔、24-bit Tempo 越界、非法 Time/Key Signature、未知 Channel Event、Event Instrument 路径非法 CC91/93、非法 Note 编码、路由/来源不一致、Track descriptor 缺失或自校验失败均整体失败且返回零 partial 字节。合法 Pure MIDI CC91/93 和 NoteOff velocity `0..127` 必须可编码。
+- 失败条件：非 MidiExport 上下文、不可消费/partial 结果、非法 TPQ、24-bit Tempo 越界、非法 Time/Key Signature、未知 Channel Event、Event Instrument 路径非法 CC91/93、非法 Note 编码、路由/来源不一致、Track descriptor 缺失或自校验失败均整体失败且不发布 partial 产物。单条 payload 的 VLQ、ntrks 与 MTrk 字节超限仍拒绝；原“超出四字节 VLQ 的事件间隔一律失败”已被 ADR-SMF-001 的导出专属填充取代。合法 Pure MIDI CC91/93 和 NoteOff velocity `0..127` 必须可编码。
 - 诊断：当前垂直切片区分 canonical consistency 与 encoding 两类结构化诊断；完整工作流实现时再接入统一任务/文件写入诊断，不把异常文本当持久协议。
 - 持久化归属：SMF 是导出产物，不进入 `.midora`；Track 可见名称布局和输出路径是本次工作流快照。受文件命名决定影响的 Export Settings schema 仍未发布。
 - 运行时归属：SMF 组织、字节编码和读取后自校验属于 MIDI 导出 Preparing/Encoding；不进入 compiler canonical 语义，也不进入音频 Worker。

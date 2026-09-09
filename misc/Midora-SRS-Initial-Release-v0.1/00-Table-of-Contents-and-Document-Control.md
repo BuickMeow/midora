@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-09-09**
+> 最近修订日期：**2026-09-10**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,13 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-09-10 修订摘要
+
+- 用户定案：超出 `0x0FFFFFFF` 的 delta-time 只在 SMF 导出时以零长度 Text Meta `FF 01 00` 分段；原事件位置/顺序/EOT 不变，编译与增量编译不新增间隔检查，Project/canonical/音频不包含这些占位。
+- 每个 MTrk 数据区最多 `0xFFFFFFFF = 4,294,967,295` 字节（4 GiB − 1 byte，不含 8 字节 chunk 头），明确不拆分；超限只使本次 MIDI 导出原子失败，编译不感知，也不把该限制误作整个 `.mid` 的大小上限。
+- 保持 TPQ、Tempo、事件值、已解释 Meta、单条 payload 长度和 ntrks 等硬限制；新增填充字节预检、安全算术、有界写入/取消和导出级汇总 Info/README 要求。同步第 4、12、14、22、23 章与 INV-118。
+- 本次为文档定案，代码尚未实施；取代 Q-NUI-021 / ADR-CORE-010 中“超长 delta 一律失败、不插占位”的旧决定。详细状态与后续验证见 [SMF 导出边界设计记录](../Midora-SMF-Export-Timing-Padding-and-Size-Limits-Architecture-Decisions.md)。不修改软件版本、Project Format 或 presentation schema。
 
 ## 2026-09-09 修订摘要
 

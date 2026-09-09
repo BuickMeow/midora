@@ -2,7 +2,7 @@
 
 日期：2026-09-08。
 
-状态：**阶段 1、2 工程门及用户验收 A 已通过；阶段 3 已提交、推送为 `4a4beb6`。阶段 4 工程门及用户 B01～B09 整体验收通过。阶段 4/5 已按用户另行指令提交、推送为 `e12b6c2`。阶段 6 四项内存清理完成；原批次 3,140 通过 / 2 失败暴露的 Pure MIDI 编译阻塞，已另经用户授权独立修复。最新 3157 / 3157 公共回归、三轮真实 MIDI 对照及当前 WPF 大会话通过。2026-09-09 用户确认 MEM-C01～C07 全部验收通过，本轮六阶段优化及独立编译修复完成验收。Int64 诊断/分页继续按明确决定暂缓。本次仅授权提交、推送，不授权本地发布。**
+状态：**六阶段优化及独立 Pure MIDI 编译正确性修复已完成并获用户验收；MEM-A/B/C 结论保留，原两项编译失败已经修复。后续 Int64 完整诊断、条件分页、README 上限和诊断滚轮修复也已实施，提交基线为 `560082e9`。2026-09-09 用户确认目前人工验收大体全部通过；细致体验与完整作品查漏留到后续真实编曲。本轮文档收尾不提交、推送或发布。**
 
 本文最初作为纯文档计划建立，未授权自动实施。用户随后分别另行启动阶段 1～6，结果见 [阶段 1 报告](Midora-Memory-Stage1-Validation-Report-2026-09-08.md)、[阶段 2 报告](Midora-Memory-Stage2-Validation-Report-2026-09-08.md)、[阶段 3 报告](Midora-Memory-Stage3-Validation-Report-2026-09-08.md)、[阶段 4 报告](Midora-Memory-Stage4-Validation-Report-2026-09-09.md)、[阶段 5 报告](Midora-Memory-Stage5-Validation-Report-2026-09-09.md)、[阶段 6 报告](Midora-Memory-Stage6-Validation-Report-2026-09-09.md)。后续仍以用户的阶段启动指令为准；本文不是自动开始全部阶段、使用 computer-use 或执行 Git / `dist` 发布的授权。
 
@@ -517,7 +517,12 @@ correctness assertions / cancellation outcome / failures / evidence path
 | 阶段 6：全链路 | 四项清理和工程验证完成，编译阻塞已解除 | [阶段 6 历史报告](Midora-Memory-Stage6-Validation-Report-2026-09-09.md) 与下行独立修复共同构成证据；原 3,140 / 2 失败不删除，最新公共回归无失败 |
 | 独立 Pure MIDI 正确性修复 | 实现及工程门通过 | [修复报告](Midora-Pure-MIDI-Range-Correctness-Repair-Validation-2026-09-09.md)：3157 / 3157；9KX2 三轮对照；当前 WPF 完整链峰 Private 2.976 GiB、三次关闭计账/跟踪弱引用归零；额外时间成本明确记录 |
 | 验收 C | 2026-09-09 用户确认 MEM-C01～C07 全部通过 | 依据用户“MEM-C全部验收通过”；与自动 oracle 分别记账，不扩展为未覆盖边界或正式发布许可 |
+| 后续诊断及滚轮收尾 | 已实施并提交、推送；本次用户确认大体验收通过 | [Int64/README 报告](Midora-Int64-Diagnostics-and-Bounded-Readme-Verification.md)：3182 个去重通过用例；[滚轮报告](Midora-Diagnostics-Wheel-Requirement-Trace.md)：Desktop 434/434；取代原 Int32 暂缓状态，不重复累计测试 |
 
 用户已确认验收 A 粗略通过，精简操作卡保留在阶段 2 报告 §5；All Tracks 焦点补修也已另行验收通过。阶段 2 与补修成果已按指令提交、推送；阶段 3 随后完成并提交为 `4a4beb63a11514e1f9042dc0dd739e143d120559`。2026-09-09 阶段 4 工程门及 B01～B09 用户验收完成；用户另行报告 Logical 大粘贴后逐修订增长，随后明确授权阶段 5。阶段 4/5 随后按用户指令提交、推送到 `e12b6c254a02624bb14b999154ebac80f5492bd9`，阶段 6 已另行授权启动。2026-09-09 用户确认 MEM-C 全部验收通过，并授权提交、推送阶段 6 与独立编译修复；未授权生成 `dist`。阶段 1 成果已在阶段 2 开始前按用户另行指令提交到 `ff5c19c79e0f81c5be4aea83ab74a0ffa856d459`。不要求用户重做全部 A 项，细致体验检查按用户安排留到发布前真实编曲阶段。
+
+2026-09-09 文档收尾：用户明确暂缓 F4 / Shift+F4，整体人工验收大体通过，完整作品的精细检查后置。成功 Logical canonical 尚未深度分页的边界不再混列为本六阶段未完成项，而是作为下一批大型功能之前的独立优先工作；本轮只记录顺序，不启动代码。具体范围、验证约束与极端 Tick 风险见 [收尾与下一步](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md)。
+
+同日用户进一步确定：**Logical 编译结果内存优化 → 极端 Tick 溢出防护（包含高 TPQN 组合边界）→ 新一轮需求**。极端 Tick 防护不再待定排期，也不并入已经验收完成的本六阶段；本次仅更新计划。
 
 本文建立后若调整阶段范围或人工门，应记录日期、原因和转移的 M 编号；不得在过程中悄悄漏掉问题，或把“工程完成”自动改为“用户验收通过”。

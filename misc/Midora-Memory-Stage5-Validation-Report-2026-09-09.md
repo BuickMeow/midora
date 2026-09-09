@@ -4,6 +4,8 @@
 
 状态：阶段 5 本轮实现与专项工程验证完成，M12/M13 的保留边界见 §7；不据此宣称任意展开规模、完整 WPF 长会话或验收 C 已完成。不自动进入阶段 6，不提交、推送或生成 `dist`。
 
+2026-09-09 后续收尾：上段及正文保留阶段 5 当时的授权和证据。后续阶段 6、独立编译修复及 MEM-C 已通过；§7 的 Int32 诊断边界已由[独立 Int64 实施](Midora-Int64-Diagnostics-and-Bounded-Readme-Verification.md)解决。成功 Logical canonical 尚未深度分页的限制仍然存在，现列为[下一项优先工作](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md)，不是要求重开本阶段。
+
 ## 1. 需求与根因
 
 依据：[执行计划 §10](Midora-Memory-Optimization-Execution-and-Acceptance-Plan-2026-09-08.md)、[本阶段设计与需求追踪](Midora-Memory-Stage5-Requirement-Trace-and-Design.md)。未改 Project Format 3、SRS 音乐语义、Mapping ABI 或有效历史范围。

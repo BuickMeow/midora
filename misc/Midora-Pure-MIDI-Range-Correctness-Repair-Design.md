@@ -4,7 +4,7 @@
 
 ## 授权与需求追踪
 
-用户批准将阶段 6 暴露的编译缺陷作为一个独立阻塞修复阶段实施，一次交付验收。保留已有阶段 6 改动；不提交、推送或发布；不使用 computer-use。超过 Int32 的诊断列表仍按用户决定暂缓。
+用户批准将阶段 6 暴露的编译缺陷作为一个独立阻塞修复阶段实施，一次交付验收。实施时保留已有阶段 6 改动，不提交、推送或发布，不使用 computer-use；后续已验收并提交、推送。Int64 当时暂缓，当前已由[后续独立实施](Midora-Int64-Diagnostics-and-Bounded-Readme-Design.md)取代，不再是本修复遗留的阻塞项。
 
 - 输入：冻结 Project、正式 Track 顺序/身份、路由、content window 和 CompileContext；分页布局不是音乐输入。
 - 输出：完整 canonical 事件、起点状态、终点清理、Source/SMF 归属、排序及准确计数；Full/Incremental 与 Save/Open 等价。

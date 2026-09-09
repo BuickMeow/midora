@@ -1,7 +1,7 @@
 # Midora 大型编辑与可视化扩展实施方案（已定案记录）
 
 - 日期：2026-08-31
-- 状态：**非规范性决策记录与实施计划；阶段 1～7 及后续 Loop 修复已验收并提交；2026-09-07 阶段 8 实施完成，8A/8B 自动验证通过，等待一次合并人工验收。本轮未提交、推送或本地发布。**
+- 状态：**非规范性决策记录与实施计划；阶段 1～8 及后续 Loop、Onion 菜单/模式持久化/导航修订均已完成并获用户验收，相关代码已提交、推送。2026-09-09 用户再次确认目前人工验收大体全部通过；精细体验、完整作品 Bug 修复和查漏补缺留到后续真实编曲，不等同正式发布验收。**
 - 适用仓库基线：`b8ed363`
 - 目的：把本轮需求整理为可审查、可逐项定案、可分阶段实施的长期存档。
 
@@ -9,7 +9,7 @@
 
 阶段 7 交付记录：[需求及实现追踪](Midora-Stage7-Timeline-Object-Lists-Requirement-Trace.md)、[验证报告](Midora-Stage7-Timeline-Object-Lists-Validation-Report.md)、[14 项人工验收清单](Midora-Stage7-Timeline-Object-Lists-Acceptance-Checklist.md)。
 
-阶段 8 交付记录：[需求及实现决策](Midora-Stage-8-Onion-Requirement-Trace-and-Decisions.md)、[使用说明](Midora-Stage8-Onion-User-Guide.md)、[验证与性能报告](Midora-Stage8-Onion-Validation-Report.md)、[25 项合并验收清单](Midora-Stage8-Acceptance-Checklist.md)。
+阶段 8 交付记录：[需求及实现决策](Midora-Stage-8-Onion-Requirement-Trace-and-Decisions.md)、[使用说明](Midora-Stage8-Onion-User-Guide.md)、[验证与性能报告](Midora-Stage8-Onion-Validation-Report.md)、[合并验收清单](Midora-Stage8-Acceptance-Checklist.md)、[最终菜单/模式/导航修订](Midora-Stage8-Onion-Source-Modes-and-Navigation-2026-09-08.md)。当前收尾与下一项工作见 [2026-09-09 状态台账](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md)。
 
 > 本文不是 SRS、ADR 或 Project Format 规范，不修改任何既有需求。凡是与现行 SRS 冲突、会改变可听语义、持久化格式、公共交互或性能基础设施的内容，必须先由产品所有者完成本文末尾的决策，再正式更新 SRS、跨系统不变量和 ADR，之后才能进入代码实施。
 
@@ -966,7 +966,7 @@ create Definition
 
 2026-09-08 后续确认：Settings 与手选来源弹窗分离，Previous/Next 为仅显示邻居的命令；手选来源独立保留，快捷模式也持久化。Project Format 3 不变，独立 presentation schema 2 读旧 v1 为 custom。All Tracks 标尺/内容单击调用既有 Seek。详细边界和验证见 `Midora-Stage8-Onion-Source-Modes-and-Navigation-2026-09-08.md`。
 
-2026-09-07 实施记录：Raw/Compiled、presentation 生命周期和独立有界缓存已落地；8A、8B 自动门通过。具体证据及资源限制见阶段 8 报告，人工验收尚未进行，不等同于正式发布授权。
+2026-09-07 实施时，Raw/Compiled、presentation 生命周期和独立有界缓存已落地，8A、8B 自动门通过；当时尚待人工验收。阶段 8 及上述后续细节现已获用户验收并提交、推送。历史测量保留，当前 Compiled 的 MIDI 源音符混合语义及模式持久化以 2026-09-08 修订为准；总体通过不等同于逐项全规模验收或正式发布授权。
 
 覆盖 `WP-10` 的 Onion slice 与 `WP-12`。本阶段设置两个内部自动门：先完成并冻结 Onion 专项测试，再运行发布级全量回归；产品所有者只需做一次合并后的人工验收。主要交付：
 
@@ -1888,4 +1888,4 @@ Save 开始时必须同时冻结 Project source snapshot 与 presentation snapsh
 
 两轮讨论及后续补充已经定案本文列出的全部产品语义，包括 Portable Program-Root Storage、Catalog、快捷 Mapping、Conductor/事件列表、编辑工具、跨类型 Segment、Track Color、Onion、Presentation 保存、选择浮动工具框，以及旧格式 Project 的原路径安全升级保存。
 
-下一步若获得实施授权，应先把本文转为正式 SRS/跨系统不变量/ADR/Format 3 变更，再按第 6 章工作包执行。不得在实施阶段重新把已定案选择开放为隐藏配置或自行更改功能行为。
+上述规格/不变量/ADR/Format 3 与八阶段工作包已经落地，不再作为待启动任务。后续六阶段内存优化及独立编译修复也已完成；用户于 2026-09-09 确认下一步顺序为 **成功 Logical 编译结果内存优化 → 极端 Tick 溢出防护（包含高 TPQN 组合边界）→ 新一轮需求**，见 [收尾与下一步](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md)。不得因开始新的需求批次而重新开放既有已定案语义或擅自改变功能行为。

@@ -1,5 +1,7 @@
 # Stage 8：洋葱皮显示模式、独立设置与 All Tracks 导航
 
+2026-09-09 状态收尾：本修订已完成并获用户验收，代码已提交、推送；目前人工大体验收通过，精细检查留到真实完整编曲。下文保留实施时的验证证据和极端 Tick 边界，不表示仍待实施或待整体验收。当前下一步见 [收尾台账](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md)。
+
 ## 本轮需求与决策
 
 - 用户确认 Previous / Next 模式也随项目保存、重开恢复。为每个 Track / SubVoice preset 分别保存 `sourceMode = custom | previous | next` 和原有手选来源列表；快捷命令不得改写手选列表。
@@ -48,4 +50,4 @@
 
 测试边界：新增 int64 上界测试只验证导航坐标换算，不扩展既有网格渲染的数值支持范围。在直接要求旧网格渲染器绘制接近 `long.MaxValue` 的 Tick 时，发现既有 `ProjectTimelineGrid.GetNextGridTick` checked overflow；此极端范围的网格行为不在本轮重构范围，未修改。普通范围显示层全套回归通过。
 
-人工复验集中见 `Midora-Stage8-Acceptance-Checklist.md` 前新增项。未提交、推送或生成 dist。
+人工回归模板集中见 `Midora-Stage8-Acceptance-Checklist.md`。实施当时未提交、推送或生成 dist；后续已提交、推送并验收，见文首。极端 Tick 边界仍未修复，本次源码风险分析见 [收尾台账 §4](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md#4-极端-tick-网格溢出风险说明)。

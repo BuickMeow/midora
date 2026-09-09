@@ -2,6 +2,8 @@
 
 日期：2026-09-08。配套 [六阶段实施 / 验收计划](Midora-Memory-Optimization-Execution-and-Acceptance-Plan-2026-09-08.md)。本文件是工程执行索引，不修改 SRS，不表示列出的每种大样本或 UI 场景本轮均已测量。
 
+2026-09-09 状态收尾：六阶段与独立编译修复已经验收；后续 Int64 诊断、README 上限及滚轮修复已完成并纳入用户大体验收通过。各阶段表格保留当时测试入口和口径，当前替代项见 §11；下一步见 [独立 Logical 编译内存工作](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md#3-下一步logical-编译结果内存优化)。
+
 ## 1. 使用方式
 
 每一阶段复用本表，仅重跑受影响链路及其公共回归门；阶段 6 再串联全部操作。结果记录在各阶段报告，并关联 TRX / 探针原始输出。不得把某个通用测试套件通过写成该操作所有对象类型、规模、入口和 UI 效果已经验收。
@@ -177,5 +179,12 @@ M12 的发现缓存有固定预算，但正式 Logical canonical 和有效历史
 - `eng/MemoryStage6WpfProbe` 使用真实模板/Surface/离屏 WPF 与 Desktop 后台会话；不调用 Show、不执行 computer-use，不能代替显示器输出、实际输入时序和设备听感验收。
 - `eng/MemoryStage6Probe` 使用退出调用栈后的 WeakReference 与 VirtualQuery 区域计量核对编译持有链；受控 GC 只发生在诊断工具，产品正常关闭不增加强制 GC。
 - 有 env 启动门的 Fact 在缺少样本时直接 return，其普通 TRX Passed **不计为真实大样本通过**。本轮大样本证据必须有显式路径、实际数量、guard 与阶段记录。
-- 用户决定暂缓 Int64 诊断计数/分页；完整诊断不截断，当前 Int32 边界保持已知限制，不写成修复完成。
-- 连续消费测试额外确认 [Pure MIDI 分页范围编译缺陷](Midora-Memory-Stage6-Pure-MIDI-Range-Blocker-2026-09-09.md)：提前终点缺 NoteOff/Reset、计数不一致，以及 Save/Open 后部分 canonical metadata 不等价。用户随后授权独立修复；两项原 oracle 未放松且现已通过。最新 3157 / 3157 公共回归、9KX2 三轮前后实测及当前 WPF 大会话结果见 [修复报告](Midora-Pure-MIDI-Range-Correctness-Repair-Validation-2026-09-09.md)，工程阻塞已解除。2026-09-09 用户确认人工 MEM-C01～C07 全部验收通过；不得将 Int64 的明确延期写成已完成。
+- 阶段 6 当时按用户决定暂缓 Int64；该历史决定已被后续独立实施取代，当前契约与验证见 §11。不得把当时 Int32 限制继续写成当前缺陷。
+- 连续消费测试额外确认 [Pure MIDI 分页范围编译缺陷](Midora-Memory-Stage6-Pure-MIDI-Range-Blocker-2026-09-09.md)：提前终点缺 NoteOff/Reset、计数不一致，以及 Save/Open 后部分 canonical metadata 不等价。用户随后授权独立修复；两项原 oracle 未放松且现已通过。3157 / 3157 公共回归、9KX2 三轮前后实测及当前 WPF 大会话结果见 [修复报告](Midora-Pure-MIDI-Range-Correctness-Repair-Validation-2026-09-09.md)，工程阻塞已解除。2026-09-09 用户确认人工 MEM-C01～C07 全部验收通过。
+
+## 11. 后续诊断与文档收尾
+
+- `ICompilerDiagnosticSequence` 使用完整 Int64 count / ordinal / severity；计数超限明确失败。超 Int32 筛选结果用 4096 行分页，过滤、全局统计和 Error / Warning-as-error 不截断。
+- README 输出前 1000 条 Warning/Info 和准确总数/省略数，取代 §9 当时“完整全行输出”的要求；小报告 golden、取消和原子发布保持。
+- [实施验证](Midora-Int64-Diagnostics-and-Bounded-Readme-Verification.md)记录 3182 个去重通过用例；后续[滚轮验证](Midora-Diagnostics-Wheel-Requirement-Trace.md)记录 Desktop 434/434、32 次实际路由事件和有界 WPF 容器。不累加重复重跑，也不将离屏测试当作真实窗口输入验收。
+- 2026-09-09 用户确认人工大体全部通过；逐项精细回归留到真实完整编曲。F4 / Shift+F4 明确暂缓，现有 Go to Source 不变。

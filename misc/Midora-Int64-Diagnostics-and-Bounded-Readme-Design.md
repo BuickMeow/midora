@@ -1,6 +1,6 @@
 # Int64 诊断与有界 MIDI README
 
-日期：2026-09-09。状态：已实施并通过自动验证，待用户 UI 验收；取代阶段 6 中对此项的暂缓决定，不改写历史验收证据。结果及验收项目见 [实施与验证报告](Midora-Int64-Diagnostics-and-Bounded-Readme-Verification.md)。
+日期：2026-09-09。状态：已实施、自动验证通过并提交、推送；用户在文档收尾时确认人工大体全部通过，逐项精细检查留到真实完整编曲。取代阶段 6 中对此项的暂缓决定，不改写历史验收证据。结果及保留的回归项目见 [实施与验证报告](Midora-Int64-Diagnostics-and-Bounded-Readme-Verification.md)。F4 / Shift+F4 导航由用户明确暂缓，不属于本次已实现内容。
 
 ## 需求追踪与边界
 

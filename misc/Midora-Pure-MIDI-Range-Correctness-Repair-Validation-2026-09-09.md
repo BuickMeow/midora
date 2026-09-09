@@ -2,7 +2,7 @@
 
 日期：2026-09-09。状态：**修复完成；3157 / 3157 公共回归、9KX2 三轮前后实测和当前构建的完整 WPF 大会话复验通过。编译阻塞已解除；2026-09-09 用户确认 MEM-C01～C07 全部验收通过，并另行授权提交、推送，不授权本地发布。**
 
-本轮按用户“实施修复”授权，独立修复阶段 6 暴露的 Compiler 正确性阻塞；保留此前阶段 6 工作，不提交、推送、发布或使用 computer-use。不修改 Project Format、软件版本、音频算法或 UI 工作流。超过 Int32 的诊断列表按用户决定继续暂缓。
+实施时按用户“实施修复”授权，独立修复阶段 6 暴露的 Compiler 正确性阻塞并保留此前阶段 6 工作；实施时未提交、推送、发布或使用 computer-use。不修改 Project Format、软件版本、音频算法或 UI 工作流。后续已验收并提交、推送。超过 Int32 的诊断列表当时暂缓，现已由[独立 Int64 实施](Midora-Int64-Diagnostics-and-Bounded-Readme-Verification.md)解决；历史限制不得继续作为当前阻塞。
 
 设计与预算见 [修复设计](Midora-Pure-MIDI-Range-Correctness-Repair-Design.md)。历史反证见 [原阻塞记录](Midora-Memory-Stage6-Pure-MIDI-Range-Blocker-2026-09-09.md)；历史失败仍保留，不反向改写成通过。
 
@@ -185,7 +185,7 @@ Application 一个既有测试没有 Dispose Document History，却直接删除�
 2. FIFO 剩余来源查询从 NoteOn 后缀逐步向前；极端长时稀疏存活、交错页、超大 COW overlay 仍可能读更多页。不是仅凭一次 9KX2 就给任意数据的耗时上限。
 3. 新的完整终点清理必然比遗漏它的旧版做更多工作；累计 allocation 不等于同时驻留。guard 峰值属于探针的多个 canonical 并存，不代表实际一次 Play 的最低 RAM。
 4. 物理音频、SoundFont 峰内存、WASAPI deadline 和听感未在本轮验证；不声明它们通过。音频算法未变，但范围事件补齐可改变旧错误边界的听感，属于正确性修复。
-5. 超过 Int32 的诊断表示按用户决定仍延期；没有删除诊断、改为近似计数或悄悄启用分页 UI。
+5. 历史边界：本修复阶段曾按用户决定暂缓 Int64；后续已明确获准并完成 Int64 完整序列/条件分页，不再是当前限制。完整正式诊断仍不删除或近似；MIDI README 另按新决定输出前 1000 条及准确省略数。
 6. 缓存 ABI 更新后，旧 Pure MIDI PCM 不再命中，第一次使用可能需要重新渲染；这不是持续不复用缓存，也不是删除或改写用户工程。
 
 ## 6. 定向人工复验

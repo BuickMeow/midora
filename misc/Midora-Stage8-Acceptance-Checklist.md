@@ -1,6 +1,8 @@
 # 阶段 8 合并验收清单
 
-阶段 8 主功能已获用户整体验收。本轮重点复验：独立 Settings/来源弹窗、快捷命令保留手选列表、模式保存重开、All Tracks 点击跳转。细节见 [本轮记录](Midora-Stage8-Onion-Source-Modes-and-Navigation-2026-09-08.md)，操作入口见 [使用说明](Midora-Stage8-Onion-User-Guide.md)。其余保留回归；自动测试不代替人工外观验收。
+阶段 8 主功能及后续独立 Settings/来源弹窗、快捷命令、模式持久化、All Tracks 导航均已获用户验收并提交、推送。2026-09-09 用户再次确认目前人工大体全部通过；精细体验、完整作品 Bug 修复及查漏后置到真实编曲。细节见 [最终修订记录](Midora-Stage8-Onion-Source-Modes-and-Navigation-2026-09-08.md)，操作入口见 [使用说明](Midora-Stage8-Onion-User-Guide.md)。
+
+下列空框保留为后续可复用回归模板，**不代表阶段 8 仍未验收**，也不将总体反馈伪造成每一项、每一规模已独立测量。自动测试不代替人工外观验收。
 
 | Check | 场景 | 预期 |
 | --- | --- | --- |

@@ -52,6 +52,7 @@
 
 ## 2026-09-09 修订摘要
 
+- 文档收尾：将 INV-091 中残留的 presentation schema v1 writer 描述同步为 2026-09-08 已批准的 schema v2、继续读取 v1 为 custom，与 INV-116 及 §16.7.5 / §16.33 一致；不是新增格式或改变语义。
 - 用户批准取消诊断总数的 Int32 边界：完整诊断逻辑序列、ordinal 和严重程度统计使用非负 Int64；超过计数上限时明确失败，不截断、不发布不完整新结果。WPF 仅在筛选后数量超过 Int32.MaxValue 时分页，每页 4096 行，筛选与计数仍作用于全源。
 - MIDI 导出 README 的 Warning / Info 文本最多写前 1000 条，并在超过时显示精确总数和省略数；此限制不适用于正式诊断或 Error / Warning-as-error 判定。同步 §12.19.10、§14.15.4、§17.5、INV-117；不改变 Project Format、presentation schema、音乐语义或软件版本。
 

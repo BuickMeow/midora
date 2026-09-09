@@ -2,6 +2,8 @@
 
 日期：2026-09-09。当前状态：**四项内存清理完成；随后获准的独立 Pure MIDI 正确性修复已通过 3157 / 3157 公共回归及当前 WPF 大会话复验，编译阻塞解除。2026-09-09 用户确认 MEM-C01～C07 全部验收通过。**
 
+后续收尾：正文的 Int64 暂缓与 Int32 限制只代表阶段 6 当时决定，已被[后续独立实施](Midora-Int64-Diagnostics-and-Bounded-Readme-Verification.md)取代；相关代码已提交、推送，用户确认人工大体全部通过。F4 / Shift+F4 仍明确暂缓。成功 Logical canonical 的进一步内存优化排为下一项，见 [当前台账](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md)。
+
 本文保留原阶段 6 批次的 3,140 通过 / 2 失败和当时 Compiler 未改的实测证据；不要把它们误读为当前仍失败。后续代码、范围事件 oracle、9KX2 三轮性能代价及当前构建 WPF 结果统一见 [独立修复验证报告](Midora-Pure-MIDI-Range-Correctness-Repair-Validation-2026-09-09.md)。用户在验收通过后另行授权提交、推送；不生成 `dist`。
 
 本轮依据 [六阶段计划](Midora-Memory-Optimization-Execution-and-Acceptance-Plan-2026-09-08.md) §11。开始时 HEAD 为 `e12b6c254a02624bb14b999154ebac80f5492bd9`，工作区干净；阶段 4/5 已由用户另行指令提交、推送。本轮不提交、推送、不生成 `dist`，不使用 computer-use。

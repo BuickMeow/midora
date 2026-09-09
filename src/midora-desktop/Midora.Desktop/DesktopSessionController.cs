@@ -506,7 +506,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         }
         finally
         {
-            if (next is not null)
+            if (next is not null && !ReferenceEquals(_context, next))
             {
                 await next.DisposeAsync();
             }
@@ -536,7 +536,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         }
         finally
         {
-            if (next is not null)
+            if (next is not null && !ReferenceEquals(_context, next))
             {
                 await next.DisposeAsync();
             }
@@ -626,7 +626,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         }
         finally
         {
-            if (next is not null) await next.DisposeAsync();
+            if (next is not null && !ReferenceEquals(_context, next)) await next.DisposeAsync();
             if (adopted is not null) await adopted.DisposeAsync();
         }
     }
@@ -2385,46 +2385,71 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         Task refreshesIdle = DetachProjectContextFromRefreshes(previous);
         Unsubscribe(previous);
         await refreshesIdle;
-        TimelineRasterCacheSession.Clear();
-        foreach (WorkspaceViewModel workspace in Workspaces)
-            workspace.Dispose();
-        Workspaces.Clear();
+        List<Exception>? failures = null;
+        void Cleanup(Action action)
+        {
+            try { action(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
+
+        Cleanup(TimelineRasterCacheSession.Clear);
+        // Workspace teardown can notify user-facing bindings. One failing
+        // Workspace must not skip the remaining tabs or the Project context.
+        foreach (WorkspaceViewModel workspace in Workspaces.ToArray())
+            Cleanup(workspace.Dispose);
+        Cleanup(Workspaces.Clear);
         _backNavigation.Clear();
         _forwardNavigation.Clear();
         _workspaceSelectionHistory.Clear();
         _workspaceSelectionBookmarkCache.Clear();
         _projectTreeStructureStamp = null;
         _diagnosticScopeWorkspace = null;
-        ProjectTree.Clear();
+        Cleanup(ProjectTree.Clear);
         CompilerDiagnostics = VirtualDiagnosticRows.Empty;
-        Raise(nameof(CompilerDiagnostics));
-        SelectedDiagnostic = null;
+        Cleanup(() => Raise(nameof(CompilerDiagnostics)));
+        Cleanup(() => SelectedDiagnostic = null);
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
         _mutedSharedGroupIds.Clear();
         _soloSharedGroupIds.Clear();
-        _foregroundTask?.Dispose();
+        DesktopTaskViewModel? foregroundTask = _foregroundTask;
         _foregroundTask = null;
-        ActiveWorkspace = null;
+        Cleanup(() => foregroundTask?.Dispose());
+        Cleanup(() => ActiveWorkspace = null);
+        _activeWorkspace = null;
         _revision = 0;
         _timeSignatureMap = null;
-        ArrangementEditorSettings.Reset(arrangement: true);
-        PianoRollEditorSettings.Reset(arrangement: false);
+        Cleanup(() => ArrangementEditorSettings.Reset(arrangement: true));
+        Cleanup(() => PianoRollEditorSettings.Reset(arrangement: false));
         _displayCurrentTick = 0;
         _orderedTempoChanges = [];
         _activeTempoIndex = -1;
         _tempoLookupTick = -1;
         _tempoText = "— BPM";
-        SetStatusMessage(null);
-        RefreshProperties();
-        await previous.DisposeAsync();
+        Cleanup(() => SetStatusMessage(null));
+        Cleanup(RefreshProperties);
+        try { await previous.DisposeAsync(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException("Project closing cleanup failed.", failures);
     }
 
     public async ValueTask DisposeAsync()
     {
-        await CloseProjectAsync();
-        _preparedPlaybackBackend?.Dispose();
+        List<Exception>? failures = null;
+        try { await CloseProjectAsync(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+        BassWasapiChildPlaybackBackend? preparedBackend = _preparedPlaybackBackend;
         _preparedPlaybackBackend = null;
+        try { preparedBackend?.Dispose(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException("Desktop session cleanup failed.", failures);
     }
 
     private async Task ActivateAsync(ProjectContext next)
@@ -2437,43 +2462,68 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
             Unsubscribe(previous);
             await refreshesIdle;
         }
-        AttachProjectContextToRefreshes(next);
-        _mutedTrackIds.Clear();
-        _soloTrackIds.Clear();
-        _mutedSharedGroupIds.Clear();
-        _soloSharedGroupIds.Clear();
-        ProjectSegmentIndex.Warm(next.Compilation.Project);
-        _displayCurrentTick = next.Playback?.CurrentTick ?? 0;
-        Subscribe(next);
-        TimelineRasterCacheSession.Clear();
-        foreach (WorkspaceViewModel workspace in Workspaces)
-            workspace.Dispose();
-        Workspaces.Clear();
-        _backNavigation.Clear();
-        _forwardNavigation.Clear();
-        _workspaceSelectionHistory.Clear();
-        _workspaceSelectionBookmarkCache.Clear();
-        _projectTreeStructureStamp = null;
-        _diagnosticScopeWorkspace = null;
-        ActiveWorkspace = null;
-        _revision = 1;
-        _timeSignatureMap = new(Project!);
-        ArrangementEditorSettings.Reset(arrangement: true, Project!.TicksPerQuarterNote);
-        PianoRollEditorSettings.Reset(arrangement: false, Project.TicksPerQuarterNote);
-        ArrangementEditorSettings.ConfigureProject(Project, referenceTick: 0);
-        PianoRollEditorSettings.ConfigureProject(Project, referenceTick: 0);
-        SetStatusMessage(null);
-        RefreshAll();
-        OpenArrangement();
-        AudioCacheWarning cacheWarning = next.Compilation.AudioCacheWarning;
-        if (cacheWarning.Code != AudioCacheWarningCode.None)
+        List<Exception>? failures = null;
+        void Cleanup(Action action)
         {
-            SetStatusMessage("Audio cache warning: " + cacheWarning.Message);
+            try { action(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
         }
+        WorkspaceViewModel[] previousWorkspaces = Workspaces.ToArray();
+        try
+        {
+            try
+            {
+                // This is the ownership handoff. Callers must not dispose next
+                // merely because retiring old UI or later presentation failed.
+                AttachProjectContextToRefreshes(next);
+                _mutedTrackIds.Clear();
+                _soloTrackIds.Clear();
+                _mutedSharedGroupIds.Clear();
+                _soloSharedGroupIds.Clear();
+                ProjectSegmentIndex.Warm(next.Compilation.Project);
+                _displayCurrentTick = next.Playback?.CurrentTick ?? 0;
+                Subscribe(next);
+            }
+            finally
+            {
+                Cleanup(TimelineRasterCacheSession.Clear);
+                foreach (WorkspaceViewModel workspace in previousWorkspaces)
+                    Cleanup(workspace.Dispose);
+                Cleanup(Workspaces.Clear);
+                _backNavigation.Clear();
+                _forwardNavigation.Clear();
+                _workspaceSelectionHistory.Clear();
+                _workspaceSelectionBookmarkCache.Clear();
+                _projectTreeStructureStamp = null;
+                _diagnosticScopeWorkspace = null;
+                Cleanup(() => ActiveWorkspace = null);
+                _activeWorkspace = null;
+            }
+            _revision = 1;
+            _timeSignatureMap = new(Project!);
+            ArrangementEditorSettings.Reset(arrangement: true, Project!.TicksPerQuarterNote);
+            PianoRollEditorSettings.Reset(arrangement: false, Project.TicksPerQuarterNote);
+            ArrangementEditorSettings.ConfigureProject(Project, referenceTick: 0);
+            PianoRollEditorSettings.ConfigureProject(Project, referenceTick: 0);
+            SetStatusMessage(null);
+            RefreshAll();
+            OpenArrangement();
+            AudioCacheWarning cacheWarning = next.Compilation.AudioCacheWarning;
+            if (cacheWarning.Code != AudioCacheWarningCode.None)
+            {
+                SetStatusMessage("Audio cache warning: " + cacheWarning.Message);
+            }
+        }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
         if (previous is not null)
         {
-            await previous.DisposeAsync();
+            try { await previous.DisposeAsync(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
         }
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException("Project activation cleanup failed.", failures);
     }
 
     private WorkspaceViewModel GetOrCreate(
@@ -3461,6 +3511,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
     private sealed class ProjectContext : IAsyncDisposable
     {
         private readonly IAsyncDisposable _owner;
+        private int _disposeStarted;
 
         private ProjectContext(
             IAsyncDisposable owner,
@@ -3573,11 +3624,28 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
 
         public async ValueTask DisposeAsync()
         {
-            Tasks?.Dispose();
-            Playback?.Dispose();
-            Document.Dispose();
-            Compilation.Dispose();
-            await _owner.DisposeAsync();
+            if (Interlocked.Exchange(ref _disposeStarted, 1) != 0) return;
+            List<Exception>? failures = null;
+            void Cleanup(Action action)
+            {
+                try { action(); }
+                catch (Exception exception) { (failures ??= []).Add(exception); }
+            }
+
+            // A backend/history failure must not strand the compiler worker or
+            // the Project's owned session files. Preserve release order and
+            // report every failure after all independent owners were attempted.
+            Cleanup(() => Tasks?.Dispose());
+            Cleanup(() => Playback?.Dispose());
+            Cleanup(Document.Dispose);
+            Cleanup(Compilation.Dispose);
+            try { await _owner.DisposeAsync(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+
+            if (failures is { Count: 1 })
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures is not null)
+                throw new AggregateException("Project context cleanup failed.", failures);
         }
 
         public void ReconfigurePlaybackServices(ApplicationPreferences preferences)

@@ -43,7 +43,7 @@
 | O25 | P 自由画线 / 直线 / y=k / 固定 tick | 每 snap 点、越界坐标、同 tick 后者覆盖 | BoundedPointCommandTests、TimelineValueTraceSamplerTests、TimelineEventContextGestureTests |
 | O26 | Lane 新建、切换、删除、参数定义 | 选择清除 / 保留契约、焦点、mapping owner | BoundedPointCommandTests、MappingEditingPolicyTests、LogicalParameterEventBindingDialogTests |
 | O27 | S Split / 窗口扩充与裁剪 | 跨边界音符、参数起点状态、隐藏对象 | BoundedDirectMidiSegmentTransformTests、BoundedLogicalNoteCommandTests、BoundaryCleanupTests |
-| O28 | Track / Root / Usage 新建、排序、改绑、删除 | 全局顺序 / 非空 Root / Definitions 不误删 | ProjectObjectClipboardTests、DesktopSessionControllerTests、Stage5ArrangementRoutingTests |
+| O28 | Track / Root / Usage 新建、排序、改绑、删除 | 全局顺序 / 非空 Root / Definitions 不误删 | ProjectFlatArrangementEditCommandsTests、ProjectObjectClipboardTests、DesktopSessionControllerTests；Stage5ArrangementRoutingTests 只覆盖 Segment 转换，不能单独为本项背书 |
 | O29 | Instrument / SubVoice / Mapping / Loop / Pre-Roll 编辑 | 依赖失效、共享状态、编译诊断 / 可听语义 | MappingEditingPolicyTests、LogicalParameterEventBindingCompilerTests、LoopEntryCompilationTests、PreRollCompilationTests |
 | O30 | 首次 / 重复 / 跨区域 Undo，Redo，清分支 | 旧 root / selection 精确恢复，无全源 ID 退化 | PagedSelectionAndEditTransactionTests、PureMidiCowRootTests、BoundedEditRoundTripTests；M01 探针 60k |
 | O31 | Arrangement / 三种 Piano Roll / Velocity / Event Lanes | 现有细边框 / 高亮、cache-only UI、局部失效 | TimelineRenderingTests、PagedTimelineCacheOnlyTests、PureMidiPagedPresentationTests、PagedLogicalPresentationTests |
@@ -167,3 +167,15 @@
 | 受守护专项压力 | eng/MemoryStage5Probe | 冻结旧/新 DLL；重复编译完整 digest；多 Voice/Template/Loop 梯度；指定 9KX2 跨类型链；8 GiB 私有 Job 及 2 GiB 系统余量 |
 
 M12 的发现缓存有固定预算，但正式 Logical canonical 和有效历史所需内容不因此变为常量。所有测得峰值、累计分配与仍未深度分页的部分在阶段报告中分列。完整 UI、后台、缓存及保存/播放长期共存仍属于阶段 6，不预填验收 C。
+
+## 10. 阶段 6：交叉操作和证据层级
+
+详见 [40 项逐行审计](Midora-Memory-Stage6-Operation-Coverage-Audit.md) 和 [阶段 6 报告](Midora-Memory-Stage6-Validation-Report-2026-09-09.md)。审计明确记录适用/不适用与每条入口，运行是否完成以报告和日志为准。
+
+- `MemoryStage6CrossOperationTests` 补充六类 owner 的固定 seed 混合链：Move、双边 Resize、Humanize、数值 Point 调整、Ready 取消、旧 revision 拒绝、Undo/Redo、新分支、双向 Clipboard、修改态 Save/Copy/Open 与 canonical 对照。不以这条链替代其他工具专项。
+- `MemoryStage6CleanupTests`、`MemoryStage6ContextCleanupTests` 等故障注入补充异常发生后的清理编排；报告应分别说明下层 owner 被调用、资源计账归零与对象弱引用释放，不能混为一谈。
+- `eng/MemoryStage6WpfProbe` 使用真实模板/Surface/离屏 WPF 与 Desktop 后台会话；不调用 Show、不执行 computer-use，不能代替显示器输出、实际输入时序和设备听感验收。
+- `eng/MemoryStage6Probe` 使用退出调用栈后的 WeakReference 与 VirtualQuery 区域计量核对编译持有链；受控 GC 只发生在诊断工具，产品正常关闭不增加强制 GC。
+- 有 env 启动门的 Fact 在缺少样本时直接 return，其普通 TRX Passed **不计为真实大样本通过**。本轮大样本证据必须有显式路径、实际数量、guard 与阶段记录。
+- 用户决定暂缓 Int64 诊断计数/分页；完整诊断不截断，当前 Int32 边界保持已知限制，不写成修复完成。
+- 连续消费测试额外确认 [Pure MIDI 分页范围编译缺陷](Midora-Memory-Stage6-Pure-MIDI-Range-Blocker-2026-09-09.md)：提前终点缺 NoteOff/Reset、计数不一致，以及 Save/Open 后部分 canonical metadata 不等价。用户随后授权独立修复；两项原 oracle 未放松且现已通过。最新 3157 / 3157 公共回归、9KX2 三轮前后实测及当前 WPF 大会话结果见 [修复报告](Midora-Pure-MIDI-Range-Correctness-Repair-Validation-2026-09-09.md)，工程阻塞已解除。2026-09-09 用户确认人工 MEM-C01～C07 全部验收通过；不得将 Int64 的明确延期写成已完成。

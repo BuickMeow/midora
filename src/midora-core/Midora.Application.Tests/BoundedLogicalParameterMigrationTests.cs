@@ -114,7 +114,9 @@ public sealed class BoundedLogicalParameterMigrationTests
     {
         using var fixture = new Fixture(3_000);
         using var compilation = new ProjectCompilationSession(fixture.Project);
-        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+        // History owns the detached before/after roots. Release it before the
+        // fixture removes its spill directory, as the real workspace does.
+        using ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
         LogicalParameterDefinition oldDefinition = fixture.Parameter;
         Segment[] oldSegments = fixture.Project.Tracks.Select(track => track.Segments[0]).ToArray();
         long nextId = fixture.Project.NextStableId;

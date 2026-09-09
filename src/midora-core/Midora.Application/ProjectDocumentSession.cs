@@ -232,7 +232,7 @@ public sealed class ProjectDocumentSession : IDisposable
     private readonly object _clipboardSessionIdentity = new();
     private readonly object _sync = new();
     private readonly ProjectCompilationSession _compilation;
-    private readonly List<HistoryEntry> _entries = [];
+    private List<HistoryEntry> _entries = [];
     private readonly HashSet<string> _externalDirtyReasons = new(StringComparer.Ordinal);
     private int _cursor;
     private long _currentStateId;
@@ -571,13 +571,24 @@ public sealed class ProjectDocumentSession : IDisposable
 
     public void Dispose()
     {
+        List<Exception>? failures = null;
         lock (_sync)
         {
-            foreach (HistoryEntry entry in _entries)
-                DisposePrepared(entry.Prepared);
-            _entries.Clear();
+            // Detach first: failed or reentrant cleanup cannot replay entries,
+            // and no second full history array is required at close.
+            List<HistoryEntry> entries = _entries;
+            _entries = [];
             _cursor = 0;
+            foreach (HistoryEntry entry in entries)
+            {
+                try { DisposePrepared(entry.Prepared); }
+                catch (Exception exception) { (failures ??= []).Add(exception); }
+            }
         }
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException("Project history cleanup failed.", failures);
     }
 
     private static void DisposePrepared(IPreparedProjectEdit? prepared)

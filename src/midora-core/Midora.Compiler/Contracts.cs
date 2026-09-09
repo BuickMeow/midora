@@ -800,6 +800,8 @@ public sealed partial class CanonicalCompiledResult
     {
         int value = x.Tick.CompareTo(y.Tick);
         if (value != 0) return value;
+        value = x.Role.CompareTo(y.Role);
+        if (value != 0) return value;
         value = x.EventOrder.CompareTo(y.EventOrder);
         if (value != 0) return value;
         if (x.Role == CanonicalEventRole.DirectMidi

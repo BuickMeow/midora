@@ -15,6 +15,8 @@ public sealed partial class MidoraCompiler
             collector.Dictionary(_unitByRoot);
             collector.Dictionary(_analysis);
             collector.Dictionary(_channelAnalysis);
+            collector.Dictionary(_terminalNotes);
+            foreach (long[] counts in _terminalNotes.Values) collector.Array(counts);
             // These are immutable analysis metadata, not note/event source pages.
             // Domain roots retain their own shared source/cache accounting.
             foreach (RootIntervalAnalysis value in _analysis.Values)
@@ -22,11 +24,11 @@ public sealed partial class MidoraCompiler
                 collector.Add(value, 40);
                 collector.Array(value.UsedTargets);
                 collector.Dictionary(value.RawBoundaryNotes);
-                foreach (byte[] keys in value.RawBoundaryNotes.Values) collector.Array(keys);
+                foreach (long[] keys in value.RawBoundaryNotes.Values) collector.Array(keys);
             }
             foreach (SegmentChannelAnalysis value in _channelAnalysis.Values)
             {
-                collector.Add(value, 88);
+                collector.Add(value, 96);
                 collector.Array(value.UsedTargets);
                 collector.Array(value.RawBoundaryNoteKeys);
                 collector.Array(value.ReferencedBanks);

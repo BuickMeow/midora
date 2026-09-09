@@ -62,7 +62,7 @@ internal sealed class BoundedEditResourceLease : IDisposable
         End();
         var values = Interlocked.Exchange(ref _values, null);
         if (values is null) return;
-        for (int i = values.Count - 1; i >= 0; i--) values[i].Dispose();
+        BoundedEditPublicationResources.DisposeOwnedValues(values);
     }
 }
 
@@ -75,6 +75,21 @@ internal sealed class BoundedEditPublicationResources(List<IDisposable> values) 
     {
         var captured = Interlocked.Exchange(ref _values, null);
         if (captured is null) return;
-        for (int i = captured.Count - 1; i >= 0; i--) captured[i].Dispose();
+        DisposeOwnedValues(captured);
+    }
+
+    internal static void DisposeOwnedValues(List<IDisposable> values)
+    {
+        List<Exception>? failures = null;
+        for (int i = values.Count - 1; i >= 0; i--)
+        {
+            try { values[i].Dispose(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
+        values.Clear();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException("Provisional edit resource cleanup failed.", failures);
     }
 }

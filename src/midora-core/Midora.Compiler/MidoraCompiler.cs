@@ -8,6 +8,7 @@ public sealed partial class MidoraCompiler : IDisposable
 {
     private readonly Dictionary<MidoraId, TrackCacheEntry> _trackCache = [];
     private readonly MappingEngine _mapping = new();
+    private readonly PureMidiEndpointPrefixCache _pureMidiPrefixes = new();
     private MidoraProject? _cacheOwner;
     private bool _disposed;
 
@@ -74,6 +75,7 @@ public sealed partial class MidoraCompiler : IDisposable
     {
         _trackCache.Clear();
         _mapping.ClearCache();
+        _pureMidiPrefixes.Clear();
     }
 
     public void Dispose()
@@ -347,25 +349,11 @@ public sealed partial class MidoraCompiler : IDisposable
             allocation.UnitBySubVoice,
             project.GlobalResetDefaults,
             cancellationToken);
-        if (!usesPagedPureMidi)
-        {
-            allEvents.AddRange(MaterializePureMidiEvents(
-                pureMidiPlan,
-                allocation.UnitByRoot,
-                project.GlobalResetDefaults,
-                request.StartTick,
-                cancellationToken));
-        }
-        // MaterializeEvents already sorts/folds the Logical stream. Only a
-        // non-paged Direct append requires merging it into that stream again.
-        if (!usesPagedPureMidi && pureMidiPlan.Roots.Length != 0)
-        {
-            allEvents.Sort(CanonicalComparer.Instance);
-            allEvents = FoldSameTickStates(allEvents, cancellationToken);
-        }
-        ChannelUnitAllocation[] rangeSourceAllocations = usesPagedPureMidi
-            ? allocation.Allocations.Where(value => value.MidiChannelRootId == default).ToArray()
-            : allocation.Allocations;
+        // Backing layout only selects storage, never a second range compiler.
+        // Logical and Pure units are disjoint. Keep Logical ApplyRange unchanged;
+        // both small and paged Pure sources use the same projection below.
+        ChannelUnitAllocation[] rangeSourceAllocations = allocation.Allocations
+            .Where(value => value.MidiChannelRootId == default).ToArray();
         CanonicalMidiEvent[] ranged = ApplyRange(
             allEvents,
             rangeSourceAllocations,
@@ -374,14 +362,6 @@ public sealed partial class MidoraCompiler : IDisposable
             project.GlobalResetDefaults,
             request.HeldPreviewGateOpen,
             cancellationToken);
-        if (!usesPagedPureMidi)
-        {
-            ranged = AssignPureMidiRangeBoundaryOwnership(
-                ranged,
-                pureMidiPlan,
-                allocation.UnitByRoot,
-                endTick);
-        }
         ChannelUnitAllocation[] rangedAllocations = allocation.Allocations
             .Where(value => value.StartTick < endTick && value.EndTick > request.StartTick)
             .ToArray();
@@ -399,15 +379,26 @@ public sealed partial class MidoraCompiler : IDisposable
             MaterializePureMidiChannelModeSystemExclusiveEvents(
                 pureMidiPlan,
                 allocation.UnitByRoot);
-        ICanonicalMidiEventPageSource? pagedEventSource = usesPagedPureMidi
+        ICanonicalMidiEventPageSource? pagedEventSource = endTick > request.StartTick
+            && pureMidiPlan.Roots.Any(root => root.HasParticipatingSegments)
             ? new PureMidiPagedCanonicalSource(
                 pureMidiPlan,
                 allocation.UnitByRoot,
                 project.GlobalResetDefaults,
                 request.StartTick,
                 endTick,
-                cancellationToken)
+                cancellationToken, _pureMidiPrefixes)
             : null;
+        if (!usesPagedPureMidi && pagedEventSource is not null)
+        {
+            List<CanonicalMidiEvent> merged = new(ranged);
+            foreach (CanonicalMidiEventPage page in pagedEventSource.QueryPages(
+                request.StartTick, endTick, includeStateAtStart: true, cancellationToken))
+                merged.AddRange(page.Items);
+            merged.Sort(CanonicalComparer.Instance);
+            ranged = merged.ToArray();
+            pagedEventSource = null;
+        }
         long resultFingerprint = SourceFingerprint.ForResult(
             request.StartTick,
             endTick,

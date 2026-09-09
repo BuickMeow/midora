@@ -1,6 +1,7 @@
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
+using System.Runtime.ExceptionServices;
 
 namespace Midora.Playback;
 
@@ -1508,6 +1509,13 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public void Dispose()
     {
+        List<Exception>? failures = null;
+        void Cleanup(Action action)
+        {
+            try { action(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
+
         Task? worker;
         lock (_sync)
         {
@@ -1516,8 +1524,11 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 return;
             }
             _disposed = true;
-            _activeCompilationCancellation?.Cancel();
-            _disposeCancellation.Cancel();
+            // Cancellation registrations are arbitrary control-thread code. One
+            // failing callback must not prevent the worker's lifetime token or
+            // any later owned resource from being released.
+            Cleanup(() => _activeCompilationCancellation?.Cancel());
+            Cleanup(_disposeCancellation.Cancel);
             _compilationStateChanged.TrySetResult(true);
             worker = _compileWorker;
         }
@@ -1531,46 +1542,51 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             catch (OperationCanceledException)
             {
             }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
         }
 
         lock (_sync)
         {
-            ClearSampleDomainCachesCore();
-            _playbackRangeResults.Clear();
+            Cleanup(ClearSampleDomainCachesCore);
+            Cleanup(_playbackRangeResults.Clear);
             // Dropping an accounting lease must also drop this owner's strong
             // product reference. An external consumer's result/lease remains
             // valid independently; do not Dispose shared immutable sources.
             _lastAttempt = null;
             _lastSuccessfulResult = null;
-            _lastAttemptStorage?.Dispose();
+            IDisposable? attemptStorage = _lastAttemptStorage;
             _lastAttemptStorage = null;
-            _lastSuccessfulStorage?.Dispose();
+            Cleanup(() => attemptStorage?.Dispose());
+            IDisposable? successfulStorage = _lastSuccessfulStorage;
             _lastSuccessfulStorage = null;
+            Cleanup(() => successfulStorage?.Dispose());
             // The public Project remains part of the session contract. Only
             // release the extra background mirror, after its worker has ended.
             _compilationProject = Project;
-            try
-            {
-                try
-                {
-                    _audioCacheStore?.Dispose();
-                    _audioCacheStore = null;
-                }
-                finally
-                {
-                    _editingTime.Dispose();
-                }
-            }
-            finally
-            {
-                _compiler.Dispose();
-                _editLockCount = 0;
-                _activeCompilationCancellation?.Dispose();
-                _activeCompilationCancellation = null;
-                _compileSignal.Dispose();
-                _disposeCancellation.Dispose();
-            }
+            _compileWorker = null;
+            _backgroundCompilationFailure = null;
+            _pendingChanges = new();
+            CompilationChanged = null;
+            EffectiveSoundFontChanged = null;
+            AudioCacheSessionStore? audioCacheStore = _audioCacheStore;
+            _audioCacheStore = null;
+            Cleanup(() => audioCacheStore?.Dispose());
+            Cleanup(_editingTime.Dispose);
+            Cleanup(_compiler.Dispose);
+            _editLockCount = 0;
+            CancellationTokenSource? activeCancellation = _activeCompilationCancellation;
+            _activeCompilationCancellation = null;
+            Cleanup(() => activeCancellation?.Dispose());
+            Cleanup(_compileSignal.Dispose);
+            Cleanup(_disposeCancellation.Dispose);
         }
+
+        if (failures is { Count: 1 }) ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException("Project compilation session cleanup failed.", failures);
     }
 
     private void ReleaseProjectEditLock()

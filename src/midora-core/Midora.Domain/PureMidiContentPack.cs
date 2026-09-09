@@ -2843,6 +2843,26 @@ public sealed class PureMidiContentPack : IDisposable
                 endTick,
                 noteOn: true);
 
+        public long CountNoteStarts(long startTick, long endTick, CancellationToken cancellationToken = default)
+        {
+            long count = 0;
+            if (endTick <= startTick) return count;
+            foreach (PageDescriptor page in _noteOnRangeIndex.Query(startTick, endTick,
+                int.MinValue, int.MaxValue, filterKeys: false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (page.MinimumTick >= startTick && page.MaximumTick < endTick)
+                    count += page.RecordCount;
+                else
+                {
+                    var values = (DirectMidiNoteValue[])_owner.GetDecodedPage(page.Index);
+                    count += LowerBoundNote(values, endTick, noteOn: true)
+                        - LowerBoundNote(values, startTick, noteOn: true);
+                }
+            }
+            return count;
+        }
+
         public IEnumerable<DirectMidiNoteValue> QueryNoteEnds(
             long startTick,
             long endTick) =>
@@ -2889,7 +2909,7 @@ public sealed class PureMidiContentPack : IDisposable
                 int index = LowerBoundChannel(values, startTick);
                 if (index < values.Length && values[index].Tick < endTick)
                 {
-                    ChannelEndpointCursor cursor = new(values, index);
+                    ChannelEndpointCursor cursor = new(_owner, page.Index, values, index);
                     queue.Enqueue(cursor, ChannelPriority(cursor.Current));
                 }
             }
@@ -2941,7 +2961,7 @@ public sealed class PureMidiContentPack : IDisposable
                 int index = LowerBoundNote(values, startTick, noteOn);
                 if (index < values.Length && EndpointTick(values[index], noteOn) < endTick)
                 {
-                    NoteEndpointCursor cursor = new(values, index);
+                    NoteEndpointCursor cursor = new(_owner, page.Index, values, index);
                     queue.Enqueue(cursor, NotePriority(cursor.Current, noteOn));
                 }
             }
@@ -3381,28 +3401,50 @@ public sealed class PureMidiContentPack : IDisposable
         }
 
         private sealed class NoteEndpointCursor(
+            PureMidiContentPack owner,
+            int pageIndex,
             DirectMidiNoteValue[] values,
             int index)
         {
             private int _index = index;
-            public DirectMidiNoteValue Current => values[_index];
+            private readonly int _count = values.Length;
+            private readonly WeakReference<DirectMidiNoteValue[]> _page = new(values);
+            public DirectMidiNoteValue Current { get; private set; } = values[index];
             public bool MoveNext()
             {
                 _index++;
-                return _index < values.Length;
+                if (_index >= _count) return false;
+                if (!_page.TryGetTarget(out var page))
+                {
+                    page = (DirectMidiNoteValue[])owner.GetDecodedPage(pageIndex);
+                    _page.SetTarget(page);
+                }
+                Current = page[_index];
+                return true;
             }
         }
 
         private sealed class ChannelEndpointCursor(
+            PureMidiContentPack owner,
+            int pageIndex,
             DirectMidiChannelEventValue[] values,
             int index)
         {
             private int _index = index;
-            public DirectMidiChannelEventValue Current => values[_index];
+            private readonly int _count = values.Length;
+            private readonly WeakReference<DirectMidiChannelEventValue[]> _page = new(values);
+            public DirectMidiChannelEventValue Current { get; private set; } = values[index];
             public bool MoveNext()
             {
                 _index++;
-                return _index < values.Length;
+                if (_index >= _count) return false;
+                if (!_page.TryGetTarget(out var page))
+                {
+                    page = (DirectMidiChannelEventValue[])owner.GetDecodedPage(pageIndex);
+                    _page.SetTarget(page);
+                }
+                Current = page[_index];
+                return true;
             }
         }
 

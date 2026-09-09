@@ -766,6 +766,17 @@ public interface IPureMidiSegmentContentSource
 
 public interface IPureMidiPlaybackEndpointSource
 {
+    long CountNoteStarts(long startTick, long endTick, CancellationToken cancellationToken = default)
+    {
+        long count = 0;
+        foreach (DirectMidiNoteValue value in QueryNoteStarts(startTick, endTick))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            count++;
+        }
+        return count;
+    }
+
     IEnumerable<DirectMidiNoteValue> QueryNoteStarts(
         long startTick,
         long endTick);
@@ -1099,6 +1110,31 @@ public sealed class DirectMidiNoteQuerySnapshot
     public int Count { get; }
     public long Generation { get; }
     public long MaximumEndTick => Math.Max(_sourceMaximumEndTick, _overlayIndex.MaximumEndTick);
+
+    public long CountStarts(long startTick, long endTick, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (endTick <= startTick) return 0;
+        if (startTick == 0 && endTick >= MaximumEndTick) return Count;
+        long count = 0;
+        if (_source is IPureMidiPlaybackEndpointSource endpoints)
+            count = endpoints.CountNoteStarts(startTick, endTick, cancellationToken);
+        else if (_source is not null)
+            foreach (DirectMidiNoteValue value in _source.QueryNotes(startTick, endTick))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (value.StartTick >= startTick && value.StartTick < endTick) count++;
+            }
+        if (_source is not null && _sourceExclusions is not null)
+            foreach (DirectMidiNoteSourceMatch match in ResolveSourceMatches(_sourceExclusions))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (match.Value.StartTick >= startTick && match.Value.StartTick < endTick) count--;
+            }
+        foreach (DirectMidiNoteValue value in _overlayIndex.Query(startTick, endTick, 0, 127, cancellationToken))
+            if (value.StartTick >= startTick && value.StartTick < endTick) count++;
+        return count;
+    }
 
     internal IEnumerable<DirectMidiNoteSourceMatch> ResolveSourceMatches(IReadOnlySet<MidoraId> ids) =>
         _source is null ? [] : _sourceIdCache.Resolve(ids, _source.QueryNotesByIds);

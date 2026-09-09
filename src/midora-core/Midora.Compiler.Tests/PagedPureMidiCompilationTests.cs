@@ -77,12 +77,13 @@ public sealed class PagedPureMidiCompilationTests
             CanonicalMidiEvent[] pagedDirect = DirectEvents(paged);
             Assert.Equal(materializedDirect, pagedDirect);
             Assert.Equal(
-                "MIDORA_PURE_MIDI_AUDIO_FRAGMENT_V3",
+                "MIDORA_PURE_MIDI_AUDIO_FRAGMENT_V4",
                 MidoraCompiler.PureMidiAudioFragmentFingerprintAbi);
             string audioFragmentFingerprint = Assert.Single(
                 paged.PureMidiAudioFragments).SemanticFingerprint;
+            // V4 invalidates reusable PCM produced with the old range/boundary projection.
             Assert.Equal(
-                "37dbdba460ef84459dbe66eaa5d191b3f8180f491deb8fcf9ad5fb81f1c0cfdc",
+                "8943293cadd9db42ae1e483bffe96873e0934cae0ebaf391e0312cf0e4a82efa",
                 audioFragmentFingerprint);
 
             CanonicalMidiEvent[] boundary = materializedDirect

@@ -123,7 +123,6 @@ public static class CanonicalMidiFileExporter
                 .ToArray();
             Dictionary<MidoraId, CanonicalSmfTrackDescriptor> pureById = pureDescriptors
                 .ToDictionary(value => value.ExportTrackId);
-            Dictionary<MidoraId, List<CanonicalMidiEvent>> pureEvents = [];
 
             Dictionary<MidiExportChannelUnit, List<CanonicalMidiEvent>> grouped = [];
             foreach (CanonicalMidiEvent value in compiledResult.Events)
@@ -133,10 +132,6 @@ public static class CanonicalMidiFileExporter
                 ValidateCanonicalEvent(compiledResult, value, diagnostics, isPure);
                 if (isPure)
                 {
-                    if (!includedPort.HasValue || value.ZeroBasedPort == includedPort.Value)
-                    {
-                        pureEvents.GetOrAdd(value.ExportTrackId).Add(value);
-                    }
                     continue;
                 }
                 MidoraId ownerTrackId = ResolveTrackId(compiledResult, value, diagnostics);
@@ -199,19 +194,12 @@ public static class CanonicalMidiFileExporter
                 }
             }
 
-            CanonicalOpaqueMidiEvent[] opaque = compiledResult.OpaqueMidiEvents.ToArray();
             foreach (CanonicalSmfTrackDescriptor descriptor in pureDescriptors)
             {
-                pureEvents.TryGetValue(descriptor.ExportTrackId, out List<CanonicalMidiEvent>? values);
-                CanonicalOpaqueMidiEvent[] trackOpaque = opaque
-                    .Where(value => value.ExportTrackId == descriptor.ExportTrackId)
-                    .ToArray();
                 tracks.Add(BuildPureMidiTrack(
                     compiledResult,
                     descriptor,
-                    mapOutputPort(descriptor.ZeroBasedPort),
-                    values ?? [],
-                    trackOpaque));
+                    mapOutputPort(descriptor.ZeroBasedPort)));
             }
 
             foreach ((MidiExportChannelUnit unit, List<CanonicalMidiEvent> values) in grouped
@@ -712,78 +700,8 @@ public static class CanonicalMidiFileExporter
     private static StandardMidiFileTrack BuildPureMidiTrack(
         CanonicalCompiledResult compiled,
         CanonicalSmfTrackDescriptor descriptor,
-        byte outputPort,
-        IReadOnlyList<CanonicalMidiEvent> channelEvents,
-        IReadOnlyList<CanonicalOpaqueMidiEvent> opaqueEvents)
-    {
-        List<StandardMidiFileEvent> events =
-        [
-            StandardMidiFileEvent.Text(
-                0,
-                StandardMidiFile.TrackNameMetaType,
-                descriptor.Name),
-            StandardMidiFileEvent.Meta(
-                0,
-                StandardMidiFile.MidiPortMetaType,
-                [outputPort]),
-            StandardMidiFileEvent.Meta(
-                0,
-                0x7f,
-                BuildMidoraTrackMetadata(descriptor, outputPort))
-        ];
-        if (descriptor.ZeroBasedChannel == 9
-            && descriptor.ChannelMode == MidiChannelMode.Melodic)
-        {
-            events.Add(StandardMidiFileEvent.SystemExclusive(0, RolandGsChannel10NormalPart));
-            events.Add(StandardMidiFileEvent.SystemExclusive(0, YamahaXgChannel10NormalPart));
-        }
-        AddEffectsOffInitialization(events, descriptor.ZeroBasedChannel);
-
-        List<(long Tick, long Order, int KindOrder, StandardMidiFileEvent Event)> timed = [];
-        foreach (CanonicalMidiEvent value in channelEvents)
-        {
-            long tick = checked(value.Tick - compiled.StartTick);
-            if (tick < 0 || tick > descriptor.EndTick)
-            {
-                throw new MidoraMidiException(
-                    $"Pure MIDI Track {descriptor.ExportTrackId} contains a channel event outside its frozen Track range.");
-            }
-            timed.Add((
-                tick,
-                value.SmfEventOrder,
-                value.Role == CanonicalEventRole.Reset ? 0
-                    : value.Role == CanonicalEventRole.RootBoundaryCleanup ? 2
-                    : 1,
-                StandardMidiFileEvent.ChannelVoice(tick, value.Message)));
-        }
-        foreach (CanonicalOpaqueMidiEvent value in opaqueEvents)
-        {
-            long tick = checked(value.Tick - compiled.StartTick);
-            if (tick < 0 || tick > descriptor.EndTick)
-            {
-                throw new MidoraMidiException(
-                    $"Pure MIDI Track {descriptor.ExportTrackId} contains an opaque event outside its frozen Track range.");
-            }
-            StandardMidiFileEvent encoded = value.Kind switch
-            {
-                OpaqueMidiEventKind.Meta => StandardMidiFileEvent.Meta(
-                    tick, value.MetaType, value.Payload.Span),
-                OpaqueMidiEventKind.SystemExclusive => StandardMidiFileEvent.SystemExclusive(
-                    tick, value.Payload.Span),
-                OpaqueMidiEventKind.SystemExclusiveContinuation => StandardMidiFileEvent.SystemExclusive(
-                    tick, value.Payload.Span, continuation: true),
-                _ => throw new MidoraMidiException(
-                    $"Unknown opaque MIDI event kind {value.Kind}.")
-            };
-            timed.Add((tick, value.StableOrder, 1, encoded));
-        }
-        events.AddRange(timed
-            .OrderBy(value => value.Tick)
-            .ThenBy(value => value.Order)
-            .ThenBy(value => value.KindOrder)
-            .Select(value => value.Event));
-        return new(descriptor.EndTick, events);
-    }
+        byte outputPort) => new(descriptor.EndTick,
+            EnumeratePureMidiTrackEvents(compiled, descriptor, outputPort).ToArray());
 
     private static void AddEffectsOffInitialization(
         ICollection<StandardMidiFileEvent> events,

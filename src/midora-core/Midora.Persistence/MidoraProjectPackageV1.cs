@@ -503,8 +503,6 @@ public sealed class MidoraProjectPackageV1
                         temporaryPath: temporaryDirectory,
                         innerException: exception);
                 }
-                await WriteContentDirectoryAsync(temporaryDirectory, content, cancellationToken)
-                    .ConfigureAwait(false);
                 _faultInjector.ThrowIfRequested(
                     MidoraPackageFaultPointV1.BeforeZipWrite,
                     temporaryPackage);
@@ -550,10 +548,11 @@ public sealed class MidoraProjectPackageV1
                         reopened.Presentation,
                         reopened.Project.Metadata.Snapshot(),
                         reopened.FileInformation,
-                        contentRoot: null,
+                        contentRoot: temporaryDirectory,
                         content.PureMidiPackEntries,
-                        cancellationToken);
-                    RequireEqualContent(content.MemoryFiles, reopenedContent.MemoryFiles);
+                        cancellationToken,
+                        compareStagedContent: true);
+                    RequireEqualContent(content.Files, reopenedContent.Files);
                 }
             }
             catch (Exception exception) when (exception is IOException
@@ -820,11 +819,12 @@ public sealed class MidoraProjectPackageV1
             bool conductorFallback = false;
             try
             {
-                byte[]? conductorBytes = await TryReadValidatedAsync(
+                ZipArchiveEntry? conductorEntry = await TryReadValidatedEntryAsync(
                     MidoraPackagePathsV1.ConductorTrack, "conductor-json", entries, index, path, cancellationToken)
                     .ConfigureAwait(false);
-                if (conductorBytes is null) throw new InvalidDataException("conductor-track.json is missing.");
-                ConductorTrackCodecV1.Restore(project, ConductorTrackCodecV1.Parse(conductorBytes));
+                if (conductorEntry is null) throw new InvalidDataException("conductor-track.json is missing.");
+                using Stream conductorInput = conductorEntry.Open();
+                ConductorTrackCodecV1.Restore(project, conductorInput, cancellationToken);
             }
             catch (Exception exception) when (exception is InvalidDataException
                 or System.Text.Json.JsonException
@@ -961,53 +961,53 @@ public sealed class MidoraProjectPackageV1
         ProjectPresentationStateV3 presentation,
         ProjectMetadataSnapshot metadata,
         MidoraProjectFileInformationV1 fileInformation,
-        string? contentRoot,
+        string contentRoot,
         IReadOnlyList<ManifestFileEntryJsonV1>? knownPureMidiPackEntries,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool compareStagedContent = false)
     {
-        Dictionary<string, byte[]> content = new(StringComparer.Ordinal)
-        {
-            [MidoraPackagePathsV1.Project] = ProjectCodecV1.Serialize(project),
-            [MidoraPackagePathsV1.Metadata] = MetadataCodecV1.Serialize(metadata),
-            [MidoraPackagePathsV1.ConductorTrack] = ConductorTrackCodecV1.Serialize(project),
-            [MidoraPackagePathsV1.ProjectSettings] = ProjectSettingsCodecV1.Serialize(project),
-            [MidoraPackagePathsV1.GlobalResetDefaults] = GlobalResetDefaultsCodecV1.Serialize(
-                project.GlobalResetDefaults),
-            [MidoraPackagePathsV1.GlobalEventScopeDefaults] = GlobalEventScopeDefaultsCodecV1.Serialize()
-        };
-        content.Add(
-            MidoraPackagePathsV1.ProjectPresentation,
-            ProjectPresentationCodecV3.Serialize(presentation, project));
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentRoot);
+        Dictionary<string, StructuralFileV1> content = new(StringComparer.Ordinal);
+        AddBytes(MidoraPackagePathsV1.Project, () => ProjectCodecV1.Serialize(project));
+        AddBytes(MidoraPackagePathsV1.Metadata, () => MetadataCodecV1.Serialize(metadata));
+        Add(MidoraPackagePathsV1.ConductorTrack,
+            stream => ConductorTrackCodecV1.Serialize(project, stream, cancellationToken));
+        AddBytes(MidoraPackagePathsV1.ProjectSettings, () => ProjectSettingsCodecV1.Serialize(project));
+        AddBytes(MidoraPackagePathsV1.GlobalResetDefaults,
+            () => GlobalResetDefaultsCodecV1.Serialize(project.GlobalResetDefaults));
+        AddBytes(MidoraPackagePathsV1.GlobalEventScopeDefaults, GlobalEventScopeDefaultsCodecV1.Serialize);
+        AddBytes(MidoraPackagePathsV1.ProjectPresentation,
+            () => ProjectPresentationCodecV3.Serialize(presentation, project));
         foreach (EventInstrument instrument in project.EventInstruments)
         {
-            content.Add(
+            Add(
                 $"event-instruments/ei_{instrument.Id}.pb",
-                EventInstrumentProtobufCodecV2.Serialize(instrument));
+                stream => EventInstrumentProtobufCodecV2.Serialize(instrument, stream, cancellationToken));
         }
         foreach (EventInstrumentUsage usage in project.EventInstrumentUsages)
         {
-            content.Add(
+            AddBytes(
                 $"event-instrument-usages/eiu_{usage.Id}.pb",
-                EventInstrumentUsageProtobufCodecV1.Serialize(usage));
+                () => EventInstrumentUsageProtobufCodecV1.Serialize(usage));
         }
         foreach (LogicalTrack track in project.Tracks)
         {
-            content.Add(
+            Add(
                 $"logical-tracks/lt_{track.Id}.pb",
-                LogicalTrackProtobufCodecV1.Serialize(track));
+                stream => LogicalTrackProtobufCodecV1.Serialize(track, stream, cancellationToken));
         }
         foreach (MidiChannelRoot root in project.MidiChannelRoots)
         {
-            content.Add(
+            AddBytes(
                 $"midi-channel-roots/mcr_{root.Id}.pb",
-                MidiChannelRootProtobufCodecV1.Serialize(root));
+                () => MidiChannelRootProtobufCodecV1.Serialize(root));
         }
         foreach (PureMidiTrack track in project.PureMidiTracks)
         {
             string contentPackPath = MidoraPackagePathsV1.PureMidiContentPack(track.Id);
-            content.Add(
+            AddBytes(
                 $"midi-tracks/mt_{track.Id}.pb",
-                PureMidiTrackProtobufCodecV1.Serialize(track, contentPackPath));
+                () => PureMidiTrackProtobufCodecV1.Serialize(track, contentPackPath));
         }
         ManifestFileEntryJsonV1[] pureMidiPackEntries;
         if (knownPureMidiPackEntries is not null)
@@ -1038,7 +1038,7 @@ public sealed class MidoraProjectPackageV1
             Path = item.Key,
             Kind = GetExpectedKind(item.Key),
             SchemaVersion = GetCurrentSchemaVersion(item.Key),
-            Sha256 = Convert.ToHexStringLower(SHA256.HashData(item.Value))
+            Sha256 = item.Value.Sha256
         })
             .Concat(pureMidiPackEntries)
             .ToArray();
@@ -1052,8 +1052,31 @@ public sealed class MidoraProjectPackageV1
             LastSavedWithSoftwareVersion = fileInformation.LastSavedWithSoftwareVersion,
             Files = manifestFiles
         };
-        content.Add(MidoraPackagePathsV1.Manifest, ManifestCodecV3.Serialize(manifest));
+        AddBytes(MidoraPackagePathsV1.Manifest, () => ManifestCodecV3.Serialize(manifest));
         return new(content, pureMidiPackEntries);
+
+        void AddBytes(string path, Func<byte[]> serialize) => Add(path, stream => stream.Write(serialize()));
+
+        void Add(string path, Action<Stream> serialize)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string filePath = Path.Combine(contentRoot, path.Replace('/', Path.DirectorySeparatorChar));
+            if (!compareStagedContent) Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+            using FileStream file = new(filePath,
+                compareStagedContent ? FileMode.Open : FileMode.CreateNew,
+                compareStagedContent ? FileAccess.Read : FileAccess.Write,
+                FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
+            using PackageContentStreamV1 contentStream = new(file, compareStagedContent, cancellationToken);
+            using BufferedStream buffered = new(contentStream, 64 * 1024);
+            serialize(buffered);
+            buffered.Flush();
+            (long length, string hash) = contentStream.Complete();
+            // Staging is disposable transaction input, not a recovery artifact.
+            // Flush managed buffers for ZIP/self-validation reads; durable flush
+            // belongs to the final package/backup publication, not every entry.
+            if (!compareStagedContent) file.Flush();
+            content.Add(path, new(length, hash));
+        }
     }
 
     private static void ValidateSupportedProject(MidoraProject project, CancellationToken cancellationToken)
@@ -1537,8 +1560,9 @@ public sealed class MidoraProjectPackageV1
                 entries,
                 manifestIndex,
                 targetPath,
-                cancellationToken).ConfigureAwait(false);
-            if (payload.Bytes is null)
+                cancellationToken,
+                streamPayload: true).ConfigureAwait(false);
+            if (payload.Entry is null)
             {
                 AddDamagedObject(
                     project.DamagedEventInstruments,
@@ -1552,14 +1576,15 @@ public sealed class MidoraProjectPackageV1
             }
             try
             {
+                using Stream input = payload.Entry.Open();
                 EventInstrument instrument = fileFormatVersion switch
                 {
                     PersistenceContractV1.FileFormatVersion =>
-                        RestoreFormat1EventInstrument(project, payload.Bytes),
+                        RestoreFormat1EventInstrument(project, input, cancellationToken),
                     PersistenceContractV2.FileFormatVersion =>
-                        EventInstrumentProtobufCodecV2.Restore(project, payload.Bytes),
+                        EventInstrumentProtobufCodecV2.Restore(project, input, cancellationToken),
                     PersistenceContractV3.FileFormatVersion =>
-                        EventInstrumentProtobufCodecV2.Restore(project, payload.Bytes),
+                        EventInstrumentProtobufCodecV2.Restore(project, input, cancellationToken),
                     _ => throw new InvalidDataException(
                         $"Unsupported Event Instrument file-format version {fileFormatVersion}.")
                 };
@@ -1716,8 +1741,9 @@ public sealed class MidoraProjectPackageV1
                 entries,
                 manifestIndex,
                 targetPath,
-                cancellationToken).ConfigureAwait(false);
-            if (payload.Bytes is null)
+                cancellationToken,
+                streamPayload: logical).ConfigureAwait(false);
+            if (payload.Bytes is null && payload.Entry is null)
             {
                 AddDamagedObject(
                     logical ? project.DamagedLogicalTracks : project.DamagedPureMidiTracks,
@@ -1734,7 +1760,8 @@ public sealed class MidoraProjectPackageV1
             {
                 if (logical)
                 {
-                    LogicalTrack track = LogicalTrackProtobufCodecV1.Restore(project, payload.Bytes);
+                    using Stream input = payload.Entry!.Open();
+                    LogicalTrack track = LogicalTrackProtobufCodecV1.Restore(project, input, cancellationToken);
                     if (track.Id != expectedId)
                     {
                         throw new InvalidDataException(
@@ -1799,7 +1826,8 @@ public sealed class MidoraProjectPackageV1
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         IReadOnlyDictionary<string, ManifestFileEntryJsonV1> manifestIndex,
         string targetPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool streamPayload = false)
     {
         if (!manifestIndex.TryGetValue(packagePath, out ManifestFileEntryJsonV1? manifestEntry))
         {
@@ -1820,13 +1848,16 @@ public sealed class MidoraProjectPackageV1
         {
             return new(null, "The object is indexed by project.json and manifest.json but its Zip entry is missing.");
         }
-        byte[] bytes = await ReadEntryAsync(archiveEntry, cancellationToken).ConfigureAwait(false);
-        string actualHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
+        byte[]? bytes = streamPayload
+            ? null : await ReadEntryAsync(archiveEntry, cancellationToken).ConfigureAwait(false);
+        string actualHash = bytes is not null
+            ? Convert.ToHexStringLower(SHA256.HashData(bytes))
+            : await HashEntryAsync(archiveEntry, cancellationToken).ConfigureAwait(false);
         if (!string.Equals(actualHash, manifestEntry.Sha256, StringComparison.Ordinal))
         {
             return new(null, "The object SHA-256 does not match manifest.json.");
         }
-        return new(bytes, null);
+        return new(bytes, null, streamPayload ? archiveEntry : null);
     }
 
     private static void AddDamagedObject(
@@ -1856,7 +1887,33 @@ public sealed class MidoraProjectPackageV1
             packagePath));
     }
 
-    private sealed record ObjectPayloadV1(byte[]? Bytes, string? Error);
+    private sealed record ObjectPayloadV1(byte[]? Bytes, string? Error, ZipArchiveEntry? Entry = null);
+
+    private static async Task<string> HashEntryAsync(ZipArchiveEntry entry, CancellationToken cancellationToken)
+    {
+        await using Stream input = entry.Open();
+        return Convert.ToHexStringLower(await SHA256.HashDataAsync(input, cancellationToken).ConfigureAwait(false));
+    }
+
+    private static async Task<ZipArchiveEntry?> TryReadValidatedEntryAsync(
+        string packagePath,
+        string expectedKind,
+        IReadOnlyDictionary<string, ZipArchiveEntry> entries,
+        IReadOnlyDictionary<string, ManifestFileEntryJsonV1> index,
+        string targetPath,
+        CancellationToken cancellationToken)
+    {
+        if (!index.TryGetValue(packagePath, out ManifestFileEntryJsonV1? manifestEntry)
+            || !entries.TryGetValue(packagePath, out ZipArchiveEntry? archiveEntry)) return null;
+        if (manifestEntry.Kind != expectedKind
+            || manifestEntry.SchemaVersion != PersistenceContractV1.SchemaVersion)
+            throw StructureFailure(targetPath, packagePath, "Package file kind or schemaVersion is inconsistent.");
+        string actualHash = await HashEntryAsync(archiveEntry, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(actualHash, manifestEntry.Sha256, StringComparison.Ordinal))
+            throw new MidoraPackageExceptionV1(MidoraPackageStageV1.HashValidation,
+                "Package file SHA-256 does not match manifest.json.", targetPath, packagePath);
+        return archiveEntry;
+    }
 
     private static async Task<byte[]> ReadRequiredValidatedAsync(
         string packagePath,
@@ -1944,27 +2001,6 @@ public sealed class MidoraProjectPackageV1
             : new MemoryStream();
         await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
         return output.ToArray();
-    }
-
-    private static async Task WriteContentDirectoryAsync(
-        string root,
-        PackageContentV1 content,
-        CancellationToken cancellationToken)
-    {
-        foreach (string packagePath in GetStableEntryOrder(content.MemoryFiles.Keys).Skip(1))
-        {
-            string filePath = Path.Combine(root, packagePath.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
-            await File.WriteAllBytesAsync(
-                filePath,
-                content.MemoryFiles[packagePath],
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        await File.WriteAllBytesAsync(
-            Path.Combine(root, MidoraPackagePathsV1.Manifest),
-            content.MemoryFiles[MidoraPackagePathsV1.Manifest],
-            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteZipAsync(
@@ -2339,9 +2375,10 @@ public sealed class MidoraProjectPackageV1
 
     private static EventInstrument RestoreFormat1EventInstrument(
         MidoraProject project,
-        ReadOnlySpan<byte> bytes)
+        Stream input,
+        CancellationToken cancellationToken)
     {
-        EventInstrument instrument = EventInstrumentProtobufCodecV1.Restore(project, bytes);
+        EventInstrument instrument = EventInstrumentProtobufCodecV1.Restore(project, input, cancellationToken);
         instrument.PreRollTicks = 0;
         return instrument;
     }
@@ -2483,14 +2520,14 @@ public sealed class MidoraProjectPackageV1
             {
                 foreach (MidoraId id in EnumerateMappingChainIds(mapping.Steps)) yield return id;
             }
-            foreach (TemplateEvent templateEvent in voice.Events)
+            foreach (TemplateEventSnapshotValue templateEvent in voice.Events.CreateQuerySnapshot().EnumerateAll())
             {
                 yield return templateEvent.Id;
             }
             foreach (ValueCurve curve in voice.Curves)
             {
                 yield return curve.Id;
-                foreach (CurvePoint point in curve.Points) yield return point.Id;
+                foreach (CurvePointSnapshotValue point in curve.Points.CreateQuerySnapshot().EnumerateAll()) yield return point.Id;
             }
         }
         foreach (InstrumentEnvelope envelope in instrument.Envelopes) yield return envelope.Id;
@@ -2514,11 +2551,11 @@ public sealed class MidoraProjectPackageV1
         foreach (Segment segment in track.Segments)
         {
             yield return segment.Id;
-            foreach (LogicalNote note in segment.Notes) yield return note.Id;
+            foreach (LogicalNoteSnapshotValue note in segment.Notes.CreateQuerySnapshot().EnumerateAll()) yield return note.Id;
             foreach (LogicalParameterLane lane in segment.ParameterLanes)
             {
                 yield return lane.Id;
-                foreach (CurvePoint point in lane.Points) yield return point.Id;
+                foreach (CurvePointSnapshotValue point in lane.Points.CreateQuerySnapshot().EnumerateAll()) yield return point.Id;
             }
         }
     }
@@ -2554,17 +2591,17 @@ public sealed class MidoraProjectPackageV1
     }
 
     private static void RequireEqualContent(
-        IReadOnlyDictionary<string, byte[]> expected,
-        IReadOnlyDictionary<string, byte[]> actual)
+        IReadOnlyDictionary<string, StructuralFileV1> expected,
+        IReadOnlyDictionary<string, StructuralFileV1> actual)
     {
         if (expected.Count != actual.Count)
         {
             throw new InvalidDataException("Reopened package content count changed.");
         }
-        foreach ((string path, byte[] expectedBytes) in expected)
+        foreach ((string path, StructuralFileV1 expectedFile) in expected)
         {
-            if (!actual.TryGetValue(path, out byte[]? actualBytes)
-                || !expectedBytes.AsSpan().SequenceEqual(actualBytes))
+            if (!actual.TryGetValue(path, out StructuralFileV1? actualFile)
+                || expectedFile != actualFile)
             {
                 throw new InvalidDataException($"Reopened package content changed at '{path}'.");
             }
@@ -2655,8 +2692,10 @@ public sealed class MidoraProjectPackageV1
         path);
 
     private sealed record PackageContentV1(
-        Dictionary<string, byte[]> MemoryFiles,
+        Dictionary<string, StructuralFileV1> Files,
         IReadOnlyList<ManifestFileEntryJsonV1> PureMidiPackEntries);
+
+    private sealed record StructuralFileV1(long Length, string Sha256);
 
     private sealed record PackageManifestView(
         int FileFormatVersion,

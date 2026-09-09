@@ -23,20 +23,20 @@ public sealed class MidiExportTaskResult
 {
     internal MidiExportTaskResult(
         MidiExportTaskStatus status,
-        CompilerDiagnostic[] compilerDiagnostics,
+        IReadOnlyList<CompilerDiagnostic> compilerDiagnostics,
         MidiExportArtifactDiagnostic[] artifactDiagnostics,
         MidiExportOutputResult? output,
         MidiExportOutputException? outputFailure)
     {
         Status = status;
-        CompilerDiagnostics = Array.AsReadOnly(compilerDiagnostics);
+        CompilerDiagnostics = compilerDiagnostics;
         ArtifactDiagnostics = Array.AsReadOnly(artifactDiagnostics);
         Output = output;
         OutputFailure = outputFailure;
     }
 
     public MidiExportTaskStatus Status { get; }
-    public ReadOnlyCollection<CompilerDiagnostic> CompilerDiagnostics { get; }
+    public IReadOnlyList<CompilerDiagnostic> CompilerDiagnostics { get; }
     public ReadOnlyCollection<MidiExportArtifactDiagnostic> ArtifactDiagnostics { get; }
     public MidiExportOutputResult? Output { get; }
     public MidiExportOutputException? OutputFailure { get; }
@@ -73,7 +73,7 @@ public sealed class MidiExportTaskRunner
         {
             return new(
                 MidiExportTaskStatus.Failed,
-                request.Compilation.Diagnostics.ToArray(),
+                request.Compilation.Diagnostics,
                 [],
                 null,
                 null);
@@ -84,7 +84,7 @@ public sealed class MidiExportTaskRunner
         {
             return new(
                 MidiExportTaskStatus.Failed,
-                request.Compilation.Diagnostics.ToArray(),
+                request.Compilation.Diagnostics,
                 artifacts.Diagnostics.ToArray(),
                 null,
                 null);
@@ -99,7 +99,7 @@ public sealed class MidiExportTaskRunner
                 cancellationToken).ConfigureAwait(false);
             return new(
                 MidiExportTaskStatus.Succeeded,
-                request.Compilation.Diagnostics.ToArray(),
+                request.Compilation.Diagnostics,
                 [],
                 output,
                 null);
@@ -108,7 +108,7 @@ public sealed class MidiExportTaskRunner
         {
             return new(
                 MidiExportTaskStatus.Cancelled,
-                request.Compilation.Diagnostics.ToArray(),
+                request.Compilation.Diagnostics,
                 [],
                 null,
                 null);
@@ -117,7 +117,7 @@ public sealed class MidiExportTaskRunner
         {
             return new(
                 MidiExportTaskStatus.Failed,
-                request.Compilation.Diagnostics.ToArray(),
+                request.Compilation.Diagnostics,
                 [],
                 null,
                 exception);

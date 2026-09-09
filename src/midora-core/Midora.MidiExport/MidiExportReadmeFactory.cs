@@ -1,5 +1,6 @@
 using Midora.Compiler;
 using Midora.Domain;
+using System.Collections;
 
 namespace Midora.MidiExport;
 
@@ -13,7 +14,8 @@ public static class MidiExportReadmeFactory
         string createdWithSoftwareVersion,
         string lastSavedWithSoftwareVersion,
         string exportSoftwareVersion,
-        DateTimeOffset exportedAtUtc)
+        DateTimeOffset exportedAtUtc,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(compilation);
@@ -21,6 +23,7 @@ public static class MidiExportReadmeFactory
         ArgumentNullException.ThrowIfNull(createdWithSoftwareVersion);
         ArgumentNullException.ThrowIfNull(lastSavedWithSoftwareVersion);
         ArgumentNullException.ThrowIfNull(exportSoftwareVersion);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!compilation.Succeeded)
         {
             throw new ArgumentException(
@@ -59,13 +62,7 @@ public static class MidiExportReadmeFactory
                 track.Participates,
                 track.ExclusionReason)).ToArray(),
             PortMappings = BuildPortMappings(compilation, outputPlan),
-            Diagnostics = compiled.Diagnostics
-                .Where(diagnostic => diagnostic.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Info)
-                .Select(diagnostic => new MidiExportReadmeDiagnostic(
-                    diagnostic.Severity.ToString(),
-                    diagnostic.Code,
-                    diagnostic.Message))
-                .ToArray(),
+            Diagnostics = MidiExportReadmeDiagnosticProjection.Create(compiled.Diagnostics, cancellationToken),
             FileNames = outputPlan.Targets.Select(target => target.FileName).ToArray(),
             CreatedWithSoftwareVersion = createdWithSoftwareVersion,
             LastSavedWithSoftwareVersion = lastSavedWithSoftwareVersion,
@@ -89,4 +86,45 @@ public static class MidiExportReadmeFactory
                 fileName);
         }).ToArray();
 
+}
+
+/// <summary>Frozen canonical diagnostics; repeated values are projected on demand.</summary>
+internal sealed class MidiExportReadmeDiagnosticProjection(
+    IReadOnlyList<CompilerDiagnostic> source) : IReadOnlyList<MidiExportReadmeDiagnostic>
+{
+    public static MidiExportReadmeDiagnosticProjection Create(
+        IReadOnlyList<CompilerDiagnostic> source,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (source is CompilerDiagnosticList compact)
+        {
+            int included = checked(compact.CountSeverity(DiagnosticSeverity.Warning)
+                + compact.CountSeverity(DiagnosticSeverity.Info));
+            if (included == 0) return new(CompilerDiagnosticList.Empty);
+            if (included == compact.Count) return new(compact);
+            return new(compact.Filter(
+                static value => value.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Info,
+                cancellationToken));
+        }
+        List<CompilerDiagnostic> diagnostics = [];
+        for (int index = 0; index < source.Count; index++)
+        {
+            if ((index & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+            CompilerDiagnostic diagnostic = source[index];
+            if (diagnostic.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Info)
+                diagnostics.Add(diagnostic);
+        }
+        return new(diagnostics.ToArray());
+    }
+
+    public int Count => source.Count;
+    public MidiExportReadmeDiagnostic this[int index] => Project(source[index]);
+    public IEnumerator<MidiExportReadmeDiagnostic> GetEnumerator()
+    {
+        foreach (CompilerDiagnostic diagnostic in source) yield return Project(diagnostic);
+    }
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    private static MidiExportReadmeDiagnostic Project(CompilerDiagnostic value) =>
+        new(value.Severity.ToString(), value.Code, value.Message);
 }

@@ -24,7 +24,7 @@ public enum MidiExportOutputItemState
 
 public sealed class MidiExportPreparedArtifact
 {
-    private readonly Action<Stream> _writer;
+    private readonly Action<Stream, CancellationToken> _writer;
     private byte[]? _content;
 
     public MidiExportPreparedArtifact(string sourceKey, ReadOnlySpan<byte> content)
@@ -32,10 +32,20 @@ public sealed class MidiExportPreparedArtifact
         ArgumentException.ThrowIfNullOrEmpty(sourceKey);
         SourceKey = sourceKey;
         _content = content.ToArray();
-        _writer = output => output.Write(_content);
+        _writer = (output, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            output.Write(_content);
+        };
     }
 
     internal MidiExportPreparedArtifact(string sourceKey, Action<Stream> writer)
+        : this(sourceKey, (output, _) => writer(output))
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+    }
+
+    internal MidiExportPreparedArtifact(string sourceKey, Action<Stream, CancellationToken> writer)
     {
         ArgumentException.ThrowIfNullOrEmpty(sourceKey);
         SourceKey = sourceKey;
@@ -51,14 +61,15 @@ public sealed class MidiExportPreparedArtifact
             if (_content is null)
             {
                 using MemoryStream output = new();
-                _writer(output);
+                _writer(output, CancellationToken.None);
                 _content = output.ToArray();
             }
             return _content;
         }
     }
 
-    internal void WriteTo(Stream output) => _writer(output);
+    internal void WriteTo(Stream output, CancellationToken cancellationToken = default) =>
+        _writer(output, cancellationToken);
 }
 
 public sealed record MidiExportOutputItemResult(
@@ -202,7 +213,7 @@ public sealed class MidiExportOutputTransaction
                         FileShare.None,
                         256 * 1024,
                         FileOptions.SequentialScan);
-                    bySourceKey[target.SourceKey].WriteTo(staged);
+                    bySourceKey[target.SourceKey].WriteTo(staged, cancellationToken);
                     await staged.FlushAsync(cancellationToken).ConfigureAwait(false);
                 }
             }

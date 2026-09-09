@@ -308,17 +308,22 @@ public static partial class ProjectObjectClipboard
             progress: BulkEditPreparationContext.Current!.ProgressInRange(0, 0.75));
 
     private static IProjectEditCommand KeepClipboardAlive(ProjectObjectClipboardPayload payload,
-        IProjectEditCommand command, ProjectClipboardPasteTarget? pasteTarget = null)
+        IProjectEditCommand command, ProjectClipboardPasteTarget? pasteTarget = null,
+        bool independentlyPreparedContent = false)
     {
-        IProjectEditCommand detached = new SequentialProjectEditCommand(command.Name, [_ => command]);
+        // Note paste already prepares a detached owner root and fully consumes
+        // its input into independently retained pages. Structural commands still
+        // require the whole-Project transaction and its source clipboard lease.
+        IProjectEditCommand detached = independentlyPreparedContent ? command
+            : new SequentialProjectEditCommand(command.Name, [_ => command]);
         ProjectClipboardPasteTarget target = pasteTarget ?? new(payload.Kind);
         return command is ITimelineSelectionResultEditCommand selection
-            ? new SelectionClipboardCommand(payload, detached, selection, target)
-            : new ClipboardCommand(payload, detached, target);
+            ? new SelectionClipboardCommand(payload, detached, selection, target, independentlyPreparedContent)
+            : new ClipboardCommand(payload, detached, target, independentlyPreparedContent);
     }
 
     private class ClipboardCommand(ProjectObjectClipboardPayload payload, IProjectEditCommand command,
-        ProjectClipboardPasteTarget pasteTarget)
+        ProjectClipboardPasteTarget pasteTarget, bool independentlyPreparedContent)
         : IProgressReportingProjectEditCommand, IProjectClipboardPasteCommand, IDisposable
     {
         private readonly ClipboardStorageOwner _storage = payload.StorageOwner;
@@ -357,6 +362,16 @@ public static partial class ProjectObjectClipboard
                     ICancellableProjectEditCommand cancellable => cancellable.Prepare(project, token),
                     _ => command.Prepare(project)
                 };
+                if (independentlyPreparedContent)
+                {
+                    // Only explicitly audited Note commands opt in: the returned
+                    // edit owns its output pages and selection, not input iterators.
+                    // A command can still be prepared again while its own lease lives.
+                    metadata.Dispose();
+                    metadata = null;
+                    lease.Dispose();
+                    return prepared;
+                }
                 return prepared is IPreparedTimelineSelectionEdit { HasPreparedSelection: true } selection
                     ? new SelectionClipboardPrepared(prepared, lease, metadata, selection.PreparedSelection)
                     : new ClipboardPrepared(prepared, lease, metadata);
@@ -376,8 +391,8 @@ public static partial class ProjectObjectClipboard
     }
     private sealed class SelectionClipboardCommand(ProjectObjectClipboardPayload payload,
         IProjectEditCommand command, ITimelineSelectionResultEditCommand selection,
-        ProjectClipboardPasteTarget pasteTarget)
-        : ClipboardCommand(payload, command, pasteTarget), ITimelineSelectionResultEditCommand
+        ProjectClipboardPasteTarget pasteTarget, bool independentlyPreparedContent)
+        : ClipboardCommand(payload, command, pasteTarget, independentlyPreparedContent), ITimelineSelectionResultEditCommand
     {
         public IReadOnlyList<MidoraId> ResultSelectionIds => selection.ResultSelectionIds;
     }

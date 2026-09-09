@@ -264,7 +264,7 @@ public static partial class ProjectObjectClipboard
         return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalNoteClipboard(
             data.Notes,
             targetSegmentId,
-            editCursorTick), new(payload.Kind, targetSegmentId));
+            editCursorTick), new(payload.Kind, targetSegmentId), independentlyPreparedContent: true);
     }
 
     private static T RequirePayload<T>(

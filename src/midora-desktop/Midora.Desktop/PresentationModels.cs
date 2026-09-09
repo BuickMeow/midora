@@ -4110,14 +4110,22 @@ public sealed class DiagnosticsWorkspaceViewModel()
         WorkspaceKey.ForType(WorkspaceKind.Diagnostics),
         "Diagnostics")
 {
-    private readonly List<DiagnosticRow> _allDiagnostics = [];
-    private readonly HashSet<MidoraId> _workspaceScopeIds = [];
-    private readonly HashSet<MidoraId> _selectionScopeIds = [];
+    private const int SynchronousFilterLimit = 4_096;
+    private readonly Dispatcher _diagnosticDispatcher = Dispatcher.CurrentDispatcher;
+    private VirtualDiagnosticRows _allDiagnostics = VirtualDiagnosticRows.Empty;
+    private VirtualDiagnosticRows _diagnostics = VirtualDiagnosticRows.Empty;
+    private CancellationTokenSource _filterCancellation = new();
+    private long _filterGeneration;
+    private bool _isFiltering;
+    private string? _filterError;
+    private CompressedMidoraIdSet _workspaceScopeIds = CompressedMidoraIdSet.Empty;
+    private CompressedMidoraIdSet _selectionScopeIds = CompressedMidoraIdSet.Empty;
     private string _searchText = string.Empty;
     private string _severityFilter = "All severities";
     private string _statusFilter = "Active";
     private string _scopeFilter = "Whole Project";
-    public ObservableCollection<DiagnosticRow> Diagnostics { get; } = [];
+    public IReadOnlyList<DiagnosticRow> Diagnostics => _diagnostics;
+    public bool IsFiltering => _isFiltering;
     public IReadOnlyList<string> SeverityFilters { get; } = ["All severities", "Error", "Warning", "Information"];
     public IReadOnlyList<string> StatusFilters { get; } =
         ["All statuses", "Active", "Prior Result", "Resolved", "Runtime History"];
@@ -4145,7 +4153,11 @@ public sealed class DiagnosticsWorkspaceViewModel()
         get => _scopeFilter;
         set { if (Set(ref _scopeFilter, value ?? "Whole Project")) ApplyFilter(); }
     }
-    public string Summary => $"Showing {Diagnostics.Count} of {_allDiagnostics.Count} diagnostic(s)";
+    public string Summary => _filterError is not null
+        ? $"Diagnostic filter failed: {_filterError}"
+        : _isFiltering
+            ? $"Filtering {_allDiagnostics.Count} diagnostic(s)..."
+            : $"Showing {Diagnostics.Count} of {_allDiagnostics.Count} diagnostic(s)";
 
     public override void Rebuild(MidoraProject project, long revision)
     {
@@ -4154,61 +4166,135 @@ public sealed class DiagnosticsWorkspaceViewModel()
     public void Replace(IEnumerable<DiagnosticRow> diagnostics)
     {
         ArgumentNullException.ThrowIfNull(diagnostics);
-        _allDiagnostics.Clear();
-        _allDiagnostics.AddRange(diagnostics);
+        _allDiagnostics = diagnostics as VirtualDiagnosticRows
+            ?? new VirtualDiagnosticRows(diagnostics.ToArray());
+        // Retired results must not remain retained while a hidden Workspace waits.
+        PublishDiagnostics(VirtualDiagnosticRows.Empty);
         ApplyFilter();
     }
 
     public void SetScope(WorkspaceViewModel? workspace)
     {
-        _workspaceScopeIds.Clear();
-        _selectionScopeIds.Clear();
-        if (workspace?.ObjectId is MidoraId objectId) _workspaceScopeIds.Add(objectId);
-        if (workspace is not null)
-        {
-            _selectionScopeIds.UnionWith(workspace.Selection.Ids);
-            _workspaceScopeIds.UnionWith(workspace.Selection.Ids);
-        }
+        _selectionScopeIds = workspace?.Selection.SharedIds ?? CompressedMidoraIdSet.Empty;
+        _workspaceScopeIds = workspace?.ObjectId is MidoraId objectId
+            ? _selectionScopeIds.Add(objectId) : _selectionScopeIds;
         ApplyFilter();
     }
 
     private void ApplyFilter()
     {
+        _filterCancellation.Cancel();
+        _filterCancellation.Dispose();
+        _filterCancellation = new();
+        long generation = ++_filterGeneration;
+        _filterError = null;
+        _isFiltering = false;
+        Raise(nameof(IsFiltering));
+        if (IsDisposed || IsPresentationSuspended)
+        {
+            Raise(nameof(Summary));
+            return;
+        }
         string search = SearchText.Trim();
-        IEnumerable<DiagnosticRow> query = _allDiagnostics;
-        if (!string.Equals(SeverityFilter, "All severities", StringComparison.Ordinal))
+        string? severity = SeverityFilter == "All severities" ? null
+            : SeverityFilter == "Information" ? "Info" : SeverityFilter;
+        string? status = StatusFilter == "All statuses" ? null : StatusFilter;
+        IReadOnlySet<MidoraId>? scopeIds = ScopeFilter switch
         {
-            string expected = SeverityFilter == "Information" ? "Info" : SeverityFilter;
-            query = query.Where(item => string.Equals(item.Severity, expected, StringComparison.OrdinalIgnoreCase));
-        }
-        if (!string.Equals(StatusFilter, "All statuses", StringComparison.Ordinal))
-        {
-            query = query.Where(item => string.Equals(item.Status, StatusFilter, StringComparison.Ordinal));
-        }
-        query = ScopeFilter switch
-        {
-            "Current Workspace" => query.Where(item => MatchesAny(item.SourceReference, _workspaceScopeIds)),
-            "Current Selection" => query.Where(item => MatchesAny(item.SourceReference, _selectionScopeIds)),
-            "Current Task" => Enumerable.Empty<DiagnosticRow>(),
-            _ => query
+            "Current Workspace" => _workspaceScopeIds,
+            "Current Selection" => _selectionScopeIds,
+            "Current Task" => CompressedMidoraIdSet.Empty,
+            _ => null
         };
-        if (search.Length != 0)
+        bool? uniformCurrent = _allDiagnostics.UniformIsCurrent;
+        if (scopeIds is { Count: 0 }
+            || uniformCurrent.HasValue && status is not null
+                && status != (uniformCurrent.Value ? "Active" : "Prior Result"))
         {
-            query = query.Where(item => item.Severity.Contains(search, StringComparison.CurrentCultureIgnoreCase)
+            PublishDiagnostics(VirtualDiagnosticRows.Empty);
+            return;
+        }
+        if (severity is null && search.Length == 0 && scopeIds is null
+            && (status is null || uniformCurrent.HasValue))
+        {
+            PublishDiagnostics(_allDiagnostics);
+            return;
+        }
+        bool Matches(DiagnosticRow item) =>
+            (severity is null || string.Equals(item.Severity, severity, StringComparison.OrdinalIgnoreCase))
+            && (status is null || string.Equals(item.Status, status, StringComparison.Ordinal))
+            && (scopeIds is null || MatchesAny(item.SourceReference, scopeIds))
+            && (search.Length == 0
+                || item.Severity.Contains(search, StringComparison.CurrentCultureIgnoreCase)
                 || item.Category.Contains(search, StringComparison.CurrentCultureIgnoreCase)
                 || item.Code.Contains(search, StringComparison.CurrentCultureIgnoreCase)
                 || item.Message.Contains(search, StringComparison.CurrentCultureIgnoreCase)
                 || item.Source.Contains(search, StringComparison.CurrentCultureIgnoreCase));
-        }
-        Diagnostics.Clear();
-        foreach (DiagnosticRow diagnostic in query)
+
+        VirtualDiagnosticRows source = _allDiagnostics;
+        CancellationToken token = _filterCancellation.Token;
+        if (source.SourceRecordCount <= SynchronousFilterLimit)
         {
-            Diagnostics.Add(diagnostic);
+            PublishDiagnostics(source.Filter(Matches, token));
+            return;
         }
+        _isFiltering = true;
+        Raise(nameof(IsFiltering));
+        Raise(nameof(Summary));
+        _ = Task.Run(() => source.Filter(Matches, token), token).ContinueWith(task =>
+        {
+            if (task.IsCanceled || token.IsCancellationRequested) return;
+            WorkspacePresentationDispatch.Post(_diagnosticDispatcher, token, () =>
+            {
+                if (IsDisposed || IsPresentationSuspended || token.IsCancellationRequested
+                    || generation != _filterGeneration) return;
+                _isFiltering = false;
+                Raise(nameof(IsFiltering));
+                if (task.IsFaulted)
+                {
+                    _filterError = task.Exception?.GetBaseException().Message ?? "Unknown failure";
+                    Raise(nameof(Summary));
+                }
+                else PublishDiagnostics(task.Result);
+            });
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    private void PublishDiagnostics(VirtualDiagnosticRows diagnostics)
+    {
+        _diagnostics = diagnostics;
+        Raise(nameof(Diagnostics));
         Raise(nameof(Summary));
     }
 
-    private static bool MatchesAny(SourceReference source, HashSet<MidoraId> ids)
+    protected override void OnPresentationSuspended()
+    {
+        _filterCancellation.Cancel();
+        _filterGeneration++;
+        _isFiltering = false;
+        Raise(nameof(IsFiltering));
+        Raise(nameof(Summary));
+        base.OnPresentationSuspended();
+    }
+
+    protected override void OnPresentationResumed()
+    {
+        ApplyFilter();
+        base.OnPresentationResumed();
+    }
+
+    protected override void DisposeCore()
+    {
+        _filterCancellation.Cancel();
+        _filterCancellation.Dispose();
+        _allDiagnostics = VirtualDiagnosticRows.Empty;
+        _diagnostics = VirtualDiagnosticRows.Empty;
+        _workspaceScopeIds = CompressedMidoraIdSet.Empty;
+        _selectionScopeIds = CompressedMidoraIdSet.Empty;
+        base.DisposeCore();
+    }
+
+    private static bool MatchesAny(SourceReference source, IReadOnlySet<MidoraId> ids)
     {
         if (ids.Count == 0) return false;
         return ids.Contains(source.TrackId)

@@ -13,24 +13,24 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
         if (_count != 0 || _batchDepth != 0) throw new InvalidOperationException("Only an empty collection can adopt a spliced root.");
         if (snapshot.EditableRoot is not EditableRoot source) throw new InvalidOperationException("The timeline snapshot has no editable root.");
         if (splices.PageCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(splices));
-        List<PersistentTimelineSequence<TValue>.Leaf> leaves = [];
+        List<PersistentTimelineSequence<TValue>.Leaf>? leaves = null;
         var pages = source.LeafPages.ToBuilder();
         HashSet<PagedTimelineValuePage<TValue>> removed = [];
         List<PagedTimelineValuePage<TValue>> added = [];
         var discovery = source.DiscoveryCounts.ToBuilder();
         int[] deltas = new int[(splices.Count + SplicePrefixStride - 1) / SplicePrefixStride + 1];
-        int index = 0, start = 0, nextValue = 0, delta = 0;
+        int index = 0, nextValue = 0, delta = 0;
         IImmutableTimelineValueSource<TValue>? pendingInput = null;
         int pendingFirst = 0, pendingCount = 0;
-        foreach (var leaf in source.Sequence.EnumerateLeaves())
+        var sequence = source.Sequence.TransformLeafRuns((start, leaf) =>
         {
             token.ThrowIfCancellationRequested();
             bool touched = index < splices.Count && splices[index].Ordinal < start + leaf.Count;
             if (!touched && leaf.Replacements.Count == 0)
             {
-                FlushSlice();
-                leaves.Add(leaf); start += leaf.Count; continue;
+                return null;
             }
+            leaves = [];
             var oldPage = pages[leaf];
             pages.Remove(leaf); removed.Add(oldPage);
             foreach (long key in oldPage.DiscoveryKeys)
@@ -63,13 +63,12 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                     local = end;
                 }
             }
-            start += leaf.Count;
-        }
+            FlushSlice();
+            return leaves;
+        }, token);
         if (index != splices.Count || nextValue != values.Count)
             throw new InvalidOperationException("The splice source contains an unmatched range or source ordinal.");
-        FlushSlice();
         deltas[^1] = delta;
-        var sequence = PersistentTimelineSequence<TValue>.CreateFromLeaves(leaves, _getFingerprint);
         var spatial = source.SpatialIndex.ReplacePages(removed.ToArray(), added);
         ITimelineOrdinalLookup ordinals;
         IDisposable? createdAddress = null;
@@ -109,10 +108,14 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
         void FlushSlice()
         {
             if (pendingInput is null) return;
+            // Keep addresses only for this fragment, not providers referenced
+            // by replaced values elsewhere in its original leaf.
+            IImmutableTimelineValueSource<TValue> input = pendingInput is LeafValueSource original
+                ? original.Slice(pendingFirst, pendingCount) : pendingInput;
             var leaf = new PersistentTimelineSequence<TValue>.Leaf(
-                new TimelineValueBuffer<TValue>(pendingInput, pendingFirst, pendingCount), _getFingerprint);
+                new TimelineValueBuffer<TValue>(input, ReferenceEquals(input, pendingInput) ? pendingFirst : 0, pendingCount), _getFingerprint);
             var page = CreatePublishedPage(leaf);
-            leaves.Add(leaf); pages.Add(leaf, page); added.Add(page);
+            leaves!.Add(leaf); pages.Add(leaf, page); added.Add(page);
             foreach (long key in page.DiscoveryKeys)
                 discovery[key] = discovery.TryGetValue(key, out int prior) ? checked(prior + 1) : 1;
             pendingInput = null; pendingCount = 0;

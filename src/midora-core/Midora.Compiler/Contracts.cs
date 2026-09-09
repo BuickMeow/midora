@@ -481,7 +481,7 @@ public sealed partial class CanonicalCompiledResult
 {
     private readonly CanonicalMidiEvent[] _events;
     private readonly ChannelUnitAllocation[] _allocations;
-    private readonly CompilerDiagnostic[] _diagnostics;
+    private readonly CompilerDiagnosticList _diagnostics;
     private readonly CanonicalSmfTrackDescriptor[] _smfTracks;
     private readonly CanonicalOpaqueMidiEvent[] _opaqueMidiEvents;
     private readonly CanonicalMidiChannelModeSystemExclusiveEvent[]
@@ -497,7 +497,7 @@ public sealed partial class CanonicalCompiledResult
         CanonicalMidiEvent[] events,
         CanonicalConductor conductor,
         ChannelUnitAllocation[] allocations,
-        CompilerDiagnostic[] diagnostics,
+        IReadOnlyList<CompilerDiagnostic> diagnostics,
         bool isPartial,
         bool isConsumable,
         CompilationFailureStage? failureStage,
@@ -515,7 +515,7 @@ public sealed partial class CanonicalCompiledResult
         _events = events;
         Conductor = conductor;
         _allocations = allocations;
-        _diagnostics = diagnostics;
+        _diagnostics = CompilerDiagnosticList.FromFrozen(diagnostics);
         Purpose = context.Purpose;
         IsPartial = isPartial;
         IsConsumable = isConsumable;
@@ -906,7 +906,7 @@ public readonly record struct CompilationStatistics(
     public int LogicalPeakChannelUnitCount { get; init; }
 }
 
-public sealed class ResourceShortageDetails
+public sealed partial class ResourceShortageDetails
 {
     private readonly MidoraId[] _trackIds;
     private readonly MidoraId[] _segmentIds;

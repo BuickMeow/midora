@@ -135,6 +135,8 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
     private sealed class LeafValueSource(PersistentTimelineSequence<TValue>.Leaf leaf)
         : IImmutableTimelineValueSource<TValue>
     {
+        public PersistentTimelineSequence<TValue>.Leaf SourceLeaf => leaf;
+        public IImmutableTimelineValueSource<TValue> Slice(int first, int count) => new EditedLeafValueSource(leaf, first, count);
         public int Count => leaf.Count;
         public int PageCapacity => PersistentTimelineSequence<TValue>.LeafCapacity;
         public TValue this[int index] => leaf.GetValue(index);
@@ -156,24 +158,103 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    private sealed class EditedLeafValueSource(PersistentTimelineSequence<TValue>.Leaf? original,
-        IImmutableTimelineValueSource<TimelineValueEdit<TValue>> changes, int[] mapping)
-        : IImmutableTimelineValueSource<TValue>
+    private sealed class EditedLeafValueSource : IImmutableTimelineValueSource<TValue>
     {
-        public int Count => mapping.Length;
+        private readonly object[] _sources;
+        private readonly byte[] _sourceIndices;
+        private readonly int[] _ordinals;
+
+        public EditedLeafValueSource(PersistentTimelineSequence<TValue>.Leaf? original,
+            IImmutableTimelineValueSource<TimelineValueEdit<TValue>> changes, int[] mapping)
+            : this(mapping.Length, i => mapping[i] >= 0
+                ? (Source: (object)changes, Ordinal: mapping[i]) : OriginalAddress(original!, ~mapping[i]))
+        {
+        }
+
+        public EditedLeafValueSource(PersistentTimelineSequence<TValue>.Leaf original, int first, int count)
+            : this(count, i => OriginalAddress(original, checked(first + i)))
+        {
+        }
+
+        private EditedLeafValueSource(int count, Func<int, (object Source, int Ordinal)> getAddress)
+        {
+            // Flatten addresses, not musical values. A current leaf must not
+            // retain every obsolete edit provider through a chain of old leaves.
+            List<object> sources = [];
+            Dictionary<object, byte> indices = new(ReferenceEqualityComparer.Instance);
+            _sourceIndices = new byte[count];
+            _ordinals = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                var address = getAddress(i);
+                if (!indices.TryGetValue(address.Source, out byte sourceIndex))
+                {
+                    sourceIndex = checked((byte)sources.Count);
+                    sources.Add(address.Source);
+                    indices.Add(address.Source, sourceIndex);
+                }
+                _sourceIndices[i] = sourceIndex;
+                _ordinals[i] = address.Ordinal;
+            }
+            _sources = sources.ToArray();
+        }
+
+        private static (object Source, int Ordinal) OriginalAddress(PersistentTimelineSequence<TValue>.Leaf leaf, int index)
+        {
+            while (true)
+            {
+                // A fragment must not retain overrides/providers outside its
+                // selected slice merely by holding the whole original leaf.
+                foreach (var replacement in leaf.Replacements)
+                {
+                    if (replacement.Index > index) break;
+                    if (replacement.Index == index) return (new ScalarValue(replacement.Value), 0);
+                }
+                if (!leaf.BaseValues.TryGetSource(out var source, out int first))
+                    return (leaf.BaseValues, index);
+                index = checked(first + index);
+                if (source is EditedLeafValueSource previous) return previous.Address(index);
+                if (source is not LeafValueSource slice) return (source!, index);
+                leaf = slice.SourceLeaf;
+            }
+        }
+
+        private (object Source, int Ordinal) Address(int index) => (_sources[_sourceIndices[index]], _ordinals[index]);
+        private sealed record ScalarValue(TValue Value);
+        public int Count => _ordinals.Length;
         public int PageCapacity => PersistentTimelineSequence<TValue>.LeafCapacity;
-        public TValue this[int index] => mapping[index] < 0
-            ? original!.GetValue(~mapping[index]) : changes[mapping[index]].Replacement;
+        public TValue this[int index]
+        {
+            get
+            {
+                var address = Address(index);
+                return address.Source switch
+                {
+                    IImmutableTimelineValueSource<TimelineValueEdit<TValue>> changes => ReadValue(changes, address.Ordinal).Replacement,
+                    IImmutableTimelineValueSource<TValue> values => ReadValue(values, address.Ordinal),
+                    TimelineValueBuffer<TValue> values => values[address.Ordinal],
+                    ScalarValue scalar => scalar.Value,
+                    _ => throw new InvalidOperationException("An edited leaf has an invalid backing address.")
+                };
+            }
+        }
+        private static TRecord ReadValue<TRecord>(IImmutableTimelineValueSource<TRecord> source, int ordinal)
+        {
+            if (!TimelineValueReadScope.IsCacheOnly) return source[ordinal];
+            if (source.TryReadCachedValue(ordinal, out TRecord value)) return value;
+            throw new TimelineValueReadPendingException();
+        }
         public bool TryReadCachedValue(int index, out TValue value)
         {
-            if (mapping[index] >= 0)
+            var address = Address(index);
+            if (address.Source is IImmutableTimelineValueSource<TimelineValueEdit<TValue>> changes)
             {
-                if (changes.TryReadCachedValue(mapping[index], out var change))
+                if (changes.TryReadCachedValue(address.Ordinal, out var change))
                 { value = change.Replacement; return true; }
                 value = default!; return false;
             }
             using var scope = TimelineValueReadScope.EnterCacheOnly();
-            try { value = original!.GetValue(~mapping[index]); return true; }
+            try { value = this[index]; return true; }
             catch (TimelineValueReadPendingException) { value = default!; return false; }
         }
         public ReadOnlyMemory<TValue> ReadPage(int pageIndex)
@@ -205,14 +286,13 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             throw new InvalidOperationException("Only an empty timeline collection can adopt an edited root.");
         if (snapshot.EditableRoot is not EditableRoot source)
             throw new InvalidOperationException("The timeline snapshot has no compatible editable root.");
-        List<PersistentTimelineSequence<TValue>.Leaf> leaves = [];
         var pages = source.LeafPages.ToBuilder();
         HashSet<PagedTimelineValuePage<TValue>> removedPages = [];
         List<PagedTimelineValuePage<TValue>> addedPages = [];
         var discovery = source.DiscoveryCounts.ToBuilder();
-        int changeIndex = 0, start = 0, removedCount = 0;
+        int changeIndex = 0, removedCount = 0;
         int[] removedByPage = new int[(changes.Count + Math.Max(1, changes.PageCapacity) - 1) / Math.Max(1, changes.PageCapacity) + 1];
-        foreach (var leaf in source.Sequence.EnumerateLeaves())
+        var sequence = source.Sequence.TransformLeaves((start, leaf) =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             PersistentTimelineSequence<TValue>.Leaf? replacement = leaf;
@@ -260,9 +340,8 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                     }
                 if (replacement is not null) AddPage(replacement);
             }
-            if (replacement is not null) leaves.Add(replacement);
-            start += leaf.Count;
-        }
+            return replacement;
+        }, cancellationToken);
         if (changeIndex != changes.Count)
             throw new InvalidOperationException("A timeline root edit references an out-of-range source ordinal.");
         removedByPage[^1] = removedCount;
@@ -273,11 +352,10 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             foreach (var leaf in appendSequence.EnumerateLeaves())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                leaves.Add(leaf);
                 AddPage(leaf);
             }
+            sequence = sequence.AppendSequence(appendSequence);
         }
-        var sequence = PersistentTimelineSequence<TValue>.CreateFromLeaves(leaves, _getFingerprint);
         var spatial = source.SpatialIndex.ReplacePages(removedPages.ToArray(), addedPages);
         ITimelineOrdinalLookup ordinals;
         IDisposable? createdAddress = null;
@@ -408,13 +486,18 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
         // owns only immutable values; a read does not retain the facade or page.
         private Dictionary<MidoraId, FacadeReference> _facades = [];
         private readonly Dictionary<int, TValue> _pending = [];
+        private readonly List<T> _appended = [];
+        private readonly HashSet<MidoraId> _appendedIds = [];
         private int _nextPrune = DefaultPageCapacity * 2;
+        private int _lastFacadeCollection = GC.CollectionCount(0);
         private long _structuralRevision;
         private readonly record struct FacadeReference(WeakReference<T> Reference, int Ordinal, long StructuralRevision);
 
         public T Get(int index)
         {
             if ((uint)index >= (uint)owner._count) throw new ArgumentOutOfRangeException(nameof(index));
+            if (index >= owner._publishedSequence!.Count)
+                return _appended[index - owner._publishedSequence.Count];
             TValue value = _pending.TryGetValue(index, out TValue? pending)
                 ? pending : owner._publishedSequence![index];
             return GetFacade(value, index);
@@ -442,8 +525,59 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             foreach (var pair in _facades)
                 if (pair.Value.Reference.TryGetTarget(out _)) retained.Add(pair.Key, pair.Value);
             _facades = retained;
-            _nextPrune = checked(retained.Count + DefaultPageCapacity);
+            _nextPrune = checked(Math.Max(retained.Count * 2, retained.Count + DefaultPageCapacity));
         }
+
+        public void RegisterExisting(T value, int ordinal) => Register(value, ordinal);
+
+        public void Append(T value)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            MidoraId id = owner._getId(owner._toValue(value));
+            if (id == default) throw new ArgumentOutOfRangeException(nameof(value));
+            if (_appendedIds.Contains(id) || TryGetValue(id, out _))
+                throw new InvalidOperationException("A paged timeline collection cannot contain duplicate Stable IDs.");
+            AppendValidated(value);
+        }
+
+        private void AppendValidated(T value)
+        {
+            int ordinal = owner._count++;
+            _appended.Add(value);
+            _appendedIds.Add(owner._getId(owner._toValue(value)));
+            Register(value, ordinal);
+            if (_appended.Count >= DefaultPageCapacity) FlushAppended();
+            owner.Touch();
+        }
+
+        private void FlushAppended()
+        {
+            if (_appended.Count == 0) return;
+            Flush();
+            owner.AppendPublishedValues(new ValueProjection(_appended, owner._toValue));
+            _appended.Clear();
+            _appendedIds.Clear();
+        }
+
+        public void FlushAll()
+        {
+            FlushAppended();
+            Flush();
+            int collection = GC.CollectionCount(0);
+            if (collection == _lastFacadeCollection) return;
+            _lastFacadeCollection = collection;
+            // Removal while enumerating a Dictionary is supported on .NET.
+            // No second live-facade dictionary is retained by a read-only
+            // revision. A GC-triggered sweep also clears a final read burst
+            // when no later editor registration occurs.
+            foreach (var entry in _facades)
+                if (!entry.Value.Reference.TryGetTarget(out _)) _facades.Remove(entry.Key);
+            if (_facades.Count < _facades.EnsureCapacity(0) / 4) _facades.TrimExcess();
+            _nextPrune = checked(Math.Max(_facades.Count * 2, _facades.Count + DefaultPageCapacity));
+        }
+
+        public int RetainedObjectCount => _appended.Count;
+        public int FacadeSlotCount => _facades.Count;
 
         private bool TryGetValue(MidoraId id, out TValue value)
         {
@@ -457,7 +591,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
 
         public bool TryGetById(MidoraId id, out T? value)
         {
-            Flush();
+            FlushAll();
             if (TryGetValue(id, out TValue? scalar))
             {
                 value = GetFacade(scalar);
@@ -478,6 +612,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                 || !reference.Reference.TryGetTarget(out T? registered) || !ReferenceEquals(value, registered)) return -1;
             if (reference.Ordinal >= 0 && reference.StructuralRevision == _structuralRevision)
                 return reference.Ordinal;
+            FlushAll();
             int ordinal = FindOrdinal(id);
             _facades[id] = reference with { Ordinal = ordinal, StructuralRevision = _structuralRevision };
             return ordinal;
@@ -487,6 +622,11 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
         {
             int index = IndexOf(value);
             if (index < 0) return;
+            if (index >= owner._publishedSequence!.Count)
+            {
+                owner.Touch();
+                return;
+            }
             _pending[index] = owner._toValue(value);
             // Legacy batch callers may hold a scope for millions of mutations.
             // The unpublished mutable working set remains one bounded chunk.
@@ -503,7 +643,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
 
         public IEnumerable<T> Enumerate()
         {
-            Flush();
+            FlushAll();
             int ordinal = 0;
             foreach (TValue value in owner._publishedSequence!.Enumerate()) yield return GetFacade(value, ordinal++);
         }
@@ -531,7 +671,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                 ArgumentNullException.ThrowIfNull(item);
                 MidoraId id = owner._getId(owner._toValue(item));
                 if (id == default) throw new ArgumentOutOfRangeException(nameof(values));
-                if (!seen.Add(id) || TryGetValue(id, out _))
+                if (!seen.Add(id) || _appendedIds.Contains(id) || TryGetValue(id, out _))
                     throw new InvalidOperationException("A paged timeline collection cannot contain duplicate Stable IDs.");
             }
         }
@@ -541,7 +681,13 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             if ((uint)index > (uint)owner._count) throw new ArgumentOutOfRangeException(nameof(index));
             ValidateInsertRange(values);
             if (values.Count == 0) return;
-            Flush();
+            if (index == owner._count)
+            {
+                using var batch = owner.BeginBatchChange();
+                foreach (T value in values) AppendValidated(value);
+                return;
+            }
+            FlushAll();
             // The sequence insertion accepts an indexed projection; no second
             // full array of scalar values is built beside the caller's data.
             owner.ApplyPublishedMutation(owner._publishedSequence!.InsertRange(index, new ValueProjection(values, owner._toValue)));
@@ -554,6 +700,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
 
         public void Set(int index, T value)
         {
+            FlushAll();
             ArgumentNullException.ThrowIfNull(value);
             T old = Get(index);
             if (ReferenceEquals(old, value)) return;
@@ -572,6 +719,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
 
         public void ReplaceRange(IReadOnlyList<T> expected, IReadOnlyList<T> replacement)
         {
+            FlushAll();
             ArgumentNullException.ThrowIfNull(expected);
             ArgumentNullException.ThrowIfNull(replacement);
             if (expected.Count != replacement.Count) throw new ArgumentException("Paged timeline replacement lengths must match.");
@@ -597,6 +745,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
 
         public int RemoveRange(IReadOnlyCollection<T> values)
         {
+            FlushAll();
             ArgumentNullException.ThrowIfNull(values);
             int[] indices = values.Select(IndexOf).Where(static index => index >= 0).Distinct().Order().ToArray();
             if (indices.Length == 0) return 0;
@@ -635,8 +784,10 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                 if (reference.Reference.TryGetTarget(out T? value)) owner._setChangeSink(value, null);
             _facades.Clear();
             _pending.Clear();
+            _appended.Clear();
+            _appendedIds.Clear();
             owner.ResetPublishedStateToEmpty();
-            owner._sharedOrdinalDirectory = null;
+            owner._sharedOrdinalDirectory = new OrdinalDirectory(owner._publishedSequence!, owner._getId);
             owner._count = 0;
             owner.Touch();
         }
@@ -671,11 +822,122 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
         private PersistentTimelineSequence<TValue>? _source = sequence;
         private volatile PreparedIndex? _prepared;
 
+        public bool TryAppend(IReadOnlyList<TValue> values, int firstOrdinal, out OrdinalDirectory next)
+        {
+            Prepare();
+            // A frozen snapshot can migrate this cache on a background reader.
+            // Capture one immutable representation; never mix fields from two
+            // revisions or require the owner publication lock on a reader.
+            PreparedIndex prepared = _prepared!;
+            if (prepared.External is not null)
+            {
+                next = null!;
+                return false;
+            }
+            if (prepared.Exact is { } exact)
+            {
+                next = new OrdinalDirectory(PersistentTimelineSequence<TValue>.Empty(static _ => 0), getId)
+                {
+                    _source = null,
+                    _prepared = new(null, null, exact.Append(values.Select((value, index) =>
+                        new TimelineIdOrdinal(getId(value), firstOrdinal + index))))
+                };
+                return true;
+            }
+            Node? root = prepared.Root;
+            int first = 0;
+            if (root is not null && values.Count != 0)
+            {
+                Node tail = root;
+                while (tail.Right is not null) tail = tail.Right;
+                int retained = tail.Ids!.Length;
+                int take = Math.Min(PersistentTimelineSequence<TValue>.LeafCapacity - retained, values.Count);
+                if (take != 0)
+                {
+                    MidoraId[] ids = new MidoraId[retained + take];
+                    tail.Ids.CopyTo(ids, 0);
+                    MidoraId minimum = tail.Minimum, maximum = tail.Maximum;
+                    for (int offset = 0; offset < take; offset++)
+                    {
+                        MidoraId id = getId(values[offset]);
+                        ids[retained + offset] = id;
+                        if (id.CompareTo(minimum) < 0) minimum = id;
+                        if (id.CompareTo(maximum) > 0) maximum = id;
+                    }
+                    root = Join(RemoveRightmost(root), new(minimum, maximum, tail.Start, ids, null, null));
+                    first = take;
+                }
+            }
+            for (; first < values.Count; first += PersistentTimelineSequence<TValue>.LeafCapacity)
+            {
+                int count = Math.Min(PersistentTimelineSequence<TValue>.LeafCapacity, values.Count - first);
+                MidoraId[] ids = new MidoraId[count];
+                MidoraId minimum = getId(values[first]), maximum = minimum;
+                for (int offset = 0; offset < count; offset++)
+                {
+                    MidoraId id = getId(values[first + offset]);
+                    ids[offset] = id;
+                    if (id.CompareTo(minimum) < 0) minimum = id;
+                    if (id.CompareTo(maximum) > 0) maximum = id;
+                }
+                root = Join(root, new(minimum, maximum, firstOrdinal + first, ids, null, null));
+            }
+            next = new OrdinalDirectory(PersistentTimelineSequence<TValue>.Empty(static _ => 0), getId)
+            {
+                _source = null,
+                _prepared = root?.RequiresExactIndex == true
+                    ? new(null, null, PersistentTimelineExactOrdinalIndex.Create(
+                        EnumerateRootAddresses(root), firstOrdinal + values.Count))
+                    : new(root, null)
+            };
+            return true;
+        }
+
+        private static Node? RemoveRightmost(Node node)
+        {
+            if (node.Ids is not null) return null;
+            Node? right = RemoveRightmost(node.Right!);
+            return right is null ? node.Left : Balance(Branch(node.Left!, right));
+        }
+
+        private static Node Join(Node? left, Node right)
+        {
+            if (left is null) return right;
+            if (left.Height > right.Height + 1)
+                return Balance(Branch(left.Left!, Join(left.Right!, right)));
+            if (right.Height > left.Height + 1)
+                return Balance(Branch(Join(left, right.Left!), right.Right!));
+            return Branch(left, right);
+        }
+
+        private static Node Branch(Node left, Node right) => new(
+            left.Minimum.CompareTo(right.Minimum) < 0 ? left.Minimum : right.Minimum,
+            left.Maximum.CompareTo(right.Maximum) > 0 ? left.Maximum : right.Maximum,
+            left.Start, null, left, right);
+
+        private static Node Balance(Node node)
+        {
+            Node left = node.Left!, right = node.Right!;
+            if (left.Height > right.Height + 1)
+            {
+                if (left.Left!.Height >= left.Right!.Height)
+                    return Branch(left.Left, Branch(left.Right, right));
+                return Branch(Branch(left.Left, left.Right.Left!), Branch(left.Right.Right!, right));
+            }
+            if (right.Height > left.Height + 1)
+            {
+                if (right.Right!.Height >= right.Left!.Height)
+                    return Branch(Branch(left, right.Left), right.Right);
+                return Branch(Branch(left, right.Left.Left!), Branch(right.Left.Right!, right.Right));
+            }
+            return node;
+        }
+
         public int Find(MidoraId id)
         {
             Prepare();
             PreparedIndex index = _prepared!;
-            return index.External is { } external
+            return index.Exact is { } exact ? exact.Find(id) : index.External is { } external
                 ? external.TryFindOrdinalById(id, out int ordinal) ? ordinal : -1
                 : Find(index.Root, id);
         }
@@ -688,7 +950,12 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                 if (_prepared is not null) return;
                 Node? root = Build(_source!, getId, token);
                 token.ThrowIfCancellationRequested();
-                _prepared = new(root, null);
+                PreparedIndex prepared = root?.RequiresExactIndex == true
+                    ? new(null, null, PersistentTimelineExactOrdinalIndex.Create(
+                        EnumerateRootAddresses(root), _source!.Count, token))
+                    : new(root, null);
+                token.ThrowIfCancellationRequested();
+                _prepared = prepared;
                 _source = null;
             }
         }
@@ -714,14 +981,25 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
 
         private IEnumerable<TimelineIdOrdinal> Addresses()
         {
+            if (_prepared?.Exact is { } exact)
+            {
+                foreach (var address in exact.Enumerate()) yield return address;
+                yield break;
+            }
             if (_source is { } sequence)
             {
                 int ordinal = 0;
                 foreach (TValue value in sequence.Enumerate()) yield return new(getId(value), ordinal++);
                 yield break;
             }
+            if (_prepared?.Root is { } root)
+                foreach (var address in EnumerateRootAddresses(root)) yield return address;
+        }
+
+        private static IEnumerable<TimelineIdOrdinal> EnumerateRootAddresses(Node root)
+        {
             var stack = new Stack<Node>();
-            if (_prepared?.Root is { } root) stack.Push(root);
+            stack.Push(root);
             while (stack.TryPop(out Node? node))
             {
                 if (node.Ids is { } ids)
@@ -736,13 +1014,24 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             }
         }
 
-        private sealed record PreparedIndex(Node? Root, IImmutableTimelineIdIndex? External);
+        private sealed record PreparedIndex(Node? Root, IImmutableTimelineIdIndex? External,
+            PersistentTimelineExactOrdinalIndex? Exact = null);
 
         private int Find(Node? node, MidoraId id)
         {
             if (node is null || id.CompareTo(node.Minimum) < 0 || id.CompareTo(node.Maximum) > 0) return -1;
             if (node.Ids is not null)
             {
+                if (node.IdsAreSorted)
+                {
+                    int low = 0, high = node.Ids.Length;
+                    while (low < high)
+                    {
+                        int middle = low + (high - low) / 2;
+                        if (node.Ids[middle].CompareTo(id) < 0) low = middle + 1; else high = middle;
+                    }
+                    return low < node.Ids.Length && node.Ids[low] == id ? node.Start + low : -1;
+                }
                 for (int offset = 0; offset < node.Ids.Length; offset++)
                     if (node.Ids[offset] == id) return node.Start + offset;
                 return -1;
@@ -772,21 +1061,37 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                 nodes.Add(new(minimum, maximum, start, ids, null, null));
                 start += leaf.Count;
             }
-            return Build(nodes, 0, nodes.Count);
+            return Build(nodes, 0, nodes.Count, token);
         }
 
-        private static Node? Build(List<Node> nodes, int first, int count)
+        private static Node? Build(List<Node> nodes, int first, int count, CancellationToken token)
         {
+            token.ThrowIfCancellationRequested();
             if (count == 0) return null;
             if (count == 1) return nodes[first];
             int half = count / 2;
-            Node left = Build(nodes, first, half)!, right = Build(nodes, first + half, count - half)!;
+            Node left = Build(nodes, first, half, token)!, right = Build(nodes, first + half, count - half, token)!;
             return new(left.Minimum.CompareTo(right.Minimum) < 0 ? left.Minimum : right.Minimum,
                 left.Maximum.CompareTo(right.Maximum) > 0 ? left.Maximum : right.Maximum,
                 left.Start, null, left, right);
         }
 
         private sealed record Node(MidoraId Minimum, MidoraId Maximum, int Start,
-            MidoraId[]? Ids, Node? Left, Node? Right);
+            MidoraId[]? Ids, Node? Left, Node? Right)
+        {
+            public int Height { get; } = 1 + Math.Max(Left?.Height ?? 0, Right?.Height ?? 0);
+            public bool IdsAreSorted { get; } = AreSorted(Ids);
+            public bool RequiresExactIndex { get; } = Left?.RequiresExactIndex == true
+                || Right?.RequiresExactIndex == true
+                || Left is not null && Right is not null && Left.Maximum.CompareTo(Right.Minimum) >= 0;
+
+            private static bool AreSorted(MidoraId[]? values)
+            {
+                if (values is null) return false;
+                for (int i = 1; i < values.Length; i++)
+                    if (values[i - 1].CompareTo(values[i]) > 0) return false;
+                return true;
+            }
+        }
     }
 }

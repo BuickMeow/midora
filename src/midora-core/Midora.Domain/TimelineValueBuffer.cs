@@ -15,6 +15,8 @@ internal sealed class TimelineValueBuffer<T> : IReadOnlyList<T>
     public int Count { get; }
     public int Length => Count;
     public bool UsesExternalStorage => _source is not null;
+    internal bool TryGetSource(out IImmutableTimelineValueSource<T>? source, out int first)
+    { source = _source; first = _first; return source is not null; }
     public T this[int index]
     {
         get

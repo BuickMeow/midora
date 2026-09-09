@@ -131,3 +131,39 @@
 | 音频热路径保底 | Run-Regression.ps1 的托管音频过滤 | ring、共享协议、PCM IO、Limiter、WAV 写入、MIDI plan/stream 分页；无新增 callback 分配/锁，未据此宣称设备/原生实机验收 |
 
 本轮 UI 生产变更仅为 Opaque Properties 的等价只读取值；未改变 Piano Roll / Arrangement / Onion 渲染策略、交互与音频算法。公共测试中需要显式环境变量的大样本用例未自动开启；真实大样本证据以本轮明确运行的独立探针为准。人工音乐验收 B 按计划合并至阶段 4 后，不要求用户在阶段 3 重跑全表。
+
+## 8. 阶段 4：M08 / M11 值根与严格流式持久化
+
+完整实测、时间代价、3,060 项最终公共回归与人工 B 卡见 [阶段 4 报告](Midora-Memory-Stage4-Validation-Report-2026-09-09.md)。不提前宣称 M12 / M13 或整个应用内存已收口。
+
+| 范围 | 自动入口 | 核心断言 |
+| --- | --- | --- |
+| Ordinary / adopted Logical Note、Template Event、CurvePoint | MemoryStage4LogicalValueRootTests、PagedTimelineCollectionTests、PagedTimelineSharedRootTests | 100k/1M 普通与 adopt、4096 晋升、头/中插入、对象身份、弱 facade、snapshot/clone 共享、局部修改和旧根隔离 |
+| 地址、页与长期小编辑 | PersistentTimelineSequenceTests、MemoryStage4LogicalValueRootTests | 128-record 尾叶；随机/倒序/交错 ID 精确查询；已有 100k 根追加 1024 地址分配门；不全表扫描 |
+| 后台 frozen index / live Append | MemoryStage4LogicalValueRootTests | external 交接在追加前/索引扩展中/空间页构造中，旧新内容不丢；最终建树取消不发布，可重试 |
+| Compiler readonly source / fingerprint / RawInstance | Midora.Compiler.Tests 437 全套 | 不物化 facade 的值输入；golden、Full/Incremental、诊断、Loop/Pre-Roll、共享状态和正式顺序不变；展开总预算归阶段 5 |
+| Logical / Instrument v1/v2 protobuf | StreamingProtobufCodecTests、原 PersistenceContractV1/V2 测试 | 旧生成器逐字节 oracle、只读 value pages、合法字段乱序、presence、unknown/duplicate、UTF-8/enum、header 错误优先级、short/nonseek/cancel |
+| Conductor JSON | ConductorStreamingCodecTests | 68 专项：全部类型/decimal/Unicode、乱序兼容、原子接管、损坏回退；16MiB 空白固定输入窗口，合法巨大 scalar 兼容；20k 输出28次write且bytes相同 |
+| Package staging / SHA / 全字节自校验 | PackageContentStreamTests、MemoryStage4PackageTransactionTests、MidoraProjectPackageFaultInjectionV1Tests | 一次一文件；EOF/short read/leave-open；仅坏 staging 也拒绝；取消与原目标安全；分页重开继续编辑/保存；旧格式备份/迁移规则不变 |
+| 量化前后对照 | eng/MemoryStage4Probe | 同代码/冻结旧新 DLL、三轮百万 Logical/SubVoice/Conductor，100k/mixed、cold/warm 分列；全包条目hash相等；必要source与累计分配/峰值分列 |
+| 真实 Pure MIDI 不回退 | eng/MemoryStage1Probe roundtrip、Compare-Content.ps1 | 9KX2 17,999,999源Note/40Track、60k两类编辑/Undo/Redo/取消/Save/Copy/Open；38次facade census零增长；旧新101项内容一致；Project弱引用释放 |
+| UI / 选择显示一致性 | Presentation 445、Desktop 403 全套 | 三种编辑器、工具、Lane、Properties、Onion/All Tracks 共用路径；Conductor 正式选择即时与异步显示完成分别断言，不跳过旧断言 |
+
+本阶段没有更改生产 UI/渲染或音频算法，测试同步补修不属于 UI 行为调整。用户随后确认 B01～B09 整体通过，并另行授权阶段 5；其报告的 Logical 大粘贴后逐修订内存增长由 M12/M13 继续调查处理。
+
+## 9. 阶段 5：M12 / M13 编译、诊断和历史
+
+实施及压力结果见 [阶段 5 报告](Midora-Memory-Stage5-Validation-Report-2026-09-09.md)。以下是已运行的正确性入口，不把数据探针或虚拟行测试当作完整 WPF 长会话验收。
+
+| 范围 | 自动入口 | 核心断言 |
+| --- | --- | --- |
+| Logical Raw pattern / context / source | LogicalRawPatternTests、LogicalRawPatternRoundTripTests、Compiler 455 全套 | 精确共享、64 种 context 继承、Group 极值、来源还原、4,096 pattern 发现缓存上限、修订隔离、Full/Incremental 与原正式语义 |
+| 完整 overlap diagnostics | CompactDiagnosticTests | 49,995,000 条紧凑诊断的计数、顺序、重复、Source、筛选；不将 Error 改为摘要后丢弃正文 |
+| WPF 虚拟诊断与后台筛选 | VirtualDiagnosticRowsTests、Desktop 407 全套 | 50,000,000 逻辑行、256 行缓存、旧 selection 查找、过滤取消和最新修订；无全行 WPF 对象集合 |
+| 正式失败和 README | CompilationRejectedExceptionTests、MidiExportReadmeBuilderTests、MidiExportArtifactBuilderTests、Playback 140 | 失败摘要最多读取 32 行但保留完整序列；README 严格 UTF-8 全行流式、取消、冻结参数和原子输出 |
+| Canonical / 范围与消费 | Compiler、MIDI Export、Playback、Audio Render 公共集 | 原地 fold/range 稳定顺序与完整来源；无多余全数组副本；共享 canonical span 不另立音频语义 |
+| 失败 canonical 资源计账 | ResourceShortageRetainedStorageTests | 对象与五个底层 ID 数组均计账，共享结果不重复计费，重复遍历幂等 |
+| History / Clipboard / splice | MemoryStage5HistoryOwnershipTests（21 case）、Application 1,128 全套 | 百万根路径共享、64/65 代与 512 次叶修改、四方向 Note 粘贴源释放、Undo/Redo/分支/取消、旧读者合法性、80 次 splice 与小编辑交替 |
+| 受守护专项压力 | eng/MemoryStage5Probe | 冻结旧/新 DLL；重复编译完整 digest；多 Voice/Template/Loop 梯度；指定 9KX2 跨类型链；8 GiB 私有 Job 及 2 GiB 系统余量 |
+
+M12 的发现缓存有固定预算，但正式 Logical canonical 和有效历史所需内容不因此变为常量。所有测得峰值、累计分配与仍未深度分页的部分在阶段报告中分列。完整 UI、后台、缓存及保存/播放长期共存仍属于阶段 6，不预填验收 C。

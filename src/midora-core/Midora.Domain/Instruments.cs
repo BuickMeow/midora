@@ -66,6 +66,13 @@ public readonly record struct TemplateEventMappingTarget(
     public static IEnumerable<TemplateEventMappingTarget> Enumerate(TemplateEvent value)
     {
         ArgumentNullException.ThrowIfNull(value);
+        return Enumerate(new TemplateEventSnapshotValue(value.Id, value.Kind, value.Tick,
+            value.LengthTicks, value.Number, value.Value, value.SecondaryValue,
+            value.HasBankMsb, value.HasBankLsb, value.FollowPitchDelta));
+    }
+
+    public static IEnumerable<TemplateEventMappingTarget> Enumerate(TemplateEventSnapshotValue value)
+    {
         switch (value.Kind)
         {
             case TemplateEventKind.Note:
@@ -488,6 +495,19 @@ public sealed class SubVoice
 
     private readonly MidoraProject _project;
 
+    internal TemplateEvent MaterializeEvent(TemplateEventSnapshotValue value)
+    {
+        TemplateEvent result = new(_project, value.Id)
+        {
+            Kind = value.Kind, Tick = value.Tick, LengthTicks = value.LengthTicks,
+            Number = value.Number, Value = value.Value, SecondaryValue = value.SecondaryValue,
+            HasBankMsb = value.HasBankMsb, HasBankLsb = value.HasBankLsb,
+            FollowPitchDelta = value.FollowPitchDelta
+        };
+        result.AttachTo(this);
+        return result;
+    }
+
     public MidoraId Id { get; init; }
     public string? Name { get; set; }
     public int? RootNoteOverride { get; set; }
@@ -519,11 +539,12 @@ public sealed class SubVoice
     {
         foreach (TemplateEventMappingTarget target in TemplateEventMappingTarget.Enumerate(value))
         {
+            if (FindEventMapping(target) is not null) continue;
             bool mandatory = target.EventKind == TemplateEventKind.Note;
             // Optional non-Note owners are created only for a genuinely new
             // target. Existing raw events with no owner represent an explicit
             // Mapping deletion and must remain raw during edits/reinsertion.
-            if (!mandatory && (!createOptional || Events.Any(existing =>
+            if (!mandatory && (!createOptional || Events.CreateQuerySnapshot().EnumerateAll().Any(existing =>
                     TemplateEventMappingTarget.Enumerate(existing).Contains(target))))
             {
                 continue;
@@ -540,7 +561,7 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
     private bool _suppressOptionalMappingCreation;
 
     internal TemplateEventCollection(SubVoice owner)
-        : this(owner, CreateStore())
+        : this(owner, CreateStore(owner))
     {
     }
 
@@ -555,6 +576,7 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
 
     public long Generation => _store.Generation;
     public int PageCount => _store.PageCount;
+    internal (int RetainedObjects, int FacadeSlots) StorageCounts => _store.StorageCounts;
 
     public void AddRange(IEnumerable<TemplateEvent> values)
     {
@@ -762,7 +784,7 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
         base.SetItem(index, item);
     }
 
-    private static PagedTimelineObjectList<TemplateEvent, TemplateEventSnapshotValue> CreateStore() =>
+    private static PagedTimelineObjectList<TemplateEvent, TemplateEventSnapshotValue> CreateStore(SubVoice owner) =>
         new(
             static value => new(
                 value.Id,
@@ -787,7 +809,8 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
             static value => value.Kind == TemplateEventKind.Note
                 ? value.Value / 127d
                 : value.Value,
-            static value => TemplateEventMidiTargets.EnumerateDiscoveryKeys(value));
+            static value => TemplateEventMidiTargets.EnumerateDiscoveryKeys(value),
+            owner.MaterializeEvent);
 
     private static long SaturatingAdd(long left, long right) =>
         right <= 0 || left > long.MaxValue - right ? long.MaxValue : left + right;

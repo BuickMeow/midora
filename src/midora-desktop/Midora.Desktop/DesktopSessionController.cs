@@ -345,7 +345,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
 
     public ObservableCollection<ProjectTreeNode> ProjectTree { get; } = [];
     public ObservableCollection<WorkspaceViewModel> Workspaces { get; } = [];
-    public ObservableCollection<DiagnosticRow> CompilerDiagnostics { get; } = [];
+    public IReadOnlyList<DiagnosticRow> CompilerDiagnostics { get; private set; } = VirtualDiagnosticRows.Empty;
     public TimelineEditorSettings ArrangementEditorSettings { get; } = new();
     public TimelineEditorSettings PianoRollEditorSettings { get; } = new();
     public string? StatusMessage
@@ -2396,7 +2396,8 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         _projectTreeStructureStamp = null;
         _diagnosticScopeWorkspace = null;
         ProjectTree.Clear();
-        CompilerDiagnostics.Clear();
+        CompilerDiagnostics = VirtualDiagnosticRows.Empty;
+        Raise(nameof(CompilerDiagnostics));
         SelectedDiagnostic = null;
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
@@ -2922,25 +2923,18 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         DiagnosticRefreshCount++;
         lock (_modelRefreshGate)
         {
-            DiagnosticRow[] diagnostics = _context is null
-                ? []
-                : _context.Compilation.LastAttempt.Diagnostics
-                    .Select(diagnostic => DiagnosticProjection.FromCompiler(
-                        diagnostic,
-                        _context.Compilation.IsCompilationCurrent))
-                    .ToArray();
-            CompilerDiagnostics.Clear();
-            foreach (DiagnosticRow diagnostic in diagnostics)
-            {
-                CompilerDiagnostics.Add(diagnostic);
-            }
+            IReadOnlyList<CompilerDiagnostic> source = _context?.Compilation.LastAttempt.Diagnostics
+                ?? CompilerDiagnosticList.Empty;
+            VirtualDiagnosticRows diagnostics = new(source, _context?.Compilation.IsCompilationCurrent ?? false);
+            CompilerDiagnostics = diagnostics;
+            Raise(nameof(CompilerDiagnostics));
             foreach (DiagnosticsWorkspaceViewModel workspace in
                 Workspaces.OfType<DiagnosticsWorkspaceViewModel>())
             {
                 workspace.Replace(diagnostics);
             }
-            _compilerErrorCount = diagnostics.Count(item => item.Severity == "Error");
-            _compilerWarningCount = diagnostics.Count(item => item.Severity == "Warning");
+            _compilerErrorCount = CompilerDiagnosticList.CountSeverity(source, DiagnosticSeverity.Error);
+            _compilerWarningCount = CompilerDiagnosticList.CountSeverity(source, DiagnosticSeverity.Warning);
         }
     }
 

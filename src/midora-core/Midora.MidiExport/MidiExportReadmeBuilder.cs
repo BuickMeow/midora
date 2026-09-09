@@ -63,10 +63,28 @@ public static class MidiExportReadmeBuilder
 
     public static byte[] Build(MidiExportReadmeRequest request)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        Validate(request);
+        using MemoryStream output = new();
+        WriteTo(output, request);
+        return output.ToArray();
+    }
 
-        StringBuilder output = new();
+    /// <summary>
+    /// Writes strict UTF-8 without buffering the full document. The caller owns
+    /// publication: cancellation, invalid input, or I/O failure may leave a
+    /// partial stream, which the formal output transaction discards atomically.
+    /// </summary>
+    public static void WriteTo(
+        Stream destination,
+        MidiExportReadmeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(request);
+        if (!destination.CanWrite) throw new ArgumentException("The README stream is not writable.", nameof(destination));
+        cancellationToken.ThrowIfCancellationRequested();
+        Validate(request, cancellationToken);
+
+        using StreamWriter output = new(destination, StrictUtf8, 16_384, leaveOpen: true);
         AppendLine(output, "# Midora MIDI Export");
         AppendLine(output);
         AppendLine(output, "## Project Metadata");
@@ -106,6 +124,7 @@ public static class MidiExportReadmeBuilder
             .OrderBy(track => track.ProjectDisplayOrder)
             .ThenBy(track => track.StableKey, StringComparer.Ordinal))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string status = track.Exported
                 ? "exported"
                 : $"excluded: {Inline(track.ExclusionReason)}";
@@ -129,6 +148,7 @@ public static class MidiExportReadmeBuilder
                 .ThenBy(mapping => mapping.OutputOneBasedPort)
                 .ThenBy(mapping => mapping.FileName, StringComparer.Ordinal))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string file = string.IsNullOrEmpty(mapping.FileName)
                     ? string.Empty
                     : $" — {Escape(mapping.FileName)}";
@@ -168,6 +188,8 @@ public static class MidiExportReadmeBuilder
         {
             foreach (MidiExportReadmeDiagnostic diagnostic in request.Diagnostics)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidateDiagnostic(diagnostic);
                 AppendLine(output, $"- [{Escape(diagnostic.Severity)}] {Escape(diagnostic.Code)}: " +
                     Escape(diagnostic.Message));
             }
@@ -178,6 +200,7 @@ public static class MidiExportReadmeBuilder
         AppendLine(output);
         foreach (string fileName in request.FileNames.Order(StringComparer.Ordinal))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             AppendLine(output, $"- {Escape(fileName)}");
         }
 
@@ -194,10 +217,39 @@ public static class MidiExportReadmeBuilder
                 "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'",
                 CultureInfo.InvariantCulture));
 
-        return StrictUtf8.GetBytes(output.ToString());
+        cancellationToken.ThrowIfCancellationRequested();
+        output.Flush();
     }
 
-    private static void Validate(MidiExportReadmeRequest request)
+    internal static MidiExportReadmeRequest Freeze(MidiExportReadmeRequest source) => new()
+    {
+        ProjectName = source.ProjectName,
+        ProjectVersion = source.ProjectVersion,
+        AuthorOrTeam = source.AuthorOrTeam,
+        OriginalWork = source.OriginalWork,
+        Copyright = source.Copyright,
+        NoteOnEventCount = source.NoteOnEventCount,
+        Mode = source.Mode,
+        RangeSource = source.RangeSource,
+        StartTick = source.StartTick,
+        EndTick = source.EndTick,
+        Routing = source.Routing,
+        TicksPerQuarterNote = source.TicksPerQuarterNote,
+        TempoEventCount = source.TempoEventCount,
+        TimeSignatureEventCount = source.TimeSignatureEventCount,
+        KeySignatureEventCount = source.KeySignatureEventCount,
+        Tracks = source.Tracks.ToArray(),
+        PortMappings = source.PortMappings.ToArray(),
+        Diagnostics = source.Diagnostics is MidiExportReadmeDiagnosticProjection
+            ? source.Diagnostics : source.Diagnostics.ToArray(),
+        FileNames = source.FileNames.ToArray(),
+        CreatedWithSoftwareVersion = source.CreatedWithSoftwareVersion,
+        LastSavedWithSoftwareVersion = source.LastSavedWithSoftwareVersion,
+        ExportSoftwareVersion = source.ExportSoftwareVersion,
+        ExportedAtUtc = source.ExportedAtUtc
+    };
+
+    private static void Validate(MidiExportReadmeRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request.ProjectName);
         ArgumentNullException.ThrowIfNull(request.ProjectVersion);
@@ -225,6 +277,7 @@ public static class MidiExportReadmeBuilder
         ArgumentOutOfRangeException.ThrowIfNegative(request.KeySignatureEventCount);
         foreach (MidiExportReadmeTrack track in request.Tracks)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ArgumentNullException.ThrowIfNull(track);
             ArgumentException.ThrowIfNullOrEmpty(track.StableKey);
             ArgumentNullException.ThrowIfNull(track.DisplayName);
@@ -232,6 +285,7 @@ public static class MidiExportReadmeBuilder
         }
         foreach (MidiExportReadmePortMapping mapping in request.PortMappings)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ArgumentNullException.ThrowIfNull(mapping);
             if (mapping.OriginalOneBasedPort is < 1 or > 16
                 || mapping.OutputOneBasedPort is < 1 or > 16)
@@ -239,23 +293,21 @@ public static class MidiExportReadmeBuilder
                 throw new ArgumentOutOfRangeException(nameof(request.PortMappings));
             }
         }
-        foreach (MidiExportReadmeDiagnostic diagnostic in request.Diagnostics)
-        {
-            ArgumentNullException.ThrowIfNull(diagnostic);
-            ArgumentException.ThrowIfNullOrEmpty(diagnostic.Severity);
-            ArgumentException.ThrowIfNullOrEmpty(diagnostic.Code);
-            ArgumentNullException.ThrowIfNull(diagnostic.Message);
-            if (diagnostic.Severity.Equals("Error", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException(
-                    "A success README.md cannot contain an Error diagnostic.",
-                    nameof(request.Diagnostics));
-            }
-        }
         foreach (string fileName in request.FileNames)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ArgumentException.ThrowIfNullOrEmpty(fileName);
         }
+    }
+
+    private static void ValidateDiagnostic(MidiExportReadmeDiagnostic diagnostic)
+    {
+        ArgumentNullException.ThrowIfNull(diagnostic);
+        ArgumentException.ThrowIfNullOrEmpty(diagnostic.Severity);
+        ArgumentException.ThrowIfNullOrEmpty(diagnostic.Code);
+        ArgumentNullException.ThrowIfNull(diagnostic.Message);
+        if (diagnostic.Severity.Equals("Error", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("A success README.md cannot contain an Error diagnostic.", "Diagnostics");
     }
 
     private static string ModeName(MidiExportMode value) => value switch
@@ -299,15 +351,15 @@ public static class MidiExportReadmeBuilder
         return escaped.ToString();
     }
 
-    private static void AppendField(StringBuilder output, string label, string value) =>
+    private static void AppendField(TextWriter output, string label, string value) =>
         AppendLine(output, $"- {label}: {Escape(string.IsNullOrWhiteSpace(value) ? "(not set)" : value)}");
 
-    private static void AppendLine(StringBuilder output, string? value = null)
+    private static void AppendLine(TextWriter output, string? value = null)
     {
         if (value is not null)
         {
-            output.Append(value);
+            output.Write(value);
         }
-        output.Append('\n');
+        output.Write('\n');
     }
 }

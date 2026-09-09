@@ -68,6 +68,14 @@ public enum CurveInterpolation
 
 public sealed record CurvePoint
 {
+    internal CurvePoint(CurvePointSnapshotValue value)
+    {
+        Id = value.Id;
+        Tick = value.Tick;
+        Value = value.Value;
+        Interpolation = value.Interpolation;
+    }
+
     public CurvePoint(
         MidoraProject project,
         long tick,

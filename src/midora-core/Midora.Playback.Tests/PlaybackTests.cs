@@ -1178,12 +1178,13 @@ public sealed class PlaybackTests
             FakeBackend backend = new();
             using PlaybackController controller = new(session, backend);
 
-            InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() =>
+            CompilationRejectedException failure = Assert.Throws<CompilationRejectedException>(() =>
                 controller.StartSegmentPreview(
                     project.Tracks[0].Id,
                     project.Tracks[0].Segments[0].Id));
 
             Assert.Contains("MIDORA1306", failure.Message, StringComparison.Ordinal);
+            Assert.Contains(failure.Diagnostics, diagnostic => diagnostic.Code == "MIDORA1306");
             Assert.Equal(PlaybackState.Error, controller.State);
             Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
             Assert.False(session.EditsLocked);

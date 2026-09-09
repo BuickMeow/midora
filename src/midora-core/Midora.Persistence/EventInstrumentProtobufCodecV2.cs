@@ -1,6 +1,5 @@
-using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using Midora.Domain;
-using Midora.Persistence.Wire.Proto.V1;
 using Midora.Persistence.Wire.Proto.V2;
 
 namespace Midora.Persistence;
@@ -11,91 +10,74 @@ internal static class EventInstrumentProtobufCodecV2
 
     public static byte[] Serialize(EventInstrument value)
     {
+        using MemoryStream destination = new();
+        Serialize(value, destination);
+        return destination.ToArray();
+    }
+
+    public static void Serialize(EventInstrument value, Stream destination, CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(value);
-        byte[] definitionBytes = EventInstrumentProtobufCodecV1.Serialize(value);
-        EventInstrumentV2 wire = new()
+        if (value.PreRollTicks < 0 || value.PreRollTicks > value.TemplateLengthTicks)
+            throw new InvalidDataException("Event Instrument preRollTicks must be within 0..templateLengthTicks.");
+        new StreamingProtobufWriteContext(cancellationToken).Serialize(destination, writer =>
         {
-            SchemaVersion = PersistenceContractV2.EventInstrumentSchemaVersion,
-            ObjectType = ObjectType,
-            Definition = EventInstrumentV1.Parser.ParseFrom(definitionBytes),
-            PreRollTicks = value.PreRollTicks
-        };
-        Validate(wire);
-        return StrictProtobufWireV1.SerializeDeterministic(wire);
+            writer.Wire(new EventInstrumentV2
+            {
+                SchemaVersion = PersistenceContractV2.EventInstrumentSchemaVersion,
+                ObjectType = ObjectType
+            });
+            writer.Message(3, value, nested => EventInstrumentProtobufCodecV1.Write(nested, value));
+            writer.Int64(4, value.PreRollTicks);
+        });
     }
 
     public static EventInstrument Restore(MidoraProject project, ReadOnlySpan<byte> bytes)
     {
+        using MemoryStream source = new(bytes.ToArray(), writable: false);
+        return Restore(project, source);
+    }
+
+    public static EventInstrument Restore(MidoraProject project, byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        using MemoryStream source = new(bytes, writable: false);
+        return Restore(project, source);
+    }
+
+    public static EventInstrument Restore(MidoraProject project, Stream source, CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(project);
-        try
+        ArgumentNullException.ThrowIfNull(source);
+        StreamingProtobufReader reader = new(source, cancellationToken);
+        StreamingProtobufReader.Frame frame = reader.Root(EventInstrumentV2.Descriptor);
+        EventInstrumentV2 header = new();
+        EventInstrument? definition = null;
+        long templateLengthTicks = 0;
+        bool hasTemplateLengthTicks = false;
+        FieldDescriptor? field;
+        while ((field = reader.Field(ref frame)) is not null)
         {
-            ValidateUniqueWrapperFields(bytes);
-            StrictProtobufWireV1.Validate(bytes, EventInstrumentV2.Descriptor);
-            EventInstrumentV2 wire = EventInstrumentV2.Parser.ParseFrom(bytes);
-            Validate(wire);
-            byte[] definitionBytes = StrictProtobufWireV1.SerializeDeterministic(wire.Definition);
-            EventInstrument result = EventInstrumentProtobufCodecV1.Restore(project, definitionBytes);
-            result.PreRollTicks = wire.PreRollTicks;
-            return result;
+            if (field.FieldNumber == 3)
+                definition = EventInstrumentProtobufCodecV1.Read(project, reader, reader.Child(frame, field),
+                    out templateLengthTicks, out hasTemplateLengthTicks, deferValidation: true);
+            else reader.Scalar(header, frame, field);
         }
-        catch (InvalidProtocolBufferException exception)
-        {
-            throw new InvalidDataException("Event Instrument v2 protobuf is malformed.", exception);
-        }
-    }
-
-    private static void ValidateUniqueWrapperFields(ReadOnlySpan<byte> bytes)
-    {
-        CodedInputStream input = new(bytes.ToArray());
-        uint seen = 0;
-        uint tag;
-        while ((tag = input.ReadTag()) != 0)
-        {
-            int fieldNumber = WireFormat.GetTagFieldNumber(tag);
-            if (fieldNumber is >= 1 and <= 4)
-            {
-                uint mask = 1u << fieldNumber;
-                if ((seen & mask) != 0)
-                {
-                    throw new InvalidDataException(
-                        $"Event Instrument v2 protobuf field {fieldNumber} is duplicated.");
-                }
-                seen |= mask;
-            }
-            input.SkipLastField();
-        }
-    }
-
-    private static void Validate(EventInstrumentV2 value)
-    {
-        ProtobufValueCodecV1.Require(value.HasSchemaVersion, "Event Instrument v2 schemaVersion");
-        ProtobufValueCodecV1.Require(value.HasObjectType, "Event Instrument v2 objectType");
-        ProtobufValueCodecV1.Require(value.HasPreRollTicks, "Event Instrument v2 preRollTicks");
-        if (value.SchemaVersion != PersistenceContractV2.EventInstrumentSchemaVersion
-            || value.ObjectType != ObjectType)
-        {
+        ProtobufValueCodecV1.Require(header.HasSchemaVersion, "Event Instrument v2 schemaVersion");
+        ProtobufValueCodecV1.Require(header.HasObjectType, "Event Instrument v2 objectType");
+        ProtobufValueCodecV1.Require(header.HasPreRollTicks, "Event Instrument v2 preRollTicks");
+        if (header.SchemaVersion != PersistenceContractV2.EventInstrumentSchemaVersion || header.ObjectType != ObjectType)
             throw new ProtobufObjectHeaderExceptionV1(
                 "Event Instrument v2 schemaVersion or objectType is inconsistent with its manifest identity.");
-        }
-        if (value.Definition is null)
-        {
-            throw new InvalidDataException("Event Instrument v2 definition is required.");
-        }
-        if (value.PreRollTicks < 0)
-        {
-            throw new InvalidDataException("Event Instrument preRollTicks must be non-negative.");
-        }
-        ProtobufValueCodecV1.Require(
-            value.Definition.HasTemplateLengthTicks,
-            "Event Instrument v2 definition templateLengthTicks");
-        if (value.PreRollTicks > value.Definition.TemplateLengthTicks)
-        {
-            throw new InvalidDataException(
-                "Event Instrument preRollTicks cannot exceed templateLengthTicks.");
-        }
-
-        // The frozen v1 codec remains the single validator for the reused definition payload.
-        // Serialize has already passed through it, and Restore invokes it immediately after this
-        // v2 header/range validation.
+        if ((frame.Seen & (1UL << 3)) == 0) throw new InvalidDataException("Event Instrument v2 definition is required.");
+        if (header.PreRollTicks < 0) throw new InvalidDataException("Event Instrument preRollTicks must be non-negative.");
+        ProtobufValueCodecV1.Require(hasTemplateLengthTicks, "Event Instrument v2 definition templateLengthTicks");
+        if (header.PreRollTicks > templateLengthTicks)
+            throw new InvalidDataException("Event Instrument preRollTicks cannot exceed templateLengthTicks.");
+        reader.ThrowSemanticFailure();
+        if (definition is null) throw new InvalidDataException("Event Instrument v2 definition is required.");
+        definition.PreRollTicks = header.PreRollTicks;
+        cancellationToken.ThrowIfCancellationRequested();
+        return definition;
     }
 }

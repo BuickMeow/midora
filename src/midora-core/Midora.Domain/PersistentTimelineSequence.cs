@@ -92,6 +92,73 @@ internal sealed class PersistentTimelineSequence<TValue>
         List<Leaf> leaves, Func<TValue, ulong> getFingerprint) =>
         new(BuildBalanced(leaves, 0, leaves.Count), getFingerprint);
 
+    internal PersistentTimelineSequence<TValue> TransformLeaves(Func<int, Leaf, Leaf?> transform,
+        CancellationToken token = default)
+    {
+        Node? next = Visit(_root, 0);
+        return ReferenceEquals(next, _root) ? this : new(next, _getFingerprint);
+
+        Node? Visit(Node? node, int start)
+        {
+            token.ThrowIfCancellationRequested();
+            if (node is null) return null;
+            if (node is Leaf leaf) return transform(start, leaf);
+            Branch branch = (Branch)node;
+            Node? left = Visit(branch.Left, start);
+            Node? right = Visit(branch.Right, checked(start + branch.Left.Count));
+            return ReferenceEquals(left, branch.Left) && ReferenceEquals(right, branch.Right)
+                ? node : Concat(left, right);
+        }
+    }
+
+    internal PersistentTimelineSequence<TValue> AppendSequence(PersistentTimelineSequence<TValue> suffix) =>
+        suffix.Count == 0 ? this : new(Concat(_root, suffix._root), _getFingerprint);
+
+    // Null preserves a leaf; an empty run deletes it. Ordinals always address
+    // the frozen input, including after earlier runs inserted or removed values.
+    internal PersistentTimelineSequence<TValue> TransformLeafRuns(
+        Func<int, Leaf, IReadOnlyList<Leaf>?> transform, CancellationToken token = default)
+    {
+        Node? next = Visit(_root, 0);
+        return ReferenceEquals(next, _root) ? this : new(next, _getFingerprint);
+
+        Node? Visit(Node? node, int start)
+        {
+            token.ThrowIfCancellationRequested();
+            if (node is null) return null;
+            if (node is Leaf leaf)
+            {
+                var run = transform(start, leaf);
+                return run is null ? leaf : BuildRun(run, 0, run.Count);
+            }
+            Branch branch = (Branch)node;
+            Node? left = Visit(branch.Left, start);
+            Node? right = Visit(branch.Right, checked(start + branch.Left.Count));
+            return ReferenceEquals(left, branch.Left) && ReferenceEquals(right, branch.Right)
+                ? node : Concat(left, right);
+        }
+
+        Node? BuildRun(IReadOnlyList<Leaf> leaves, int first, int count)
+        {
+            token.ThrowIfCancellationRequested();
+            if (count == 0) return null;
+            if (count == 1) return leaves[first];
+            int leftCount = count / 2;
+            return new Branch(BuildRun(leaves, first, leftCount)!,
+                BuildRun(leaves, first + leftCount, count - leftCount)!);
+        }
+    }
+
+    internal void CollectStorageNodes(ISet<object> nodes)
+    {
+        Add(_root);
+        void Add(Node? node)
+        {
+            if (node is null || !nodes.Add(node)) return;
+            if (node is Branch branch) { Add(branch.Left); Add(branch.Right); }
+        }
+    }
+
     public TValue this[int index]
     {
         get
@@ -273,11 +340,44 @@ internal sealed class PersistentTimelineSequence<TValue>
 
         List<Leaf> removed = [];
         List<Leaf> added = [];
+        if (index == Count && _root is not null)
+        {
+            Node last = _root;
+            while (last is Branch branch) last = branch.Right;
+            Leaf tail = (Leaf)last;
+            int take = Math.Min(LeafCapacity - tail.Count, values.Count);
+            if (take != 0)
+            {
+                // Frequent small edits/snapshots must not turn every appended
+                // record into its own permanent leaf. Only copy the bounded
+                // tail; all preceding leaves and old revisions remain shared.
+                Split(_root, Count - tail.Count, _getFingerprint, removed, added,
+                    out Node? prefix, out _);
+                removed.Add(tail);
+                TValue[] combined = new TValue[tail.Count + take];
+                for (int offset = 0; offset < tail.Count; offset++) combined[offset] = tail.GetValue(offset);
+                for (int offset = 0; offset < take; offset++) combined[tail.Count + offset] = values[offset];
+                Leaf mergedTail = new(combined, _getFingerprint);
+                added.Add(mergedTail);
+                var rest = Create(new ValueSlice(values, take), _getFingerprint);
+                added.AddRange(rest.EnumerateLeaves());
+                return new(new(Concat(Concat(prefix, mergedTail), rest._root), _getFingerprint), removed, added, []);
+            }
+        }
         Split(_root, index, _getFingerprint, removed, added, out Node? left, out Node? right);
         PersistentTimelineSequence<TValue> inserted = Create(values, _getFingerprint);
         added.AddRange(inserted.EnumerateLeaves());
         Node? root = Concat(Concat(left, inserted._root), right);
         return new(new(root, _getFingerprint), removed, added, []);
+    }
+
+    private sealed class ValueSlice(IReadOnlyList<TValue> values, int first) : IReadOnlyList<TValue>
+    {
+        public int Count => values.Count - first;
+        public TValue this[int index] => values[first + index];
+        public IEnumerator<TValue> GetEnumerator()
+        { for (int i = first; i < values.Count; i++) yield return values[i]; }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     public Mutation RemoveIndices(IReadOnlyCollection<int> indices)

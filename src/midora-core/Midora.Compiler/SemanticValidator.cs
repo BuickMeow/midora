@@ -350,7 +350,7 @@ public static class SemanticValidator
                     AddError("MIDORA1223", "Bank and Program do not support Curves.", curveSource, diagnostics);
                 }
                 long previous = -1;
-                foreach (CurvePoint point in curve.Points.OrderBy(point => point.Tick))
+                foreach (CurvePointSnapshotValue point in curve.Points.CreateQuerySnapshot().EnumerateAll().OrderBy(point => point.Tick))
                 {
                     if (point.Tick < 0 || point.Tick >= instrument.TemplateLengthTicks
                         || point.Tick == previous || !double.IsFinite(point.Value)
@@ -426,7 +426,7 @@ public static class SemanticValidator
                     subSource,
                     diagnostics);
             }
-            foreach (TemplateEvent templateEvent in subVoice.Events)
+            foreach (TemplateEventSnapshotValue templateEvent in subVoice.Events.CreateQuerySnapshot().EnumerateAll())
             {
                 ValidateTemplateEvent(templateEvent, instrument.TemplateLengthTicks, subSource, diagnostics);
                 if (TemplateEventMappingTarget.Enumerate(templateEvent)
@@ -507,7 +507,7 @@ public static class SemanticValidator
         }
     }
 
-    private static void ValidateTemplateEvent(TemplateEvent value, long templateLength, SourceReference source, List<CompilerDiagnostic> diagnostics)
+    private static void ValidateTemplateEvent(TemplateEventSnapshotValue value, long templateLength, SourceReference source, List<CompilerDiagnostic> diagnostics)
     {
         SourceReference eventSource = source with { SourceEventId = value.Id, Tick = value.Tick };
         if (!Enum.IsDefined(value.Kind))
@@ -957,7 +957,7 @@ public static class SemanticValidator
                     }
                     long prior = -1;
                     parameters.TryGetValue(lane.ParameterId, out LogicalParameterDefinition? definition);
-                    foreach (CurvePoint point in lane.Points.OrderBy(point => point.Tick))
+                    foreach (CurvePointSnapshotValue point in lane.Points.CreateQuerySnapshot().EnumerateAll().OrderBy(point => point.Tick))
                     {
                         if (point.Tick < 0 || point.Tick == prior || !double.IsFinite(point.Value)
                             || !Enum.IsDefined(point.Interpolation))
@@ -992,7 +992,7 @@ public static class SemanticValidator
                         prior = point.Tick;
                     }
                 }
-                foreach (LogicalNote note in segment.Notes)
+                foreach (LogicalNoteSnapshotValue note in segment.Notes.CreateQuerySnapshot().EnumerateAll())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     SourceReference noteSource = segmentSource with
@@ -1091,7 +1091,7 @@ public static class SemanticValidator
                     Add(mapping.Steps.Id, voiceSource);
                     foreach (ValueMappingStep step in mapping.Steps) Add(step.Id, voiceSource);
                 }
-                foreach (TemplateEvent value in voice.Events)
+                foreach (TemplateEventSnapshotValue value in voice.Events.CreateQuerySnapshot().EnumerateAll())
                 {
                     SourceReference eventSource = voiceSource with { SourceEventId = value.Id, Tick = value.Tick };
                     Add(value.Id, eventSource);
@@ -1099,7 +1099,7 @@ public static class SemanticValidator
                 foreach (ValueCurve curve in voice.Curves)
                 {
                     Add(curve.Id, voiceSource);
-                    foreach (CurvePoint point in curve.Points) Add(point.Id, voiceSource with { Tick = point.Tick });
+                    foreach (CurvePointSnapshotValue point in curve.Points.CreateQuerySnapshot().EnumerateAll()) Add(point.Id, voiceSource with { Tick = point.Tick });
                 }
             }
         }
@@ -1127,7 +1127,7 @@ public static class SemanticValidator
                 cancellationToken.ThrowIfCancellationRequested();
                 SourceReference segmentSource = trackSource with { SegmentId = segment.Id, Tick = segment.ProjectStartTick };
                 Add(segment.Id, segmentSource);
-                foreach (LogicalNote note in segment.Notes)
+                foreach (LogicalNoteSnapshotValue note in segment.Notes.CreateQuerySnapshot().EnumerateAll())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     Add(note.Id, segmentSource with { LogicalNoteId = note.Id });
@@ -1135,7 +1135,7 @@ public static class SemanticValidator
                 foreach (LogicalParameterLane lane in segment.ParameterLanes)
                 {
                     Add(lane.Id, segmentSource);
-                    foreach (CurvePoint point in lane.Points) Add(point.Id, segmentSource with { Tick = point.Tick });
+                    foreach (CurvePointSnapshotValue point in lane.Points.CreateQuerySnapshot().EnumerateAll()) Add(point.Id, segmentSource with { Tick = point.Tick });
                 }
             }
         }

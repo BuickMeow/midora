@@ -1027,8 +1027,7 @@ public sealed class PlaybackController : IDisposable
             CanonicalCompiledResult compiled = _session.CompileForPlayback(cursorTick, endTick);
             if (!compiled.IsConsumable)
             {
-                throw new InvalidOperationException(string.Join(Environment.NewLine,
-                    compiled.Diagnostics.Select(value => $"{value.Code}: {value.Message}")));
+                throw new CompilationRejectedException(compiled.Diagnostics);
             }
             if (compiled.EndTick < compiled.StartTick)
             {
@@ -1097,8 +1096,7 @@ public sealed class PlaybackController : IDisposable
             CanonicalCompiledResult compiled = compile();
             if (!compiled.IsConsumable)
             {
-                throw new InvalidOperationException(string.Join(Environment.NewLine,
-                    compiled.Diagnostics.Select(value => $"{value.Code}: {value.Message}")));
+                throw new CompilationRejectedException(compiled.Diagnostics);
             }
             int actualSampleRate = PrepareBackend();
             _session.InvalidateSampleDomainCaches();
@@ -1252,9 +1250,7 @@ public sealed class PlaybackController : IDisposable
     {
         if (!compiled.IsConsumable)
         {
-            throw new InvalidOperationException(string.Join(
-                Environment.NewLine,
-                compiled.Diagnostics.Select(value => $"{value.Code}: {value.Message}")));
+            throw new CompilationRejectedException(compiled.Diagnostics);
         }
     }
 

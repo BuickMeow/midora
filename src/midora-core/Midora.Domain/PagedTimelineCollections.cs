@@ -540,6 +540,7 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
 
     public long Generation => _store.Generation;
     public int PageCount => _store.PageCount;
+    internal (int RetainedObjects, int FacadeSlots) StorageCounts => _store.StorageCounts;
 
     public void AddRange(IEnumerable<LogicalNote> values)
     {
@@ -638,7 +639,8 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
             static value => value.Note,
             static value => PagedTimelineFingerprint.ForLogicalNote(value),
             static (value, sink) => value.SetChangeSink(sink),
-            getRasterValue: static value => value.Velocity / 127d);
+            getRasterValue: static value => value.Velocity / 127d,
+            materialize: static value => new LogicalNote(value));
 
     private static long SaturatingAdd(long left, long right) =>
         right <= 0 || left > long.MaxValue - right ? long.MaxValue : left + right;
@@ -760,7 +762,8 @@ public sealed class CurvePointCollection : Collection<CurvePoint>, IReadOnlyList
             static _ => 0,
             static value => PagedTimelineFingerprint.ForCurvePoint(value),
             static (_, _) => { },
-            getRasterValue: static value => value.Value);
+            getRasterValue: static value => value.Value,
+            materialize: static value => new CurvePoint(value));
 }
 
 internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
@@ -778,6 +781,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
     private readonly Func<TValue, double>? _getRasterValue;
     private readonly Func<TValue, IEnumerable<long>>? _getDiscoveryKeys;
     private readonly Action<T, Action<T>?> _setChangeSink;
+    private readonly Func<TValue, T>? _materialize;
     private readonly List<Page> _pages = [];
     // Membership is queried while publishing dirty snapshots.  A linear
     // List.Contains here made a first snapshot after a large batch O(P^2).
@@ -829,7 +833,8 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
         Action<T, Action<T>?> setChangeSink,
         Func<TValue, ulong>? getCategoryMask = null,
         Func<TValue, double>? getRasterValue = null,
-        Func<TValue, IEnumerable<long>>? getDiscoveryKeys = null)
+        Func<TValue, IEnumerable<long>>? getDiscoveryKeys = null,
+        Func<TValue, T>? materialize = null)
     {
         _toValue = toValue ?? throw new ArgumentNullException(nameof(toValue));
         _getId = getId ?? throw new ArgumentNullException(nameof(getId));
@@ -841,12 +846,15 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
         _getCategoryMask = getCategoryMask;
         _getRasterValue = getRasterValue;
         _getDiscoveryKeys = getDiscoveryKeys;
+        _materialize = materialize;
     }
 
     public int Count => _count;
     public bool IsReadOnly => false;
     public long Generation => _generation;
     public int PageCount => _shared is null ? _pages.Count : (_count + DefaultPageCapacity - 1) / DefaultPageCapacity;
+    internal (int RetainedObjects, int FacadeSlots) StorageCounts => _shared is null
+        ? (_count, 0) : (_shared.RetainedObjectCount, _shared.FacadeSlotCount);
 
     public T this[int index]
     {
@@ -876,7 +884,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void Add(T item)
     {
-        if (_shared is not null) { _shared.InsertRange(_count, [item]); return; }
+        if (_shared is not null) { _shared.Append(item); return; }
         ArgumentNullException.ThrowIfNull(item);
         EnsureInsertable(item);
         PublishPendingValueChanges();
@@ -892,6 +900,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
             publishedIndex,
             [_toValue(item)]));
         MarkChanged(page);
+        PromoteOrdinaryStoreIfNeeded();
     }
 
     public void Clear()
@@ -963,7 +972,12 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
 
     public void Insert(int index, T item)
     {
-        if (_shared is not null) { _shared.InsertRange(index, [item]); return; }
+        if (_shared is not null)
+        {
+            if (index == _count) _shared.Append(item);
+            else _shared.InsertRange(index, [item]);
+            return;
+        }
         ArgumentNullException.ThrowIfNull(item);
         if ((uint)index > (uint)_count) throw new ArgumentOutOfRangeException(nameof(index));
         if (index == _count)
@@ -982,6 +996,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
         ApplyPublishedMutation(_publishedSequence?.InsertRange(index, [_toValue(item)]));
         if (page.Items.Count > DefaultPageCapacity) Split(page);
         else MarkChanged(page);
+        PromoteOrdinaryStoreIfNeeded();
     }
 
     public void InsertRange(int index, IReadOnlyList<T> values)
@@ -1020,6 +1035,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
                 MarkChanged(page);
             }
             ApplyPublishedMutation(_publishedSequence?.InsertRange(index, publishedValues));
+            PromoteOrdinaryStoreIfNeeded();
             return;
         }
 
@@ -1059,6 +1075,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
         InvalidatePageDirectory();
         ApplyPublishedMutation(_publishedSequence?.InsertRange(index, publishedValues));
         Touch();
+        PromoteOrdinaryStoreIfNeeded();
     }
 
     internal void ValidateInsertRange(IReadOnlyList<T> values)
@@ -1443,7 +1460,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
     {
         lock (_snapshotPublicationSync)
         {
-            _shared?.Flush();
+            _shared?.FlushAll();
             EnsurePublishedState();
             PublishPendingValueChanges();
             if (_publishedSnapshot is not null
@@ -1495,7 +1512,11 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
         }
         _spatialIndex = PagedTimelineSpatialBlockIndex<TValue>.Create(pages);
         _publishedSequence = sequence;
-        _publishedBaseById = sequence.Enumerate().ToFrozenDictionary(_getId);
+        // A frozen value dictionary duplicated the complete scalar sequence on
+        // first snapshot. Address metadata contains IDs/ordinals only and is
+        // shared by all readers of this revision.
+        _sharedOrdinalDirectory = new OrdinalDirectory(sequence, _getId);
+        _publishedBaseById = new SourceValueDictionary(sequence, _sharedOrdinalDirectory, _getId);
         _publishedIdDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
         _spatialBaseDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
         _spatialValueOverlay = PersistentTimelineIdDeltaMap<TValue>.Empty;
@@ -2191,6 +2212,8 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
 internal sealed class PagedTimelineValuePage<TValue>
 {
     private static long s_nextSpatialIdentity;
+    private static readonly int[][] s_identitySpatialOrders = Enumerable.Range(0, 129)
+        .Select(static count => Enumerable.Range(0, count).ToArray()).ToArray();
     private const int FingerprintBlockSize = 128;
     private const int SpatialBlockSize = 128;
     private readonly Func<TValue, long> _getStart;
@@ -2264,8 +2287,9 @@ internal sealed class PagedTimelineValuePage<TValue>
             int lane = getLane(value);
             minimumLane = Math.Min(minimumLane, lane);
             maximumLane = Math.Max(maximumLane, lane);
-            PagedTimelineFingerprint.Add(ref fingerprint, getFingerprint(value));
-            contentAggregate.Add(getFingerprint(value));
+            ulong valueFingerprint = getFingerprint(value);
+            PagedTimelineFingerprint.Add(ref fingerprint, valueFingerprint);
+            contentAggregate.Add(valueFingerprint);
             if (getCategoryMask is not null) categoryMask |= getCategoryMask(value);
         }
         PagedTimelineFingerprint.Add(ref fingerprint, unchecked((ulong)values.Length));
@@ -2629,7 +2653,6 @@ internal sealed class PagedTimelineValuePage<TValue>
 
     private int[] BuildSpatialOrder(TValue[] values)
     {
-        int[] result = Enumerable.Range(0, values.Length).ToArray();
         bool alreadyOrdered = true;
         for (int index = 1; index < values.Length; index++)
         {
@@ -2643,6 +2666,9 @@ internal sealed class PagedTimelineValuePage<TValue>
             alreadyOrdered = false;
             break;
         }
+        if (alreadyOrdered && values.Length < s_identitySpatialOrders.Length)
+            return s_identitySpatialOrders[values.Length];
+        int[] result = Enumerable.Range(0, values.Length).ToArray();
         if (alreadyOrdered) return result;
         Array.Sort(result, (left, right) =>
         {
@@ -3199,6 +3225,8 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
     public long MaximumEndTick { get; }
     public ulong ContentFingerprint { get; }
     public IReadOnlyList<long> DiscoveryKeys { get; }
+    internal int StorageLeafCount => _sequence.EnumerateLeaves().Count();
+    internal void CollectSequenceStorageNodes(ISet<object> nodes) => _sequence.CollectStorageNodes(nodes);
 
     public IEnumerable<TValue> Query(
         long startTick,

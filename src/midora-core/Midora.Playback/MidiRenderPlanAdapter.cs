@@ -52,7 +52,7 @@ public static class MidiRenderPlanAdapter
 
         TempoSampleMap map = new(compiled.TicksPerQuarterNote, compiled.Tempos);
         long totalFrames = map.TickToSampleFrame(compiled.EndTick, compiled.StartTick, sampleRate);
-        CanonicalMidiEvent[] events = compiled.Events.ToArray();
+        ReadOnlySpan<CanonicalMidiEvent> events = compiled.Events;
         ChannelUnitAllocation[] allocations = compiled.Allocations.ToArray();
         HashSet<MidoraId> sourceIdSet = [];
         foreach (CanonicalMidiEvent value in events)
@@ -115,7 +115,7 @@ public static class MidiRenderPlanAdapter
             pureAudioFragments = compiled.PureMidiAudioFragments.ToDictionary(
                 value => (value.MidiChannelRootId, value.GroupId));
         foreach (CanonicalAudioUnitFragment fragment in
-            CanonicalAudioUnitProjection.Create(compiled, events).Fragments)
+            CanonicalAudioUnitProjection.Create(compiled).Fragments)
         {
             if (!preserveFilteredTrackEvents
                 && audibleTrackIds is not null
@@ -237,9 +237,8 @@ public static class MidiRenderPlanAdapter
             .ThenBy(value => value.StartFrame)
             .ThenBy(value => value.SegmentId)
             .ToArray();
-        List<CanonicalMidiRenderEvent> orderedRenderEvents = events
-            .Select(ToRenderEvent)
-            .ToList();
+        List<CanonicalMidiRenderEvent> orderedRenderEvents = new(events.Length);
+        foreach (CanonicalMidiEvent value in events) orderedRenderEvents.Add(ToRenderEvent(value));
         if (!compiled.HasPagedEvents)
         {
             orderedRenderEvents.AddRange(compiled.ChannelModeSystemExclusiveEvents
@@ -333,7 +332,7 @@ public static class MidiRenderPlanAdapter
     }
 
     private static int[] CollectReferencedPresetKeys(
-        IReadOnlyList<CanonicalMidiEvent> inMemoryEvents,
+        ReadOnlySpan<CanonicalMidiEvent> inMemoryEvents,
         IReadOnlyList<CanonicalMidiPresetReference> pagedReferences)
     {
         bool[] referenced = new bool[128 * 128];

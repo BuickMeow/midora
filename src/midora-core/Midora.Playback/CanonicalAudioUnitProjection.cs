@@ -159,8 +159,16 @@ public sealed class CanonicalAudioUnitProjection
             byInstance.Add((allocation.InstanceId, allocation.SubVoiceId), builder);
         }
 
-        IEnumerable<CanonicalMidiEvent> events = eventSubset ?? compiled.Events.ToArray();
-        foreach (CanonicalMidiEvent value in events)
+        if (eventSubset is null)
+        {
+            foreach (CanonicalMidiEvent value in compiled.Events) AppendEvent(value);
+        }
+        else
+        {
+            foreach (CanonicalMidiEvent value in eventSubset) AppendEvent(value);
+        }
+
+        void AppendEvent(CanonicalMidiEvent value)
         {
             FragmentBuilder? builder = ResolveBuilder(value, byInstance, builders.Values);
             if (builder is null)

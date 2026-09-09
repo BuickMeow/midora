@@ -15,6 +15,15 @@ public sealed class LogicalNote
         Id = preservedId;
     }
 
+    internal LogicalNote(LogicalNoteSnapshotValue value)
+    {
+        Id = value.Id;
+        _startTick = value.StartTick;
+        _lengthTicks = value.LengthTicks;
+        _note = value.Note;
+        _velocity = value.Velocity;
+    }
+
     private Action<LogicalNote>? _changeSink;
     private long _startTick;
     private long _lengthTicks;

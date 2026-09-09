@@ -1,5 +1,7 @@
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Reflection;
+using System.Windows.Threading;
 using Midora.Application;
 using Midora.Compiler;
 using Midora.Desktop.Presentation.Interaction;
@@ -1346,9 +1348,11 @@ public sealed class DesktopSessionControllerTests
         TimelineWorkspaceViewModel conductor = Assert.IsType<TimelineWorkspaceViewModel>(
             session.OpenWorkspace(conductorNode));
         session.SelectWorkspaceObject(conductor, tempo.Id);
+        Assert.Equal(tempo.Id, conductor.Selection.Primary);
 
         ObjectPropertiesViewModel properties = session.CreateObjectProperties(conductor);
         Assert.Equal("Tempo", properties.Title);
+        WaitForConductorPrimaryPresentation(conductor, tempo.Id);
         Assert.Equal(tempo.Id, conductor.SelectedConductorEvent?.Id);
         Assert.True(ObjectPropertiesProjection.CanEditInPropertiesDialog(
             conductor,
@@ -1372,6 +1376,29 @@ public sealed class DesktopSessionControllerTests
 
         Assert.Equal(120m, session.Project.Conductor.Tempos.Single(value =>
             value.Id == tempo.Id).BeatsPerMinute);
+
+        static void WaitForConductorPrimaryPresentation(TimelineWorkspaceViewModel workspace, MidoraId id)
+        {
+            if (workspace.SelectedConductorEvent?.Id == id) return;
+            // Formal selection is immediate; cold ID metadata is prepared on a
+            // worker and its optional row is published on the captured Dispatcher.
+            // xUnit's async context does not pump that Dispatcher automatically.
+            DispatcherFrame frame = new();
+            PropertyChangedEventHandler onChanged = (_, args) =>
+            {
+                if (args.PropertyName == nameof(workspace.SelectedConductorEvent)
+                    && workspace.SelectedConductorEvent?.Id == id) frame.Continue = false;
+            };
+            workspace.PropertyChanged += onChanged;
+            DispatcherTimer timeout = new(TimeSpan.FromSeconds(5), DispatcherPriority.Send,
+                (_, _) => frame.Continue = false, Dispatcher.CurrentDispatcher);
+            try { Dispatcher.PushFrame(frame); }
+            finally
+            {
+                timeout.Stop();
+                workspace.PropertyChanged -= onChanged;
+            }
+        }
     }
 
     [Fact]

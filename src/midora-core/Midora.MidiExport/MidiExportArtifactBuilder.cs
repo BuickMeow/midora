@@ -162,7 +162,9 @@ public static class MidiExportArtifactBuilder
                     "The README.md file list does not exactly match the frozen output plan.",
                     nameof(readmeRequest));
             }
-            artifacts.Add(new(ReadmeSourceKey, MidiExportReadmeBuilder.Build(readmeRequest)));
+            MidiExportReadmeRequest frozenReadme = MidiExportReadmeBuilder.Freeze(readmeRequest);
+            artifacts.Add(new(ReadmeSourceKey,
+                (output, token) => MidiExportReadmeBuilder.WriteTo(output, frozenReadme, token)));
         }
 
         string[] plannedKeys = plan.Targets.Select(target => target.SourceKey)

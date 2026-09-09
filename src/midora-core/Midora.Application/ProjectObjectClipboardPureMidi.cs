@@ -229,7 +229,7 @@ public static partial class ProjectObjectClipboard
             };
             return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteDirectMidiNoteClipboard(
                 values, targetSegmentId, editCursorTick),
-                new(payload.Kind, targetSegmentId, TargetIsDirectMidi: true));
+                new(payload.Kind, targetSegmentId, TargetIsDirectMidi: true), independentlyPreparedContent: true);
         }
         IReadOnlyList<LogicalNoteClipboardSnapshot> logicalValues = payload.Kind switch
         {
@@ -240,7 +240,7 @@ public static partial class ProjectObjectClipboard
             _ => throw new ArgumentException("The clipboard payload does not contain MIDI-compatible Notes.", nameof(payload))
         };
         return KeepClipboardAlive(payload, ProjectDomainEditCommands.PasteLogicalNoteClipboard(
-            logicalValues, targetSegmentId, editCursorTick), new(payload.Kind, targetSegmentId));
+            logicalValues, targetSegmentId, editCursorTick), new(payload.Kind, targetSegmentId), independentlyPreparedContent: true);
     }
 
     public static IProjectEditCommand CreatePasteDirectMidiEventsCommand(

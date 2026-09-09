@@ -33,16 +33,11 @@ public sealed partial class CanonicalCompiledResult : IRetainedStorageSource
         if (!collector.Add(this, 288)) return;
         Context.CollectRetainedStorage(collector);
         Conductor.CollectRetainedStorage(collector);
+        Statistics.ResourceShortage?.CollectRetainedStorage(collector);
         collector.Array(_events);
         collector.Array(_allocations);
         collector.Array(_channelModeSystemExclusiveEvents);
-        if (collector.Array(_diagnostics))
-            foreach (CompilerDiagnostic diagnostic in _diagnostics)
-            {
-                collector.Add(diagnostic, 208);
-                collector.Text(diagnostic.Code);
-                collector.Text(diagnostic.Message);
-            }
+        _diagnostics.CollectRetainedStorage(collector);
         if (collector.Array(_smfTracks))
             foreach (CanonicalSmfTrackDescriptor track in _smfTracks)
             {
@@ -54,5 +49,19 @@ public sealed partial class CanonicalCompiledResult : IRetainedStorageSource
                 collector.Bytes(value.Payload);
         if (_pagedEventSource is IRetainedStorageSource source)
             source.CollectRetainedStorage(collector);
+    }
+}
+
+public sealed partial class ResourceShortageDetails
+{
+    internal void CollectRetainedStorage(RetainedStorageCollector collector)
+    {
+        // x64: object header, five references, TickRange, and two Int32 values.
+        if (!collector.Add(this, 80)) return;
+        collector.Array(_trackIds);
+        collector.Array(_segmentIds);
+        collector.Array(_logicalNoteIds);
+        collector.Array(_eventInstrumentIds);
+        collector.Array(_subVoiceIds);
     }
 }

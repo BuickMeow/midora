@@ -130,17 +130,14 @@ public sealed class MidiExportCompilationCoordinator
                 continue;
             }
 
-            MidiExportChannelUnit[] units = compiled.Allocations.ToArray()
-                .Where(allocation => allocation.TrackId == track.Id)
-                .Select(allocation => new MidiExportChannelUnit(
-                    allocation.ZeroBasedPort,
-                    allocation.ZeroBasedChannel))
-                .Concat(compiled.Events.ToArray()
-                    .Where(value => value.Source.TrackId == track.Id)
-                    .Select(value => new MidiExportChannelUnit(
-                        value.ZeroBasedPort,
-                        value.ZeroBasedChannel)))
-                .Distinct()
+            HashSet<MidiExportChannelUnit> unitSet = [];
+            foreach (ChannelUnitAllocation allocation in compiled.Allocations)
+                if (allocation.TrackId == track.Id)
+                    unitSet.Add(new(allocation.ZeroBasedPort, allocation.ZeroBasedChannel));
+            foreach (CanonicalMidiEvent value in compiled.Events)
+                if (value.Source.TrackId == track.Id)
+                    unitSet.Add(new(value.ZeroBasedPort, value.ZeroBasedChannel));
+            MidiExportChannelUnit[] units = unitSet
                 .OrderBy(unit => unit.ZeroBasedPort)
                 .ThenBy(unit => unit.ZeroBasedChannel)
                 .ToArray();
@@ -169,14 +166,11 @@ public sealed class MidiExportCompilationCoordinator
             }
         }
 
-        byte[] usedPorts = compiled.Events.ToArray()
-            .Select(value => value.ZeroBasedPort)
-            .Concat(compiled.SmfTracks.ToArray()
-                .Where(value => value.Kind == CanonicalSmfTrackKind.PureMidiTrack)
-                .Select(value => value.ZeroBasedPort))
-            .Distinct()
-            .Order()
-            .ToArray();
+        HashSet<byte> portSet = [];
+        foreach (CanonicalMidiEvent value in compiled.Events) portSet.Add(value.ZeroBasedPort);
+        foreach (CanonicalSmfTrackDescriptor value in compiled.SmfTracks)
+            if (value.Kind == CanonicalSmfTrackKind.PureMidiTrack) portSet.Add(value.ZeroBasedPort);
+        byte[] usedPorts = portSet.Order().ToArray();
         return new(
             request.Mode,
             request.Routing,

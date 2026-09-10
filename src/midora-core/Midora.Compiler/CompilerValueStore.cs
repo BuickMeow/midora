@@ -378,6 +378,75 @@ internal sealed class CompilerValueStore<T> : IEnumerable<T>, IDisposable, IReta
     public IEnumerable<T> Enumerate(bool reverse = false, CancellationToken cancellationToken = default) =>
         EnumerateRange(0, Count, reverse, cancellationToken);
 
+    internal RandomReader OpenRandomReader(CancellationToken token = default) => new(this, token);
+
+    // A cursor-local four-page cache for cold source sidecars. No shared mutable
+    // cache or per-event buffer allocation; every actual spill read is verified.
+    internal sealed class RandomReader : IDisposable
+    {
+        private const int CachedPageCount = 4;
+        // Four directory arrays (including headers), reader/lease overhead and
+        // the fixed decoded-buffer headers; record payloads are reserved below.
+        internal const long DirectoryWorkingBytes = 1024;
+        private readonly CompilerValueStore<T> _owner;
+        private readonly CancellationToken _token;
+        private readonly T[]?[] _buffers;
+        private readonly long[] _indices;
+        private readonly long[] _ages;
+        private readonly IDisposable?[] _leases;
+        private readonly IDisposable _directoryLease;
+        private byte[]? _compressed;
+        private IDisposable? _compressedLease;
+        private long _clock;
+        private bool _disposed;
+        public RandomReader(CompilerValueStore<T> owner, CancellationToken token)
+        {
+            ObjectDisposedException.ThrowIf(owner._disposed, owner);
+            _owner = owner;
+            _token = token;
+            _directoryLease = owner._budget.ReserveWorking(DirectoryWorkingBytes);
+            try
+            {
+                _buffers = new T[CachedPageCount][];
+                _indices = [-1, -1, -1, -1];
+                _ages = new long[CachedPageCount];
+                _leases = new IDisposable[CachedPageCount];
+            }
+            catch { _directoryLease.Dispose(); throw; }
+        }
+        public T Read(long index)
+        {
+            ObjectDisposedException.ThrowIf(_disposed || _owner._disposed, this);
+            _token.ThrowIfCancellationRequested();
+            if ((ulong)index >= (ulong)_owner.Count) throw new ArgumentOutOfRangeException(nameof(index));
+            int pageIndex = checked((int)(index / PageCapacity)), local = (int)(index % PageCapacity);
+            if (pageIndex == _owner._pages.Count) return _owner._pending[local];
+            Page page = _owner._pages[pageIndex];
+            if (page.Values is not null) return page.Values[local];
+            for (int i = 0; i < CachedPageCount; i++)
+                if (_indices[i] == pageIndex) { _ages[i] = ++_clock; return _buffers[i]![local]; }
+            int slot = 0;
+            for (int i = 1; i < CachedPageCount; i++) if (_ages[i] < _ages[slot]) slot = i;
+            if (_buffers[slot] is null)
+            {
+                IDisposable lease = _owner._budget.ReserveWorking((long)PageCapacity * _owner._recordBytes);
+                try { _buffers[slot] = new T[PageCapacity]; _leases[slot] = lease; }
+                catch { lease.Dispose(); throw; }
+            }
+            _indices[slot] = -1;
+            _owner.ReadPage(page, _buffers[slot]!, ref _compressed, ref _compressedLease);
+            _indices[slot] = pageIndex; _ages[slot] = ++_clock;
+            return _buffers[slot]![local];
+        }
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            for (int i = 0; i < CachedPageCount; i++) { _buffers[i] = null; _leases[i]?.Dispose(); }
+            _compressed = null; _compressedLease?.Dispose(); _directoryLease.Dispose();
+        }
+    }
+
     // Only final publication calls this, after temporary sort/range buffers have been disposed.
     // Use the now-free shared resident budget for final immutable pages, rather than leaving
     // the budget empty while subsequent consumers repeatedly read those same pages from disk.

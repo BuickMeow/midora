@@ -9,7 +9,7 @@ public sealed class LogicalCanonicalEventSourceTests
     public void PublicationMetadataExhaustionDoesNotInvalidateTheOldResultOrLeakReservations()
     {
         CompilerStorageBudget oldBudget = new(0), newBudget = new(0);
-        using CompilerValueStore<CanonicalMidiEvent> oldValues = new(oldBudget), newValues = new(newBudget);
+        using CompactCanonicalStore oldValues = new(oldBudget), newValues = new(newBudget);
         for (int i = 4999; i >= 0; i--)
         {
             CanonicalMidiEvent item = new(i, 0, 0, MidiMessage.NoteOn(0, 60, 100),
@@ -36,7 +36,7 @@ public sealed class LogicalCanonicalEventSourceTests
     public void CancelledPublicationReleasesOnlyItsNewIndexReservation()
     {
         CompilerStorageBudget budget = new(0);
-        using CompilerValueStore<CanonicalMidiEvent> values = new(budget);
+        using CompactCanonicalStore values = new(budget);
         values.Add(new(10, 0, 0, MidiMessage.NoteOn(0, 60, 100), CanonicalEventRole.NoteOn, 0, long.MinValue, 0, new(Tick: 10)));
         values.Seal();
         long metadata = budget.MetadataBytes;
@@ -55,7 +55,7 @@ public sealed class LogicalCanonicalEventSourceTests
     {
         CompilerStorageBudget budget = new(residentBudget);
         Assert.True(budget.TryReserveResident(residentBudget));
-        using CompilerValueStore<CanonicalMidiEvent> values = new(budget);
+        using CompactCanonicalStore values = new(budget);
         for (int i = 4999; i >= 0; i--)
             values.Add(new(i, 0, 0, MidiMessage.NoteOn(0, 60, 100),
                 CanonicalEventRole.NoteOn, i, long.MinValue, i, new(Tick: i)));
@@ -88,7 +88,7 @@ public sealed class LogicalCanonicalEventSourceTests
     {
         CanonicalMidiEvent[] expected = Enumerable.Range(0, count).Select(Create).ToArray();
         CompilerStorageBudget budget = new(0);
-        using CompilerValueStore<CanonicalMidiEvent> values = new(budget);
+        using CompactCanonicalStore values = new(budget);
         using LogicalCanonicalPageIndex index = new(budget);
         foreach (CanonicalMidiEvent value in expected.Reverse()) { values.Add(value); index.Add(in value); }
         index.SealPage();

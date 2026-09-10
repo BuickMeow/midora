@@ -353,7 +353,7 @@ public sealed partial class MidoraCompiler : IDisposable
             .SelectMany(value => value.Segments)
             .Any(value => value.UsesPagedContent);
         long logicalMaterializationStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        using CompilerValueStore<CanonicalMidiEvent> allEvents = MaterializeEvents(
+        using CompactCanonicalStore allEvents = MaterializeEvents(
             project,
             instances,
             allocation.Groups,
@@ -369,7 +369,7 @@ public sealed partial class MidoraCompiler : IDisposable
             .Where(value => value.MidiChannelRootId == default).ToArray();
         long logicalRangeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         using LogicalCanonicalPageIndex logicalPageIndex = new(storageBudget);
-        CompilerValueStore<CanonicalMidiEvent> rangedStore = ApplyRange(
+        CompactCanonicalStore rangedStore = ApplyRange(
             allEvents,
             rangeSourceAllocations,
             request.StartTick,
@@ -3149,7 +3149,7 @@ public sealed partial class MidoraCompiler : IDisposable
         return fullProjectResult.CreatePlaybackView();
     }
 
-    private static CompilerValueStore<CanonicalMidiEvent> MaterializeEvents(
+    private static CompactCanonicalStore MaterializeEvents(
         MidoraProject project,
         List<RawInstance> instances,
         ReadOnlySpan<AllocationGroup> groups,
@@ -3158,9 +3158,13 @@ public sealed partial class MidoraCompiler : IDisposable
         CompilerStorageBudget storageBudget,
         CancellationToken cancellationToken)
     {
-        using CompilerExternalSorter<CanonicalMidiEvent> sorter = new(
-            storageBudget, ReverseCanonicalComparer, cancellationToken, runSize: 131072, fanIn: 32);
-        ICollection<CanonicalMidiEvent> result = new AppendOnlyCollection<CanonicalMidiEvent>(sorter.Add);
+        using CanonicalSourceTable sources = new(storageBudget, cancellationToken);
+        using CanonicalSourceTable.Reader reader = sources.OpenReader(cancellationToken);
+        using CompilerExternalSorter<CompactCanonicalEvent> sorter = new(
+            storageBudget, new CompactCanonicalComparer(reader, descending: true), cancellationToken,
+            runSize: 131072, fanIn: 32);
+        ICollection<CanonicalMidiEvent> result = new AppendOnlyCollection<CanonicalMidiEvent>(
+            value => sorter.Add(sources.Compact(value)));
         HashSet<MidoraId> logicalTrackIds = project.Tracks
             .Select(value => value.Id)
             .ToHashSet();
@@ -3183,7 +3187,9 @@ public sealed partial class MidoraCompiler : IDisposable
                     continue;
                 }
                 byte channel = (byte)(unit & 15);
-                foreach (RawMidiEvent value in voice.Events)
+                foreach (CompactCanonicalEvent value in voice.Events.MaterializeCompact(
+                    sources, (byte)(unit >> 4), channel,
+                    arrangementTrackOrder.GetValueOrDefault(instance.TrackId, int.MaxValue)))
                 {
                     if (!includeLaneActivationState
                         && value.Tick == instance.StartTick
@@ -3191,11 +3197,7 @@ public sealed partial class MidoraCompiler : IDisposable
                     {
                         continue;
                     }
-                    result.Add(new(value.Tick, (byte)(unit >> 4), channel, value.ToMidiMessage(channel),
-                        value.Role, value.Sequence, value.SemanticTargetKey, value.SemanticGroup, value.Source,
-                        SmfTrackOrder: arrangementTrackOrder.GetValueOrDefault(
-                            instance.TrackId,
-                            int.MaxValue)));
+                    sorter.Add(value);
                 }
             }
         }
@@ -3238,7 +3240,8 @@ public sealed partial class MidoraCompiler : IDisposable
             }
         }
 
-        return FoldDescendingEvents(sorter.ReadSorted(cancellationToken), storageBudget, cancellationToken);
+        sources.Seal();
+        return FoldCompactDescendingEvents(sorter.ReadSorted(cancellationToken), sources, storageBudget, cancellationToken);
     }
 
     private static HashSet<MidoraId> GetLaneActivationInstances(
@@ -3352,8 +3355,8 @@ public sealed partial class MidoraCompiler : IDisposable
         }
     }
 
-    private static CompilerValueStore<CanonicalMidiEvent> ApplyRange(
-        CompilerValueStore<CanonicalMidiEvent> source,
+    private static CompactCanonicalStore ApplyRange(
+        CompactCanonicalStore source,
         ReadOnlySpan<ChannelUnitAllocation> allocations,
         long startTick,
         long endTick,
@@ -3363,14 +3366,17 @@ public sealed partial class MidoraCompiler : IDisposable
         bool suppressEndCleanup = false,
         CancellationToken cancellationToken = default)
     {
-        using CompilerExternalSorter<CanonicalMidiEvent> sorter = new(
-            storageBudget, ReverseCanonicalComparer, cancellationToken);
+        using CanonicalSourceTable sources = new(storageBudget, cancellationToken, source.Sources);
+        using CanonicalSourceTable.Reader sourceReader = sources.OpenReader(cancellationToken);
+        using CompilerExternalSorter<CompactCanonicalEvent> sorter = new(
+            storageBudget, new CompactCanonicalComparer(sourceReader, descending: true), cancellationToken);
         // Keep an ordinal window into the already immutable sorted input. Do not
         // write/read a second full middle store merely to reverse that window.
         long middleStart = source.Count, middleEnd = 0;
-        ICollection<CanonicalMidiEvent> result = new AppendOnlyCollection<CanonicalMidiEvent>(sorter.Add);
+        ICollection<CanonicalMidiEvent> result = new AppendOnlyCollection<CanonicalMidiEvent>(
+            value => sorter.Add(sources.Compact(value)));
         Dictionary<(byte Port, byte Channel, long Target), CanonicalStateGroup> state = [];
-        Dictionary<(byte Port, byte Channel, byte Note), Queue<SourceReference>> activeNotes = [];
+        Dictionary<(byte Port, byte Channel, byte Note), Queue<CompactCanonicalSource>> activeNotes = [];
         HashSet<(byte Port, byte Channel, long Target)> pollutedTargets = [];
         HashSet<(byte Port, byte Channel)> channelsNeedingSoundOff = [];
         HashSet<(byte Port, byte Channel)> activeAtStart = [];
@@ -3383,7 +3389,7 @@ public sealed partial class MidoraCompiler : IDisposable
             }
         }
         long sourceIndex = 0;
-        foreach (CanonicalMidiEvent value in source.Enumerate(reverse: true, cancellationToken))
+        foreach (CompactCanonicalEvent value in source.Values.Enumerate(reverse: true, cancellationToken))
         {
             if ((sourceIndex++ & 1023) == 0)
             {
@@ -3408,21 +3414,21 @@ public sealed partial class MidoraCompiler : IDisposable
                 if (message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0)
                 {
                     (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                    if (!activeNotes.TryGetValue(key, out Queue<SourceReference>? sources))
+                    if (!activeNotes.TryGetValue(key, out Queue<CompactCanonicalSource>? noteSources))
                     {
-                        sources = new Queue<SourceReference>();
-                        activeNotes.Add(key, sources);
+                        noteSources = new Queue<CompactCanonicalSource>();
+                        activeNotes.Add(key, noteSources);
                     }
-                    sources.Enqueue(value.Source);
+                    noteSources.Enqueue(value.Source);
                 }
                 else if (message.MessageType == MidiMessageType.NoteOff
                     || (message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0))
                 {
                     (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                    if (activeNotes.TryGetValue(key, out Queue<SourceReference>? sources)
-                        && sources.Count > 0)
+                    if (activeNotes.TryGetValue(key, out Queue<CompactCanonicalSource>? noteSources)
+                        && noteSources.Count > 0)
                     {
-                        _ = sources.Dequeue();
+                        _ = noteSources.Dequeue();
                     }
                 }
                 else if (value.SemanticTargetKey != long.MinValue)
@@ -3457,10 +3463,10 @@ public sealed partial class MidoraCompiler : IDisposable
                         value.ZeroBasedPort,
                         value.ZeroBasedChannel,
                         message.Byte1);
-                    if (activeNotes.TryGetValue(key, out Queue<SourceReference>? sources)
-                        && sources.Count > 0)
+                    if (activeNotes.TryGetValue(key, out Queue<CompactCanonicalSource>? noteSources)
+                        && noteSources.Count > 0)
                     {
-                        _ = sources.Dequeue();
+                        _ = noteSources.Dequeue();
                     }
                 }
                 continue;
@@ -3476,21 +3482,21 @@ public sealed partial class MidoraCompiler : IDisposable
             if (message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0)
             {
                 (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                if (!activeNotes.TryGetValue(key, out Queue<SourceReference>? sources))
+                if (!activeNotes.TryGetValue(key, out Queue<CompactCanonicalSource>? noteSources))
                 {
-                    sources = new Queue<SourceReference>();
-                    activeNotes.Add(key, sources);
+                    noteSources = new Queue<CompactCanonicalSource>();
+                    activeNotes.Add(key, noteSources);
                 }
-                sources.Enqueue(value.Source);
+                noteSources.Enqueue(value.Source);
             }
             else if (message.MessageType == MidiMessageType.NoteOff
                 || (message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0))
             {
                 (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                if (activeNotes.TryGetValue(key, out Queue<SourceReference>? sources)
-                    && sources.Count > 0)
+                if (activeNotes.TryGetValue(key, out Queue<CompactCanonicalSource>? noteSources)
+                    && noteSources.Count > 0)
                 {
-                    _ = sources.Dequeue();
+                    _ = noteSources.Dequeue();
                 }
             }
         }
@@ -3505,8 +3511,9 @@ public sealed partial class MidoraCompiler : IDisposable
             .ThenBy(value => value.Value.StableOrder))
         {
             pollutedTargets.Add((port, channel, target));
-            foreach (CanonicalMidiEvent previous in group.Events.OrderBy(value => value.StableOrder))
+            foreach (CompactCanonicalEvent compactPrevious in group.Events.OrderBy(value => value.StableOrder))
             {
+                CanonicalMidiEvent previous = sourceReader.Restore(compactPrevious);
                 result.Add(previous with
                 {
                     Tick = startTick,
@@ -3521,19 +3528,21 @@ public sealed partial class MidoraCompiler : IDisposable
 
         if (suppressEndCleanup)
         {
-            return FinalizeRangeEvents(ReadMiddle(), sorter, storageBudget, cancellationToken, pageIndex);
+            sources.Seal();
+            return FinalizeRangeEvents(ReadMiddle(), sorter, sources, storageBudget, cancellationToken, pageIndex);
         }
 
         HashSet<(byte Port, byte Channel)> cleanupChannels = [];
         long boundaryNoteOffOrder = long.MaxValue / 2;
-        foreach (((byte port, byte channel, byte note), Queue<SourceReference> sources) in activeNotes
+        foreach (((byte port, byte channel, byte note), Queue<CompactCanonicalSource> noteSources) in activeNotes
             .Where(value => value.Value.Count != 0)
             .OrderBy(value => value.Key.Port)
             .ThenBy(value => value.Key.Channel)
             .ThenBy(value => value.Key.Note))
         {
-            foreach (SourceReference sourceReference in sources)
+            foreach (CompactCanonicalSource compactSource in noteSources)
             {
+                SourceReference sourceReference = sourceReader.Restore(compactSource);
                 result.Add(new(endTick, port, channel, MidiMessage.NoteOff(channel, note, 0),
                     CanonicalEventRole.NoteOff, boundaryNoteOffOrder++, long.MinValue, long.MinValue,
                     sourceReference with
@@ -3587,7 +3596,8 @@ public sealed partial class MidoraCompiler : IDisposable
                     result, endTick, port, channel, target, resetDefaults, ref resetOrder);
             }
         }
-        return FinalizeRangeEvents(ReadMiddle(), sorter, storageBudget, cancellationToken, pageIndex);
+        sources.Seal();
+        return FinalizeRangeEvents(ReadMiddle(), sorter, sources, storageBudget, cancellationToken, pageIndex);
 
         void IncludeMiddle()
         {
@@ -3595,10 +3605,10 @@ public sealed partial class MidoraCompiler : IDisposable
             middleStart = Math.Min(middleStart, ordinal);
             middleEnd = Math.Max(middleEnd, ordinal + 1);
         }
-        IEnumerable<CanonicalMidiEvent> ReadMiddle()
+        IEnumerable<CompactCanonicalEvent> ReadMiddle()
         {
             if (middleEnd <= middleStart) yield break;
-            foreach (CanonicalMidiEvent value in source.EnumerateRange(middleStart, middleEnd - middleStart,
+            foreach (CompactCanonicalEvent value in source.Values.EnumerateRange(middleStart, middleEnd - middleStart,
                 cancellationToken: cancellationToken))
             {
                 // Non-Direct events at endTick can be interleaved with preserved
@@ -3915,7 +3925,7 @@ public sealed partial class MidoraCompiler : IDisposable
         public CanonicalEventRole Role { get; } = role;
         public long StableOrder { get; } = stableOrder;
         public long SemanticGroup { get; } = semanticGroup;
-        public List<CanonicalMidiEvent> Events { get; } = [];
+        public List<CompactCanonicalEvent> Events { get; } = [];
     }
 
     private sealed record RawInstance(

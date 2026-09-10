@@ -2,6 +2,8 @@
 
 日期：2026-09-10。状态：内存改造及后续时间回收均已实施。初次交付的历史数据见[内存报告](Midora-Logical-Canonical-Memory-Verification-2026-09-10.md)；当前实现、时间/内存复测及待人工验收项以[时间回收报告](Midora-Logical-Canonical-Time-Implementation-2026-09-10.md)为准。
 
+LC-T3 后续更新：完整 SourceReference 不再在每个排序/范围/最终页记录中重复搬运；使用 96-byte 热记录与有界、独立来源 sidecar，在公开 cursor 还原所有字段。预算与音乐语义不变，细节及最新验证见[LC-T3 实施记录](Midora-Logical-Canonical-Compact-Implementation-2026-09-10.md)。T1/T2 时间报告继续作为此前实现的历史证据。
+
 ## 需求追踪
 
 - 输入：当前 Project、冻结 CompilationRequest、正式 source revision；沿用 Semantic Validation、Mapping ABI v3、Loop/Pre-Roll、Usage 分配。
@@ -16,6 +18,8 @@
 原实现峰值来自完整 Raw 展开、Canonical List、排序/范围结果数组及消费者的第二份数组。不能只替换最终数组。
 
 采用共享预算的不可变 unmanaged 值页、临时排序 runs 和顺序流式折叠/范围处理。小型内容保留内存快速路径，大型内容达到预算后写 owned spill；页/排序边界不进入音乐 identity。SourceReference 完整保留，Raw 继续使用已验证的相对来源/pattern 共享。
+
+LC-T3 的 canonical 排序、状态扫描、FIFO 和最终物理页分别使用紧凑事件/来源句柄。来源表最多 4096 项发现索引，超出仍完整分页保存；随机来源 reader 独立缓存最多四页，并直接保活 finalizable table owner。完整比较器的来源 tie-breaker、统一升序 fingerprint 与消费者公共事件保持不变。来源发现预约涵盖扩容新旧数组；内部 ordinal 仅为物理定位，不形成正式顺序。
 
 临时排序的 run 大小有界；一般/Raw 路径保持 32,768 records、16 路归并，canonical materialization 使用 131,072 records、32 路归并。所有读者和工作数组都计入同一工作预算，不因增大 run 而增大总预算。同 Tick 可以跨任意页/run，必须保持完整语义 group，不可在页边界重置状态。范围恢复与硬结束沿用同一规则，不另建简化编译器。
 

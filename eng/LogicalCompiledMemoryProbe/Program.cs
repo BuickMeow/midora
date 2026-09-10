@@ -5,6 +5,7 @@ using System.Text.Json;
 using Midora.Compiler;
 using Midora.Compiler.Tests;
 using Midora.Domain;
+using Midora.Common;
 
 try
 {
@@ -18,8 +19,8 @@ internal static class LogicalMemoryProbe
 {
     public static int Run(string[] args)
     {
-        if (args.Length < 3 || args[0] != "run")
-            throw new ArgumentException("run OUTPUT SCENARIO [COUNT [TEMPLATE_NOTES LOOPS VOICES]]");
+        if (args.Length < 3 || args[0] is not ("run" or "cold"))
+            throw new ArgumentException("run|cold OUTPUT SCENARIO [COUNT [TEMPLATE_NOTES LOOPS VOICES]]");
         string output = Path.GetFullPath(args[1]);
         string scenario = args[2];
         int count = args.Length > 3 ? int.Parse(args[3]) : 8;
@@ -31,7 +32,9 @@ internal static class LogicalMemoryProbe
         void Write(object value) { string text = JsonSerializer.Serialize(value); log.WriteLine(text); Console.WriteLine(text); }
         Write(new { schema = 1, scenario, count, templateNotes, loops, voices, runtime = Environment.Version.ToString(),
             compilerMvid = typeof(MidoraCompiler).Assembly.ManifestModule.ModuleVersionId });
-        WeakReference[] owners = Execute(scenario, count, templateNotes, loops, voices, output, Write);
+        WeakReference[] owners = args[0] == "cold"
+            ? ExecuteCold(scenario, count, templateNotes, loops, voices, Write)
+            : Execute(scenario, count, templateNotes, loops, voices, output, Write);
         for (int i = 0; i < 3; i++) { GC.Collect(); GC.WaitForPendingFinalizers(); }
         int alive = owners.Count(reference => reference.IsAlive);
         Write(new { phase = "closed-controlled-gc", alive, owners = owners.Length, memory = Memory() });
@@ -42,7 +45,7 @@ internal static class LogicalMemoryProbe
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static WeakReference[] Execute(string scenario, int count, int templateNotes, int loops, int voices, string output, Action<object> write)
     {
-        using LogicalCompiledMemoryOracle.Fixture fixture = LogicalCompiledMemoryOracle.Create(scenario, count, templateNotes, loops, voices);
+        using LogicalCompiledMemoryOracle.Fixture fixture = CreateFixture(scenario, count, templateNotes, loops, voices);
         using MidoraCompiler compiler = new();
         CanonicalCompiledResult first = Compile("full", () => compiler.CompileFull(fixture.Project));
         if (first.IsConsumable && first.EndTick > first.StartTick)
@@ -69,6 +72,20 @@ internal static class LogicalMemoryProbe
         if (Digest("fresh-full", full) != editedDigest) throw new InvalidDataException("Full/Incremental formal digest differs.");
         compiler.ClearCache(); oracle.ClearCache();
         if (Digest("retained-old", first) != firstDigest) throw new InvalidDataException("Old immutable result changed.");
+        RetainedStorageCollector combined = new();
+        object Storage(CanonicalCompiledResult value)
+        {
+            RetainedStorageCollector own = new(); value.CollectRetainedStorage(own);
+            value.CollectRetainedStorage(combined);
+            RetainedStoragePart[] parts = own.ToArray();
+            return new { bytes = parts.Sum(p => p.Bytes), parts = parts.Length };
+        }
+        object firstStorage = Storage(first), editedStorage = Storage(edited), freshStorage = Storage(full);
+        write(new { phase = "retained-storage", first = firstStorage, edited = editedStorage, fresh = freshStorage,
+            combinedBytes = combined.ToArray().Sum(p => p.Bytes) });
+        for (int i = 0; i < 3; i++) { GC.Collect(); GC.WaitForPendingFinalizers(); }
+        write(new { phase = "three-results-controlled-gc", memory = Memory() });
+        GC.KeepAlive(first); GC.KeepAlive(edited); GC.KeepAlive(full); GC.KeepAlive(combined);
         return [new(fixture.Project), new(compiler), new(first), new(edited), new(full)];
 
         CanonicalCompiledResult Compile(string phase, Func<CanonicalCompiledResult> action, MidoraCompiler? owner = null)
@@ -107,6 +124,52 @@ internal static class LogicalMemoryProbe
             string digest = LogicalCompiledMemoryOracle.ConsumerDigest(result, writer.WriteLine);
             write(new { phase = phase + "-consumer-oracle", digest });
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference[] ExecuteCold(string scenario, int count, int notes, int loops, int voices, Action<object> write)
+    {
+        using var fixture = CreateFixture(scenario, count, notes, loops, voices);
+        using MidoraCompiler compiler = new();
+        var io = ReadIo(); long before = GC.GetTotalAllocatedBytes(true);
+        Stopwatch timer = Stopwatch.StartNew();
+        CanonicalCompiledResult result = compiler.CompileFull(fixture.Project); timer.Stop();
+        var afterIo = ReadIo();
+        if (!result.IsConsumable) throw new InvalidDataException("Expected consumable result.");
+        write(new { phase = "full", elapsedMs = timer.Elapsed.TotalMilliseconds, allocatedBytes = GC.GetTotalAllocatedBytes(true) - before,
+            result.TotalEventCount, result.TotalNoteOnEventCount, result.Fingerprint, memory = Memory(),
+            logicalStorage = compiler.LastLogicalStorageTelemetry,
+            readBytes = afterIo.ReadBytes - io.ReadBytes, writeBytes = afterIo.WriteBytes - io.WriteBytes });
+        Storage("before-clear"); compiler.ClearCache(); Storage("after-clear");
+        return [new(fixture.Project), new(compiler), new(result)];
+
+        void Storage(string phase)
+        {
+            RetainedStorageCollector collector = new(); result.CollectRetainedStorage(collector);
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            object? paged = typeof(CanonicalCompiledResult).GetField("_logicalEventSource", flags)?.GetValue(result);
+            object? values = paged?.GetType().GetField("_values", flags)?.GetValue(paged);
+            object? sources = values?.GetType().GetField("Sources", flags)?.GetValue(values);
+            object? sourceCount = sources?.GetType().GetProperty("Count", flags)?.GetValue(sources);
+            for (int i = 0; i < 3; i++) { GC.Collect(); GC.WaitForPendingFinalizers(); }
+            write(new { phase, retainedBytes = collector.ToArray().Sum(p => p.Bytes), sourceCount, memory = Memory() });
+            GC.KeepAlive(result); GC.KeepAlive(compiler); GC.KeepAlive(fixture);
+        }
+    }
+
+    private static LogicalCompiledMemoryOracle.Fixture CreateFixture(string scenario, int count, int notes, int loops, int voices)
+    {
+        if (scenario != "segmented") return LogicalCompiledMemoryOracle.Create(scenario, count, notes, loops, voices);
+        var baseFixture = LogicalCompiledMemoryOracle.Create("expansion", count, notes, loops, voices);
+        baseFixture.Track.Segments.Clear();
+        Segment? first = null;
+        foreach (LogicalNote source in baseFixture.Segment.Notes)
+        {
+            Segment segment = new(baseFixture.Project) { ProjectStartTick = source.StartTick, LengthTicks = source.LengthTicks + 1 };
+            segment.Notes.Add(new LogicalNote(baseFixture.Project) { StartTick = 0, LengthTicks = source.LengthTicks, Note = source.Note, Velocity = source.Velocity });
+            baseFixture.Track.Segments.Add(segment); first ??= segment;
+        }
+        return new(baseFixture.Project, baseFixture.Track, first!);
     }
 
     private static object Memory()

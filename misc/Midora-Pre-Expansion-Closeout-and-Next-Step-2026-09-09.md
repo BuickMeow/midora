@@ -66,6 +66,8 @@
 
 ### 3.4 实施状态（2026-09-10）
 
+后续补充：LC-T1/T2 后又完成独立 LC-T3 实验，用户已批准正式接入 96-byte canonical 热记录与完整来源 sidecar，并确认本轮验收通过。下列旧数组对照保留为历史数字，最新加固、复测与人工范围见 [LC-T3 记录](Midora-Logical-Canonical-Compact-Implementation-2026-09-10.md)；不提前执行极端 Tick 或 SMF 任务。
+
 - 已完成从 Raw 发射、共享 pattern、有限外排、范围归并到不可变 Logical canonical 页的贯穿改造；内联与分页的正式查询明确区分，播放准备、MIDI/音频导出、All Tracks 不再要求大型 Logical 结果全量数组。
 - 预算分别约束驻留页、工作缓冲、索引和 spill；取消/失败回滚、合法旧读者、关闭后回收有自动门。没有改变 Project Format、Mapping ABI、SRS 或音频语义。
 - 初次内存交付的约 210 万事件受守护对照中，Private 采样峰从约 5.97 GB 降到 1.40 GB，但热 fresh Full 从 7.46 秒增至 27.86 秒。这是历史候选，不再作为当前速度。后续时间回收移除中间复制/发布扫描、优化有界排序与完整性校验、删除消费者无效分配；不提高子系统预算、不改音乐 hash 或完整来源。

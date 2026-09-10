@@ -11,6 +11,12 @@ dotnet .tmp/logical-compiled-memory/probe-baseline/LogicalCompiledMemoryProbe.dl
 
 场景：`shared`（无隔离、多 Track 同 Usage）、`isolated`（多个 SubVoice/Loop）、`complex`（Pre-Roll、Loop、Pitch Bend、CC Mapping、Value Curve、跨 Track、范围冷启动）、`invalid`（完整 overlap 失败诊断）、`expansion`（显式合法展开倍率）、`mixed`（Logical 高展开 + inline Pure MIDI Fixed Root、跨 Track CC/Pitch Bend、opaque Meta/SysEx）。参数为 `run OUTPUT SCENARIO [COUNT [TEMPLATE_NOTES LOOPS VOICES]]`。工具限制最多四百万预期 NoteOn 候选，仅为测试安全，不是产品容量。
 
+LC-T3 增加 `segmented`：沿用 expansion 的单音触发，分别置于互不重叠的独立 Segment，检验冷来源种类超过 4096-entry intern 上限后的路径。例如 `run OUTPUT segmented 5000 64 2 1`。它与巨大单 Segment 是不同负载，不能互相替代。
+
+`cold OUTPUT SCENARIO ...` 只执行一次 Full，不跑完整序列 oracle，也不同时保留三个结果；用于分开观察单次编译进程峰与原 `run` 的验证/多结果峰。cold 不清操作系统缓存，包含进程首次 JIT，不能称为磁盘冷启动。它只核对成功、计数/fingerprint 和关闭 owner，**不能单独证明完整来源/语义等价**；同一夹具必须另用 run 或正式 golden 门验证。两个模式均在编译计时之外记录 retained storage 与受控 GC，产品正常流程不执行这些 GC。
+
+`run` 的 `retained-storage` 分别列出清 cache 后三份结果的显式可达存储估算及按身份去重合计；cold 记录 before/after-clear。它们由 `RetainedStorageCollector` 计量，不是 heap dump、进程 Private 或全局泄漏证明。只对支持相关内部布局的候选记录 sourceCount，旧 DLL 上缺失表示不可用而非零。
+
 `LogicalCompiledMemoryOracleTests.cs` 同时编入工具。schema 1 SHA-256 流式覆盖全部正式事件字段和 SourceReference、诊断、分配、context、Conductor、SMF descriptors及产品fingerprint；不是抽样。无完整事件/JSON数组。编译和digest计时分开，但峰值涵盖两者；旧/新结果会有意同时保留，以验证真实合法读者不被清理。所有强owner离开非内联栈后才做诊断GC/弱引用；生产代码不增加GC。
 
 结果分别记录累计 allocation、managed、GC committed、Private与Working Set，不能相互混称；单轮不宣称p99。新功能的语义/golden结果必须从冻结旧DLL产生，不可由候选实现自行更新期待值。测试不涵盖物理音频或真实窗口最终绘制延迟。

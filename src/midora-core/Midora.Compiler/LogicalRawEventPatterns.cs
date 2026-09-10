@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Runtime.CompilerServices;
 using Midora.Domain;
+using Midora.Midi;
 
 namespace Midora.Compiler;
 
@@ -261,6 +262,33 @@ public sealed partial class MidoraCompiler
         public IEnumerator<RawMidiEvent> GetEnumerator()
         {
             foreach (CompactRawEvent value in _events) yield return Restore(value);
+        }
+        public IEnumerable<CompactCanonicalEvent> MaterializeCompact(CanonicalSourceTable sources,
+            byte port, byte channel, int trackOrder)
+        {
+            int previousSource = -1;
+            CompactCanonicalSource prepared = default;
+            foreach (CompactRawEvent value in _events)
+            {
+                if (value.Source != previousSource)
+                {
+                    prepared = sources.Capture(_pool.RestoreSource(value.Source, this, 0));
+                    previousSource = value.Source;
+                }
+                MidiMessage message = value.Kind switch
+                {
+                    RawMessageKind.NoteOff => MidiMessage.NoteOff(channel, checked((byte)value.Data1), 0),
+                    RawMessageKind.NoteOn => MidiMessage.NoteOn(channel, checked((byte)value.Data1), checked((byte)value.Data2)),
+                    RawMessageKind.ControlChange => MidiMessage.ControlChange(channel, checked((byte)value.Data1), checked((byte)value.Data2)),
+                    RawMessageKind.ProgramChange => MidiMessage.ProgramChange(channel, checked((byte)value.Data1)),
+                    RawMessageKind.PitchBend => MidiMessage.PitchWheelChange(channel, checked((ushort)(value.Data1 + 8192))),
+                    _ => throw new InvalidOperationException()
+                };
+                yield return new(unchecked(value.Tick + _tick), unchecked(value.Sequence + _sequence),
+                    value.Target, value.GroupIsRelative ? unchecked(value.Group + _sequence) : value.Group,
+                    unchecked(value.SourceTick + _tick), prepared.NoteId, prepared.EventId, default,
+                    long.MaxValue, prepared.Index, trackOrder, message, port, channel, value.Role);
+            }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }

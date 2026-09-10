@@ -2,6 +2,8 @@
 
 日期：2026-09-10。状态：**专项分析；不是已实施或已验收的时间优化**。
 
+后续状态：本文保留分析当时的判断和候选数字。LC-T1/T2 已实施，见[时间回收报告](Midora-Logical-Canonical-Time-Implementation-2026-09-10.md)；用户在 LC-T3 隔离实验后另行批准正式实施，当前实现与验证见[LC-T3 记录](Midora-Logical-Canonical-Compact-Implementation-2026-09-10.md)。下文“条件项”不是当前未获授权或仍未实施的结论。
+
 ## 1. 本轮边界与结论
 
 上一轮 Logical canonical 有限内存实现保持了所测正式结果，但大型 Logical 编译的时间退化未获接受。本轮保留该工作树，不回退、不继续修改产品；只读审计和隔离实验位于 `.tmp/logical-time-analysis/`。不修改 SRS、版本、项目格式、音频语义或编辑行为；不提交、推送、发布，不使用 computer-use。

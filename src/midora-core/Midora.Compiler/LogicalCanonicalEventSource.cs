@@ -8,10 +8,10 @@ namespace Midora.Compiler;
 internal sealed class LogicalCanonicalEventSource : ILogicalCanonicalEventSource
 {
     internal const int InlineEventLimit = 4096;
-    private readonly CompilerValueStore<CanonicalMidiEvent> _values;
+    private readonly CompactCanonicalStore _values;
     private readonly Page[] _pages;
 
-    internal LogicalCanonicalEventSource(CompilerValueStore<CanonicalMidiEvent> values,
+    internal LogicalCanonicalEventSource(CompactCanonicalStore values,
         CancellationToken cancellationToken, LogicalCanonicalPageIndex? preparedIndex = null)
     {
         _values = values;
@@ -41,7 +41,7 @@ internal sealed class LogicalCanonicalEventSource : ILogicalCanonicalEventSource
                 units = units.With(value.ZeroBasedPort * 16 + value.ZeroBasedChannel);
                 if (value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte2 != 0) noteOns++;
                 index++;
-                if (index - first != CompilerValueStore<CanonicalMidiEvent>.PageCapacity) continue;
+                if (index - first != CompilerValueStore<CompactCanonicalEvent>.PageCapacity) continue;
                 _pages[pageIndex--] = new(first, checked((int)(index - first)), minimum, maximum, units);
                 first = index; units = default;
             }
@@ -133,13 +133,17 @@ internal sealed class LogicalCanonicalPageIndex(CompilerStorageBudget budget) : 
     private long _first, _minimum, _maximum;
     private LogicalCanonicalEventSource.UnitMask _units;
     public void Add(in CanonicalMidiEvent value)
+        => AddCore(value.Tick, value.ZeroBasedPort, value.ZeroBasedChannel, value.Message);
+    public void AddCompact(in CompactCanonicalEvent value)
+        => AddCore(value.Tick, value.ZeroBasedPort, value.ZeroBasedChannel, value.Message);
+    private void AddCore(long tick, byte port, byte channel, MidiMessage message)
     {
-        if (EventCount == _first) _maximum = value.Tick;
-        _minimum = value.Tick;
-        _units = _units.With(value.ZeroBasedPort * 16 + value.ZeroBasedChannel);
-        if (value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte2 != 0) NoteOnEventCount++;
+        if (EventCount == _first) _maximum = tick;
+        _minimum = tick;
+        _units = _units.With(port * 16 + channel);
+        if (message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0) NoteOnEventCount++;
         EventCount++;
-        if (EventCount - _first == CompilerValueStore<CanonicalMidiEvent>.PageCapacity) SealPage();
+        if (EventCount - _first == CompilerValueStore<CompactCanonicalEvent>.PageCapacity) SealPage();
     }
     public void SealPage()
     {
@@ -153,61 +157,30 @@ internal sealed class LogicalCanonicalPageIndex(CompilerStorageBudget budget) : 
 public sealed partial class MidoraCompiler
 {
     public LogicalCompilationStorageTelemetry LastLogicalStorageTelemetry { get; private set; }
-    private static readonly IComparer<CanonicalMidiEvent> ReverseCanonicalComparer =
-        Comparer<CanonicalMidiEvent>.Create((left, right) => CanonicalComparer.Instance.Compare(right, left));
-
-    private static CompilerValueStore<CanonicalMidiEvent> FoldDescendingEvents(
-        IEnumerable<CanonicalMidiEvent> descending, CompilerStorageBudget budget, CancellationToken cancellationToken,
-        LogicalCanonicalPageIndex? pageIndex = null)
-    {
-        CompilerValueStore<CanonicalMidiEvent> result = new(budget, cancellationToken);
-        try
-        {
-            Dictionary<(byte Port, byte Channel, long Target), long> groups = [];
-            long currentTick = long.MinValue;
-            foreach (CanonicalMidiEvent value in descending)
-            {
-                if (value.Tick != currentTick) { groups.Clear(); currentTick = value.Tick; }
-                if (value.SemanticTargetKey != long.MinValue && value.Role != CanonicalEventRole.DirectMidi)
-                {
-                    var key = (value.ZeroBasedPort, value.ZeroBasedChannel, value.SemanticTargetKey);
-                    if (!groups.TryGetValue(key, out long selected)) groups.Add(key, value.SemanticGroup);
-                    else if (selected != value.SemanticGroup) continue;
-                }
-                result.Add(value);
-                pageIndex?.Add(in value);
-            }
-            result.Seal();
-            pageIndex?.SealPage();
-            return result;
-        }
-        catch { result.Dispose(); throw; }
-    }
-
     private static IEnumerable<CanonicalMidiEvent> MergeCanonicalEvents(
-        IEnumerable<CanonicalMidiEvent> first, IEnumerable<CanonicalMidiEvent> second,
-        bool descending = false)
+        IEnumerable<CanonicalMidiEvent> first, IEnumerable<CanonicalMidiEvent> second)
     {
         using var a = first.GetEnumerator(); using var b = second.GetEnumerator();
         bool hasA = a.MoveNext(), hasB = b.MoveNext();
         while (hasA || hasB)
         {
-            if (hasA && (!hasB || (descending
-                ? CanonicalComparer.Instance.Compare(b.Current, a.Current)
-                : CanonicalComparer.Instance.Compare(a.Current, b.Current)) <= 0))
+            if (hasA && (!hasB || CanonicalComparer.Instance.Compare(a.Current, b.Current) <= 0))
             { yield return a.Current; hasA = a.MoveNext(); }
             else { yield return b.Current; hasB = b.MoveNext(); }
         }
     }
 
-    private static CompilerValueStore<CanonicalMidiEvent> FinalizeRangeEvents(
-        IEnumerable<CanonicalMidiEvent> descendingMiddle, CompilerExternalSorter<CanonicalMidiEvent> boundaries,
-        CompilerStorageBudget budget, CancellationToken cancellationToken, LogicalCanonicalPageIndex pageIndex)
+    private static CompactCanonicalStore FinalizeRangeEvents(
+        IEnumerable<CompactCanonicalEvent> descendingMiddle, CompilerExternalSorter<CompactCanonicalEvent> boundaries,
+        CanonicalSourceTable sources, CompilerStorageBudget budget, CancellationToken cancellationToken,
+        LogicalCanonicalPageIndex pageIndex)
     {
         // Filtering preserves the input order. Only newly introduced boundary events need sorting;
         // re-sorting the complete middle would add a full external-sort pass after every edit.
-        return FoldDescendingEvents(MergeCanonicalEvents(descendingMiddle,
-            boundaries.ReadSorted(cancellationToken), descending: true), budget, cancellationToken, pageIndex);
+        using CanonicalSourceTable.Reader reader = sources.OpenReader(cancellationToken);
+        return FoldCompactDescendingEvents(MergeCompactEvents(descendingMiddle,
+            boundaries.ReadSorted(cancellationToken), new CompactCanonicalComparer(reader, descending: true)),
+            sources, budget, cancellationToken, pageIndex);
     }
 }
 

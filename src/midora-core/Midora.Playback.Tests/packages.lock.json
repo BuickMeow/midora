@@ -175,6 +175,15 @@
       "midora.midi": {
         "type": "Project"
       },
+      "midora.midiexport": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Common": "[1.0.0-dev, )",
+          "Midora.Compiler": "[1.0.0-dev, )",
+          "Midora.Domain": "[1.0.0-dev, )",
+          "Midora.Midi": "[1.0.0-dev, )"
+        }
+      },
       "midora.nativeinterops.bass": {
         "type": "Project"
       },

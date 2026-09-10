@@ -101,7 +101,11 @@ public sealed class Int64DiagnosticTests
         Assert.Equal(full.IsConsumable, incremental.IsConsumable);
         Assert.Equal(full.FailureStage, incremental.FailureStage);
         Assert.Equal(full.Fingerprint, incremental.Fingerprint);
-        Assert.True(full.Events.SequenceEqual(incremental.Events));
+        Assert.Equal(full.TotalEventCount, incremental.TotalEventCount);
+        if (full.TotalEventCount != 0)
+            Assert.Equal(
+                full.QueryEventPages(full.StartTick, full.EndTick).SelectMany(page => page.Items),
+                incremental.QueryEventPages(incremental.StartTick, incremental.EndTick).SelectMany(page => page.Items));
         foreach (long ordinal in new[] { 0L, int.MaxValue, full.Diagnostics.Count - 1 })
             Assert.Equal(full.Diagnostics[ordinal], incremental.Diagnostics[ordinal]);
     }

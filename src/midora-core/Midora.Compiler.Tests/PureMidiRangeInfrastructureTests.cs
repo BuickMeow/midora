@@ -3,6 +3,7 @@ using Midora.Midi;
 
 namespace Midora.Compiler.Tests;
 
+[Collection("Process-wide memory measurements")]
 public sealed class PureMidiRangeInfrastructureTests
 {
     [Theory]
@@ -183,3 +184,8 @@ public sealed class PureMidiRangeInfrastructureTests
         on ? MidiMessage.NoteOn(0, 60, 100) : MidiMessage.NoteOff(0, 60, 0),
         MidoraId.FromSequence(1), MidoraId.FromSequence(1));
 }
+
+// GC.GetTotalMemory covers the process, not this fixture. Concurrent large
+// compilation tests would otherwise be attributed to the endpoint cursor.
+[CollectionDefinition("Process-wide memory measurements", DisableParallelization = true)]
+public sealed class ProcessWideMemoryMeasurementsCollection;

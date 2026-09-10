@@ -3,7 +3,7 @@
 文档修订日期：2026-08-08
 性质：需求理解、现状审阅和实施建议；不是 SRS 的替代品。
 
-> 2026-09-10 后续工作：顺序仍为 **Logical 编译结果内存优化 → 极端 Tick 防护 → 新一轮需求**。第二项同时纳入已定案的 SMF 导出超长 delta 填充、MTrk 数据区 `0xFFFFFFFF` 字节硬上限/不拆分、导出级错误与汇总提示；Compiler 不增加 SMF delta/字节大小扫描。当前只完成文档，代码待实施。详见 [下一步台账](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md) 和 [SMF 边界设计](Midora-SMF-Export-Timing-Padding-and-Size-Limits-Architecture-Decisions.md)。
+> 2026-09-10 后续工作：顺序仍为 **Logical 编译结果内存优化 → 极端 Tick 防护 → 新一轮需求**。第一项及其后续时间回收已实施，完整旧版对照通过，待集中人工验收。初次明显时间退化保留在[历史内存报告](Midora-Logical-Canonical-Memory-Verification-2026-09-10.md)；本轮在不增加 128/128/64 MiB 子系统预算的前提下，两类大场景同日三次编译中位数均回到旧数组版 1.25 倍以内，实际时间/峰值/波动与消费者成本见[时间回收报告](Midora-Logical-Canonical-Time-Implementation-2026-09-10.md)。第二项仍只完成文档、代码未实施，同时纳入已定案的 SMF 导出超长 delta 填充、MTrk 数据区 `0xFFFFFFFF` 字节硬上限/不拆分、导出级错误与汇总提示；Compiler 不增加 SMF delta/字节大小扫描。详见 [下一步台账](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md) 和 [SMF 边界设计](Midora-SMF-Export-Timing-Padding-and-Size-Limits-Architecture-Decisions.md)。
 
 > 现状提示（2026-08-08）：本文后续“当前进度/尚未实现”描述保留为历史路线记录，已经过时；不得据此判定源码缺口。当前权威实施状态见 `misc/Midora-Non-UI-Implementation-Tracker.md`，§7～§12 逐节证据见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
 >

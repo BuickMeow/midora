@@ -229,6 +229,14 @@ public sealed class BoundedLogicalParameterMigrationTests
                 segment.ParameterLanes.Add(lane); track.Segments.Add(segment);
             }
         }
-        public void Dispose() { _scope.Dispose(); Project.Dispose(); Directory.Delete(_path, true); }
+        public void Dispose()
+        {
+            _scope.Dispose(); Project.Dispose();
+            // Weak runtime leases cannot reach sources already on the finalizer
+            // queue. Finish that cleanup before deleting the test-owned parent;
+            // no retry, suppressed IOException, or product-side GC is involved.
+            GC.WaitForPendingFinalizers();
+            Directory.Delete(_path, true);
+        }
     }
 }

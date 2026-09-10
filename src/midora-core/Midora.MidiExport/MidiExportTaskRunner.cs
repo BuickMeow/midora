@@ -79,19 +79,19 @@ public sealed class MidiExportTaskRunner
                 null);
         }
 
-        MidiExportArtifactBuildResult artifacts = BuildArtifacts(request);
-        if (!artifacts.Succeeded)
-        {
-            return new(
-                MidiExportTaskStatus.Failed,
-                request.Compilation.Diagnostics,
-                artifacts.Diagnostics.ToArray(),
-                null,
-                null);
-        }
-
         try
         {
+            MidiExportArtifactBuildResult artifacts = BuildArtifacts(request, cancellationToken);
+            if (!artifacts.Succeeded)
+            {
+                return new(
+                    MidiExportTaskStatus.Failed,
+                    request.Compilation.Diagnostics,
+                    artifacts.Diagnostics.ToArray(),
+                    null,
+                    null);
+            }
+
             MidiExportOutputResult output = await _outputTransaction.PublishAsync(
                 request.OutputPlan,
                 artifacts.Artifacts,
@@ -124,7 +124,8 @@ public sealed class MidiExportTaskRunner
         }
     }
 
-    private static MidiExportArtifactBuildResult BuildArtifacts(MidiExportTaskRequest request)
+    private static MidiExportArtifactBuildResult BuildArtifacts(MidiExportTaskRequest request,
+        CancellationToken cancellationToken)
     {
         MidiExportCompilationResult compilation = request.Compilation;
         CanonicalCompiledResult compiled = compilation.CompiledResult;
@@ -139,7 +140,7 @@ public sealed class MidiExportTaskRunner
                     ConductorTrackName = conductorTrackName,
                     LogicalTracks = compilation.Layouts
                 },
-                request.Readme),
+                request.Readme, cancellationToken),
             MidiExportMode.PerLogicalTrack => MidiExportArtifactBuilder.BuildLogicalTracks(
                 request.OutputPlan,
                 compilation.Layouts.Select(layout => new LogicalTrackMidiArtifactRequest(
@@ -150,7 +151,7 @@ public sealed class MidiExportTaskRunner
                         ConductorTrackName = conductorTrackName,
                         LogicalTrack = layout
                     })),
-                request.Readme),
+                request.Readme, cancellationToken),
             MidiExportMode.PerPort => MidiExportArtifactBuilder.BuildPorts(
                 request.OutputPlan,
                 compilation.UsedZeroBasedPorts.Select(port => new PortMidiArtifactRequest(
@@ -161,7 +162,7 @@ public sealed class MidiExportTaskRunner
                         LogicalTracks = compilation.Layouts,
                         ZeroBasedOriginalPort = port
                     })),
-                request.Readme),
+                request.Readme, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(compilation.Mode))
         };
     }

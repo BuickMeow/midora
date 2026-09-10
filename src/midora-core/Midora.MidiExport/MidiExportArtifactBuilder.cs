@@ -38,10 +38,11 @@ public static class MidiExportArtifactBuilder
     public static MidiExportArtifactBuildResult BuildWholeProject(
         MidiExportFrozenOutputPlan plan,
         WholeProjectMidiEncodingRequest encodingRequest,
-        MidiExportReadmeRequest? readmeRequest = null)
+        MidiExportReadmeRequest? readmeRequest = null,
+        CancellationToken cancellationToken = default)
     {
         RequireMode(plan, MidiExportMode.WholeProject);
-        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodeWholeProject(encodingRequest);
+        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodeWholeProject(encodingRequest, cancellationToken);
         return Complete(
             plan,
             [(WholeProjectSourceKey, encoded)],
@@ -51,7 +52,8 @@ public static class MidiExportArtifactBuilder
     public static MidiExportArtifactBuildResult BuildLogicalTracks(
         MidiExportFrozenOutputPlan plan,
         IEnumerable<LogicalTrackMidiArtifactRequest> requests,
-        MidiExportReadmeRequest? readmeRequest = null)
+        MidiExportReadmeRequest? readmeRequest = null,
+        CancellationToken cancellationToken = default)
     {
         RequireMode(plan, MidiExportMode.PerLogicalTrack);
         ArgumentNullException.ThrowIfNull(requests);
@@ -71,7 +73,7 @@ public static class MidiExportArtifactBuilder
             }
             encoded.Add((
                 sourceKey,
-                CanonicalMidiFileExporter.EncodeLogicalTrack(request.EncodingRequest)));
+                CanonicalMidiFileExporter.EncodeLogicalTrack(request.EncodingRequest, cancellationToken)));
         }
         return Complete(plan, encoded, readmeRequest);
     }
@@ -79,7 +81,8 @@ public static class MidiExportArtifactBuilder
     public static MidiExportArtifactBuildResult BuildPorts(
         MidiExportFrozenOutputPlan plan,
         IEnumerable<PortMidiArtifactRequest> requests,
-        MidiExportReadmeRequest? readmeRequest = null)
+        MidiExportReadmeRequest? readmeRequest = null,
+        CancellationToken cancellationToken = default)
     {
         RequireMode(plan, MidiExportMode.PerPort);
         ArgumentNullException.ThrowIfNull(requests);
@@ -98,7 +101,7 @@ public static class MidiExportArtifactBuilder
             }
             encoded.Add((
                 PortSourceKeyPrefix + (port + 1).ToString("D2", CultureInfo.InvariantCulture),
-                CanonicalMidiFileExporter.EncodePort(request.EncodingRequest)));
+                CanonicalMidiFileExporter.EncodePort(request.EncodingRequest, cancellationToken)));
         }
         return Complete(plan, encoded, readmeRequest);
     }

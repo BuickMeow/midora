@@ -24,7 +24,7 @@ public sealed class MemoryStage6CleanupTests
         Task worker = ReadPrivate<Task>(session, "_compileWorker");
         // This internal transaction does not emit the caller-thread notification;
         // only the real worker's Compiling notification triggers the fault.
-        session.ApplyReversibleEdit(_ => { }, _ => { }, ProjectChangeSet.Everything);
+        QueueEdit(session);
         Exception workerFailure = await Assert.ThrowsAsync<InvalidOperationException>(
             () => worker.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Same(injected, workerFailure);
@@ -104,6 +104,13 @@ public sealed class MemoryStage6CleanupTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static IDisposable RetainCurrentCanonical(ProjectCompilationSession session) =>
         session.RetainPreparationStorage(session.LastAttempt);
+
+    // ApplyReversibleEdit returns the old canonical result while queuing background work.
+    // Discard it outside the async test frame: Debug JIT may otherwise keep that unused
+    // return temporary alive across the following await and invalidate this ownership test.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void QueueEdit(ProjectCompilationSession session) =>
+        session.ApplyReversibleEdit(_ => { }, _ => { }, ProjectChangeSet.Everything);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void VerifyReadable(WeakReference result)

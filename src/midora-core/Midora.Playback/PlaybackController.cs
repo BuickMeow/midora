@@ -1600,7 +1600,8 @@ public sealed class PlaybackController : IDisposable
             int sourceIndex = plan.FindSourceIndex(trackId.Value);
             if (sourceIndex < 0) continue;
             commands.Add(MidiMonitoringCommand.EnableSource(sourceIndex));
-            foreach (CanonicalMidiEvent value in restoreResult!.Events)
+            foreach (CanonicalMidiEvent value in restoreResult!.EnumerateResidentAndLogicalEvents(
+                restoreResult.StartTick, restoreResult.StartTick, includeEnd: true))
             {
                 if (value.Tick == restoreResult.StartTick
                     && value.Role == CanonicalEventRole.RangeRestore
@@ -1645,39 +1646,16 @@ public sealed class PlaybackController : IDisposable
         return MidiMessage.FromPackedValue(packed);
     }
 
-    private static void AppendTrackCleanup(
+    private readonly MonitoringNoteBalance _monitoringNoteBalance = new();
+
+    private void AppendTrackCleanup(
         List<MidiMonitoringCommand> commands,
         CanonicalCompiledResult compiled,
         MidoraId trackId,
         long tick)
     {
-        Dictionary<(byte Port, byte Channel, byte Key), int> activeNotes = [];
-        foreach (CanonicalMidiEvent value in compiled.Events)
-        {
-            if (value.Tick >= tick || value.Source.TrackId != trackId)
-            {
-                continue;
-            }
-            MidiMessage message = value.Message;
-            bool noteOn = message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0;
-            bool noteOff = message.MessageType == MidiMessageType.NoteOff
-                || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0;
-            if (!noteOn && !noteOff) continue;
-            var key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-            activeNotes.TryGetValue(key, out int count);
-            if (noteOn)
-            {
-                activeNotes[key] = checked(count + 1);
-            }
-            else if (count > 1)
-            {
-                activeNotes[key] = count - 1;
-            }
-            else
-            {
-                activeNotes.Remove(key);
-            }
-        }
+        Dictionary<(byte Port, byte Channel, byte Key), int> activeNotes =
+            _monitoringNoteBalance.Read(compiled, trackId, tick);
 
         foreach (((byte port, byte channel, byte key), int count) in activeNotes
             .OrderBy(value => value.Key.Port)
@@ -1690,6 +1668,46 @@ public sealed class PlaybackController : IDisposable
                     port,
                     MidiMessage.NoteOff(channel, key, 0)));
             }
+        }
+    }
+
+    /// <summary>Incremental prefix counts, not retained MIDI events or live source readers.</summary>
+    private sealed class MonitoringNoteBalance
+    {
+        private WeakReference<CanonicalCompiledResult>? _source;
+        private long _tick;
+        private readonly Dictionary<(MidoraId Track, byte Port, byte Channel, byte Key), int> _counts = [];
+
+        public Dictionary<(byte Port, byte Channel, byte Key), int> Read(
+            CanonicalCompiledResult source, MidoraId track, long tick)
+        {
+            if (_source is null || !_source.TryGetTarget(out var previous)
+                || !ReferenceEquals(previous, source) || tick < _tick)
+            {
+                _source = new(source); _tick = source.StartTick; _counts.Clear();
+            }
+            try
+            {
+                foreach (CanonicalMidiEvent value in source.EnumerateResidentAndLogicalEvents(_tick, tick, false))
+                {
+                    MidiMessage message = value.Message;
+                    bool on = message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0;
+                    bool off = message.MessageType == MidiMessageType.NoteOff
+                        || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0;
+                    if (!on && !off) continue;
+                    var key = (value.Source.TrackId, value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
+                    int count = _counts.GetValueOrDefault(key);
+                    if (on) _counts[key] = checked(count + 1);
+                    else if (count > 1) _counts[key] = count - 1;
+                    else _counts.Remove(key);
+                }
+                _tick = tick;
+            }
+            catch { _source = null; _counts.Clear(); throw; }
+            Dictionary<(byte Port, byte Channel, byte Key), int> result = [];
+            foreach (var (key, count) in _counts)
+                if (key.Track == track) result[(key.Port, key.Channel, key.Key)] = count;
+            return result;
         }
     }
 

@@ -49,6 +49,8 @@ public sealed partial class CanonicalCompiledResult : IRetainedStorageSource
                 collector.Bytes(value.Payload);
         if (_pagedEventSource is IRetainedStorageSource source)
             source.CollectRetainedStorage(collector);
+        _logicalEventSource?.CollectRetainedStorage(collector);
+        _consumerCacheIdentity.CollectRetainedStorage(collector);
     }
 }
 

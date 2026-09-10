@@ -152,7 +152,7 @@ public sealed class AudioRenderTaskRunner
         List<AudioRenderDiagnostic> taskDiagnostics = [];
         try
         {
-            PreparedTask prepared = Prepare(request, taskDiagnostics);
+            PreparedTask prepared = Prepare(request, taskDiagnostics, cancellationToken);
             if (taskDiagnostics.Any(value => value.Severity == AudioRenderDiagnosticSeverity.Error))
             {
                 return Result(
@@ -429,7 +429,8 @@ public sealed class AudioRenderTaskRunner
 
     private static PreparedTask Prepare(
         AudioRenderTaskRequest request,
-        List<AudioRenderDiagnostic> diagnostics)
+        List<AudioRenderDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Compilation);
@@ -486,6 +487,7 @@ public sealed class AudioRenderTaskRunner
         long? frameCount = null;
         foreach (AudioRenderPlannedTarget target in request.OutputPlan.Targets)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!compilationBySource.TryGetValue(target.SourceKey, out AudioRenderCompilationItem? compilation))
             {
                 diagnostics.Add(new(
@@ -502,7 +504,8 @@ public sealed class AudioRenderTaskRunner
             {
                 try
                 {
-                    plan = MidiRenderPlanAdapter.Create(compilation.CompiledResult, request.SampleRate);
+                    plan = MidiRenderPlanAdapter.Create(compilation.CompiledResult, request.SampleRate,
+                        cancellationToken: cancellationToken);
                     _ = WaveFileSize.Calculate(plan.TotalFrameCount);
                     if (frameCount.HasValue && frameCount.Value != plan.TotalFrameCount)
                     {

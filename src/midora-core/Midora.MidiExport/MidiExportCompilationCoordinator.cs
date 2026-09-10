@@ -102,6 +102,21 @@ public sealed class MidiExportCompilationCoordinator
             .ToHashSet();
         List<MidiExportTrackSnapshot> trackSnapshots = [];
         List<MidiExportLogicalTrackLayout> layouts = [];
+        Dictionary<MidoraId, HashSet<MidiExportChannelUnit>> unitsByTrack = [];
+        HashSet<byte> portSet = [];
+        foreach (ChannelUnitAllocation allocation in compiled.Allocations)
+        {
+            if (!unitsByTrack.TryGetValue(allocation.TrackId, out var units))
+                unitsByTrack[allocation.TrackId] = units = [];
+            units.Add(new(allocation.ZeroBasedPort, allocation.ZeroBasedChannel));
+        }
+        foreach (CanonicalMidiEvent value in compiled.EnumerateResidentAndLogicalEvents())
+        {
+            if (!unitsByTrack.TryGetValue(value.Source.TrackId, out var units))
+                unitsByTrack[value.Source.TrackId] = units = [];
+            units.Add(new(value.ZeroBasedPort, value.ZeroBasedChannel));
+            portSet.Add(value.ZeroBasedPort);
+        }
         for (int index = 0; index < logicalTracks.Length; index++)
         {
             LogicalTrack track = logicalTracks[index];
@@ -130,13 +145,7 @@ public sealed class MidiExportCompilationCoordinator
                 continue;
             }
 
-            HashSet<MidiExportChannelUnit> unitSet = [];
-            foreach (ChannelUnitAllocation allocation in compiled.Allocations)
-                if (allocation.TrackId == track.Id)
-                    unitSet.Add(new(allocation.ZeroBasedPort, allocation.ZeroBasedChannel));
-            foreach (CanonicalMidiEvent value in compiled.Events)
-                if (value.Source.TrackId == track.Id)
-                    unitSet.Add(new(value.ZeroBasedPort, value.ZeroBasedChannel));
+            HashSet<MidiExportChannelUnit> unitSet = unitsByTrack.GetValueOrDefault(track.Id) ?? [];
             MidiExportChannelUnit[] units = unitSet
                 .OrderBy(unit => unit.ZeroBasedPort)
                 .ThenBy(unit => unit.ZeroBasedChannel)
@@ -166,8 +175,6 @@ public sealed class MidiExportCompilationCoordinator
             }
         }
 
-        HashSet<byte> portSet = [];
-        foreach (CanonicalMidiEvent value in compiled.Events) portSet.Add(value.ZeroBasedPort);
         foreach (CanonicalSmfTrackDescriptor value in compiled.SmfTracks)
             if (value.Kind == CanonicalSmfTrackKind.PureMidiTrack) portSet.Add(value.ZeroBasedPort);
         byte[] usedPorts = portSet.Order().ToArray();

@@ -678,6 +678,12 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                             compilationProject,
                             changes,
                             cancellationToken: compilationCancellation.Token);
+                    // Prepare compact Logical audio descriptors while still on the compile
+                    // worker, outside UI/project locks. Identical playback views share this
+                    // result-owned shared cache; first Play does not rescan a distant Logical suffix.
+                    if (result.IsConsumable && result.HasPagedLogicalEvents)
+                        CanonicalAudioUnitProjection.Create(result,
+                            cancellationToken: compilationCancellation.Token);
                     // The mirror revision becomes observable to later attempts only
                     // after the compiler transaction has also completed. A failed
                     // or canceled candidate is never published here.
@@ -689,6 +695,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 }
                 catch (Exception exception)
                 {
+                    result = null;
                     failure = exception;
                 }
 
@@ -928,6 +935,10 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public MidiRenderPlan GetOrCreateRenderPlan(int sampleRate)
     {
+        CanonicalCompiledResult result;
+        long generation;
+        long revision;
+        (long Fingerprint, int SampleRate) key;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -937,18 +948,27 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 throw new InvalidOperationException(
                     "The current Project source revision has not finished compiling.");
             }
-            CanonicalCompiledResult result = LastAttempt;
+            result = LastAttempt;
             if (!result.IsConsumable)
             {
                 throw new InvalidOperationException("The current Project source has no consumable canonical result.");
             }
-            (long Fingerprint, int SampleRate) key = (result.Fingerprint, sampleRate);
-            if (!_samplePlans.TryGetValue(key, out MidiRenderPlan? plan))
-            {
-                plan = MidiRenderPlanAdapter.Create(result, sampleRate);
-                _samplePlans.Add(key, plan);
-            }
-            return plan;
+            key = (result.Fingerprint, sampleRate);
+            if (_samplePlans.TryGetValue(key, out MidiRenderPlan? cached)) return cached;
+            generation = _sampleDomainGeneration;
+            revision = _sourceRevision;
+        }
+        MidiRenderPlan created = MidiRenderPlanAdapter.Create(result, sampleRate);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (generation != _sampleDomainGeneration || revision != _sourceRevision
+                || !ReferenceEquals(result, LastAttempt) || !IsCompilationCurrentCore())
+                throw new InvalidOperationException(
+                    "The Project source or audio configuration changed while the render plan was being prepared. Prepare the plan again.");
+            if (_samplePlans.TryGetValue(key, out MidiRenderPlan? concurrent)) return concurrent;
+            _samplePlans.Add(key, created);
+            return created;
         }
     }
 

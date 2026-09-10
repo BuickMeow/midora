@@ -144,10 +144,8 @@ public sealed class CompiledOnionNoteIndex : IDisposable
         }
         IEnumerable<CanonicalMidiRenderEvent> ReadCanonicalNotes()
         {
-            // QueryEventPages currently materializes its requested Pure MIDI range before
-            // paging. Use the already-bounded canonical render projection, with its exact
-            // Source.TrackId, and merge the canonical in-memory stream. No Project recompile
-            // or interpretation, no audio filtering and no monitoring-source inference.
+            // Merge the frozen Logical/resident cursor and bounded Pure MIDI projection.
+            // No Project recompile or interpretation, audio filtering or monitoring inference.
             using var left = ReadMemory().GetEnumerator();
             using var right = ReadPaged().GetEnumerator();
             bool a = left.MoveNext(), b = right.MoveNext();
@@ -161,10 +159,9 @@ public sealed class CompiledOnionNoteIndex : IDisposable
         }
         IEnumerable<CanonicalMidiRenderEvent> ReadMemory()
         {
-            for (int i = 0; i < canonical.Events.Length; i++)
+            foreach (CanonicalMidiEvent e in canonical.EnumerateResidentAndLogicalEvents(cancellationToken))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var e = canonical.Events[i];
                 if (scope == CompiledOnionNoteScope.LogicalTracks
                     && (e.Source.PureMidiTrackId != default || e.Source.MidiChannelRootId != default)) continue;
                 if (!IsNote(e.Message)) continue;
@@ -175,9 +172,7 @@ public sealed class CompiledOnionNoteIndex : IDisposable
         }
         IEnumerable<CanonicalMidiRenderEvent> ReadPaged()
         {
-            // The compiler's paged source is PureMidiPagedCanonicalSource. Logical
-            // expansion is in canonical.Events; never enumerate MIDI pages for a
-            // logical-only display index, even when millions of source notes exist.
+            // Logical pages are read above; the logical-only index must never request Pure MIDI.
             if (scope == CompiledOnionNoteScope.LogicalTracks) yield break;
             // Windowing also avoids multi-gigabyte full-song sort runs. A single dense tick
             // still goes through the bounded sorter; the bound is not a density assumption.
@@ -185,7 +180,7 @@ public sealed class CompiledOnionNoteIndex : IDisposable
             for (long start = canonical.StartTick; start < canonical.EndTick;)
             {
                 long end = start + Math.Min(windowTicks, canonical.EndTick - start);
-                foreach (var page in canonical.QueryMidiRenderEventPages(start, end,
+                foreach (var page in canonical.QueryPureMidiRenderEventPages(start, end,
                     includeStateAtStart: false, cancellationToken))
                 foreach (var e in page.Items)
                     if (IsNote(e.Message)) yield return e;

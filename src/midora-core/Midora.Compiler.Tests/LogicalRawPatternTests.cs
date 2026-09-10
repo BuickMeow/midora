@@ -25,7 +25,7 @@ public sealed class LogicalRawPatternTests
         CanonicalCompiledResult before = compiler.CompileFull(fixture.Project);
         Assert.True(before.IsConsumable);
         Assert.Equal(256 * voices, before.TotalNoteOnEventCount);
-        var on = before.Events.ToArray().Where(v => v.Message.MessageType == MidiMessageType.NoteOn).ToArray();
+        var on = Events(before).Where(v => v.Message.MessageType == MidiMessageType.NoteOn).ToArray();
         foreach (CanonicalMidiEvent value in on)
         {
             LogicalNote note = fixture.Segment.Notes.Single(n => n.Id == value.Source.LogicalNoteId);
@@ -53,10 +53,10 @@ public sealed class LogicalRawPatternTests
             new ProjectChangeSet { TrackIds = { fixture.Track.Id } });
         using MidoraCompiler reference = new();
         CanonicalCompiledResult full = reference.CompileFull(fixture.Project);
-        Assert.Equal(full.Events.ToArray(), incremental.Events.ToArray());
+        Assert.Equal(Events(full), Events(incremental));
         Assert.Equal(full.Fingerprint, incremental.Fingerprint);
         Assert.Equal(256 * voices, before.TotalNoteOnEventCount);
-        Assert.Equal(on, before.Events.ToArray().Where(v => v.Message.MessageType == MidiMessageType.NoteOn));
+        Assert.Equal(on, Events(before).Where(v => v.Message.MessageType == MidiMessageType.NoteOn));
     }
 
     [Fact]
@@ -73,8 +73,11 @@ public sealed class LogicalRawPatternTests
         CanonicalCompiledResult result = compiler.CompileFull(fixture.Project);
         Assert.True(result.IsConsumable);
         Assert.Equal(4200, result.TotalNoteOnEventCount);
-        Assert.Equal(4200, result.Events.ToArray().Count(v => v.Message.MessageType == MidiMessageType.NoteOff));
+        Assert.Equal(4200, Events(result).Count(v => v.Message.MessageType == MidiMessageType.NoteOff));
     }
+
+    private static IEnumerable<CanonicalMidiEvent> Events(CanonicalCompiledResult result) =>
+        result.QueryEventPages(result.StartTick, result.EndTick).SelectMany(page => page.Items);
 
     private static object Field(object value, string name) => value.GetType()
         .GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(value)!;

@@ -31,7 +31,6 @@ public sealed class OnionLifetimeTests
         long revision = session.Document!.PublicationRevision;
         session.SetCustomOnionSources(workspace, [source.Id]);
         session.ShowAdjacentOnionSource(workspace, previous: false);
-        Assert.NotNull(workspace.OnionSnapshot);
         var released = ProjectionReferences(workspace);
         session.SetOnionOpacity(workspace, 0);
         Assert.True(workspace.IsOnionEnabled); Assert.Null(workspace.OnionSnapshot);
@@ -240,7 +239,9 @@ public sealed class OnionLifetimeTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static (WeakReference Snapshot, WeakReference Source) ProjectionReferences(WorkspaceViewModel workspace)
     {
-        var snapshot = workspace.OnionSnapshot!;
+        // Keep the strong reference, including assertion argument temporaries, in
+        // this non-inlined scope rather than the async lifetime test's GC frame.
+        var snapshot = Assert.IsType<TimelineOnionSnapshot>(workspace.OnionSnapshot);
         return (new(snapshot), new(snapshot.Blocks.SelectMany(b => b).First().Clips[0].Source));
     }
 

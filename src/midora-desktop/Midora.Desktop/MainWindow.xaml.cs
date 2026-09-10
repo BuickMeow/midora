@@ -141,6 +141,11 @@ public partial class MainWindow : Window
         AddHandler(
             TimelineSurface.AltGestureConsumedEvent,
             new RoutedEventHandler(OnTimelineAltGestureConsumed));
+        AddHandler(TimelineSurface.TickRangeExceededEvent, new RoutedEventHandler((_, e) =>
+        {
+            e.Handled = true;
+            ShowError("Timeline edit", "The requested Tick or duration exceeds the supported 64-bit range. The gesture was cancelled; no edit was applied.");
+        }));
         LoadDesktopPreferences();
         ReloadInstrumentCatalogSnapshot(reportNoticeInStatus: true);
         _playbackTimer = new(DispatcherPriority.Render)
@@ -4272,10 +4277,7 @@ public partial class MainWindow : Window
         {
             TimelineSurface? surface = FindWorkspaceElement<TimelineSurface>("SubVoiceNotes");
             if (surface is null) return;
-            long nextSpan = Math.Clamp(
-                checked((long)Math.Round(surface.TickSpan * factor, MidpointRounding.AwayFromZero)),
-                16,
-                1L << 50);
+            long nextSpan = TimelineTickMath.ScaleSpan(surface.TickSpan, factor);
             long centerTick = surface.StartTick <= long.MaxValue - surface.TickSpan / 2
                 ? surface.StartTick + surface.TickSpan / 2
                 : long.MaxValue;
@@ -4284,10 +4286,7 @@ public partial class MainWindow : Window
             return;
         }
         if (source.DataContext is not TimelineWorkspaceViewModel workspace) return;
-        long span = Math.Clamp(
-            checked((long)Math.Round(workspace.TickSpan * factor, MidpointRounding.AwayFromZero)),
-            16,
-            1L << 50);
+        long span = TimelineTickMath.ScaleSpan(workspace.TickSpan, factor);
         long center = workspace.StartTick <= long.MaxValue - workspace.TickSpan / 2
             ? workspace.StartTick + workspace.TickSpan / 2
             : long.MaxValue;
@@ -7303,6 +7302,15 @@ public partial class MainWindow : Window
 
     private async void OnTimelineBackgroundInvoked(object? sender, TimelinePointEventArgs e)
     {
+        try { await HandleTimelineBackgroundInvokedAsync(sender, e); }
+        catch (OverflowException)
+        {
+            ShowError("Timeline edit", "The requested Tick or duration exceeds the supported 64-bit range. No edit was applied.");
+        }
+    }
+
+    private async Task HandleTimelineBackgroundInvokedAsync(object? sender, TimelinePointEventArgs e)
+    {
         if (_session.ActiveWorkspace is WorkspaceViewModel activeWorkspace)
         {
             if (activeWorkspace is TimelineWorkspaceViewModel
@@ -7503,7 +7511,7 @@ public partial class MainWindow : Window
                     : timeline.EditorSettings;
                 long snappedDelta = activeSettings.SnapDelta(
                     e.TickDelta,
-                    checked(e.Item.StartTick + e.TickDelta));
+                    TimelineTickMath.Clamp((Int128)e.Item.StartTick + e.TickDelta));
                 long unclampedSnappedDelta = snappedDelta;
                 long snappedTarget = Math.Max(0, checked(e.Item.StartTick + snappedDelta));
                 long nonnegativeSnappedDelta = checked(snappedTarget - e.Item.StartTick);
@@ -7683,7 +7691,7 @@ public partial class MainWindow : Window
             return;
         }
         long endDelta = workspace.EditorSettings.SnapDelta(
-            edit.TickDelta, checked(edit.Item.EndTick + edit.TickDelta));
+            edit.TickDelta, TimelineTickMath.Clamp((Int128)edit.Item.EndTick + edit.TickDelta));
         long firstNewStableId = _session.Project!.NextStableId;
         var command = new ArrangementGestureEditCommand(selected, edit.Item.Id, edit.Item.StartTick,
             edit.EditKind, edit.CopyRequested, snappedDelta, endDelta,
@@ -7885,7 +7893,7 @@ public partial class MainWindow : Window
             case TimelineItemEditKind.ResizeEnd:
                 long endDelta = ((TimelineWorkspaceViewModel)_session.ActiveWorkspace!).EditorSettings.SnapDelta(
                     edit.TickDelta,
-                    checked(edit.Item.EndTick + edit.TickDelta));
+                    TimelineTickMath.Clamp((Int128)edit.Item.EndTick + edit.TickDelta));
                 if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
                     noteIds,
@@ -7965,7 +7973,7 @@ public partial class MainWindow : Window
             case TimelineItemEditKind.ResizeEnd:
                 long endDelta = workspace.EditorSettings.SnapDelta(
                     edit.TickDelta,
-                    checked(edit.Item.EndTick + edit.TickDelta));
+                    TimelineTickMath.Clamp((Int128)edit.Item.EndTick + edit.TickDelta));
                 if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
                     segmentId,
                     noteIds,
@@ -8325,7 +8333,7 @@ public partial class MainWindow : Window
             : workspace.EventLaneEditorSettings;
         long snappedDelta = activeSettings.SnapDelta(
             edit.TickDelta,
-            checked((edit.EditKind == TimelineItemEditKind.ResizeEnd
+            TimelineTickMath.Clamp((Int128)(edit.EditKind == TimelineItemEditKind.ResizeEnd
                 ? checked(template.Tick + Math.Max(1, template.LengthTicks))
                 : template.Tick) + edit.TickDelta));
         if (template.Kind == TemplateEventKind.Note)
@@ -8420,7 +8428,7 @@ public partial class MainWindow : Window
             var eventIds = read.Value.Ids;
             long requestedTickDelta = workspace.EventLaneEditorSettings.SnapDelta(
                 edit.TickDelta,
-                checked(template.Tick + edit.TickDelta));
+                TimelineTickMath.Clamp((Int128)template.Tick + edit.TickDelta));
             long tickDelta = Math.Max(
                 requestedTickDelta,
                 -read.Value.MinimumTick);
@@ -8525,7 +8533,7 @@ public partial class MainWindow : Window
                 - read.Value.MaximumValue;
             long requestedTickDelta = workspace.EditorSettings.SnapDelta(
                 edit.TickDelta,
-                checked(edit.Item.StartTick + edit.TickDelta));
+                TimelineTickMath.Clamp((Int128)edit.Item.StartTick + edit.TickDelta));
             long tickDelta = Math.Max(
                 requestedTickDelta,
                 -read.Value.MinimumTick);

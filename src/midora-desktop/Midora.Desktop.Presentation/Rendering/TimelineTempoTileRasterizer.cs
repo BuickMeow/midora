@@ -22,8 +22,8 @@ public static class TimelineTempoTileRasterizer
         int height = TimelineEventPointTileRasterizer.TileSize + gutterY * 2;
         double left = tileX * (double)TimelineEventPointTileRasterizer.TileSize - gutterX;
         double top = tileY * (double)TimelineEventPointTileRasterizer.TileSize - gutterY;
-        long start = FloorTick(left / pixelsPerTick);
-        long end = CeilingTick((left + width) / pixelsPerTick);
+        long start = TimelineTickMath.RasterQueryStart(left / pixelsPerTick);
+        long end = TimelineTickMath.RasterQueryEnd((left + width) / pixelsPerTick, start);
         var columns = new TempoColumn[width];
         int count = 0;
         source.Visit(start, end, 0, 1, item =>
@@ -115,9 +115,6 @@ public static class TimelineTempoTileRasterizer
             pixels[offset + 3] = color.A;
         }
     }
-
-    private static long FloorTick(double value) => value <= 0 ? 0 : value >= long.MaxValue ? long.MaxValue : (long)Math.Floor(value);
-    private static long CeilingTick(double value) => value <= 0 ? 1 : value >= long.MaxValue ? long.MaxValue : (long)Math.Ceiling(value);
 
     private struct TempoColumn
     {

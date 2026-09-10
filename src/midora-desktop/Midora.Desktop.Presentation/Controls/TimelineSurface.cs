@@ -2158,6 +2158,12 @@ public sealed partial class TimelineSurface : Control
     protected override void OnMouseDown(MouseButtonEventArgs e)
     {
         base.OnMouseDown(e);
+        try { HandleTimelineMouseDown(e); }
+        catch (OverflowException) { RejectOutOfRangeGesture(e); }
+    }
+
+    private void HandleTimelineMouseDown(MouseButtonEventArgs e)
+    {
         // A new physical press supersedes a previous cold Conductor request.
         // Hover cannot replace the pending hit, but a later deliberate gesture can.
         // Replay clears its pending record before re-entering this handler.
@@ -2525,7 +2531,7 @@ public sealed partial class TimelineSurface : Control
             }
             if (_hitItems.Count == 0 && Snapshot is { ConductorSource: null })
             {
-                long pointTolerance = Math.Max(1, checked((long)Math.Ceiling(4 / viewport.PixelsPerTick)));
+                long pointTolerance = TimelineTickMath.CeilingDistance(4 / viewport.PixelsPerTick);
                 if (!Snapshot.TryHitTestCached(tick, pointTolerance, lane, _hitItems))
                 {
                     ScheduleExactPrefetch(
@@ -2665,9 +2671,7 @@ public sealed partial class TimelineSurface : Control
             {
                 long snappedStart = SnapAbsolute(tick);
                 _segmentPlacementStartTick = snappedStart;
-                _segmentPlacementCurrentTick = snappedStart > long.MaxValue - Math.Max(1, DefaultCreationLengthTicks)
-                    ? long.MaxValue
-                    : snappedStart + Math.Max(1, DefaultCreationLengthTicks);
+                _segmentPlacementCurrentTick = checked(snappedStart + Math.Max(1, DefaultCreationLengthTicks));
                 _segmentPlacementLane = lane;
                 _segmentPlacementOrigin = point;
                 _segmentPlacementActivated = false;
@@ -3169,6 +3173,12 @@ public sealed partial class TimelineSurface : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        try { HandleTimelineMouseMove(e); }
+        catch (OverflowException) { RejectOutOfRangeGesture(e); }
+    }
+
+    private void HandleTimelineMouseMove(MouseEventArgs e)
+    {
         Point point = InteractionPosition(e);
         if (_pendingConductorPress is { } pendingConductor)
         {
@@ -3448,6 +3458,9 @@ public sealed partial class TimelineSurface : Control
             if (_dragActivated)
             {
                 PrepareDragPreviewSelection(dragItem);
+                // Validate before scheduling OnRender. An impossible edit must
+                // never leave a throwing preview attached to the WPF render loop.
+                _ = GetDragPreviewTransform(dragItem);
                 UpdateDragPitchPreview();
                 bool invalidArrangementParentTarget = SurfaceMode == TimelineSurfaceMode.Arrangement
                     && Snapshot is TimelineRenderSnapshot arrangementSnapshot
@@ -3471,10 +3484,8 @@ public sealed partial class TimelineSurface : Control
         {
             double deltaX = point.X - pan.X;
             double deltaY = point.Y - pan.Y;
-            long tickDelta = checked((long)Math.Round(
-                deltaX / viewport.PixelsPerTick,
-                MidpointRounding.AwayFromZero));
-            StartTick = Math.Max(0, _panStartTick - tickDelta);
+            long tickDelta = TimelineTickMath.RoundSignedDistance(deltaX / viewport.PixelsPerTick);
+            StartTick = Math.Min(long.MaxValue - 1, TimelineTickMath.Clamp((Int128)_panStartTick - tickDelta));
             if (SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity)
             {
                 double contentHeight = Math.Max(1, ActualHeight - GetRulerHeight());
@@ -3557,6 +3568,12 @@ public sealed partial class TimelineSurface : Control
     protected override void OnMouseUp(MouseButtonEventArgs e)
     {
         base.OnMouseUp(e);
+        try { HandleTimelineMouseUp(e); }
+        catch (OverflowException) { RejectOutOfRangeGesture(e); }
+    }
+
+    private void HandleTimelineMouseUp(MouseButtonEventArgs e)
+    {
         if (_pendingConductorPress is { } pendingConductor && e.ChangedButton == MouseButton.Left)
         {
             pendingConductor.LastPosition = InteractionPosition(e);
@@ -3760,6 +3777,16 @@ public sealed partial class TimelineSurface : Control
         }
         if (e.ChangedButton == MouseButton.Left && _rulerDragOrigin is Point rulerOrigin)
         {
+            if (Math.Abs(e.GetPosition(this).X - rulerOrigin.X) < 3)
+            {
+                long clickedTick = SnapAbsolute(_rulerDragStartTick);
+                _rulerDragOrigin = null;
+                ReleaseMouseCapture();
+                RulerClicked?.Invoke(this, new(clickedTick));
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
             long rawStart = Math.Min(_rulerDragStartTick, _rulerDragCurrentTick);
             long rawEnd = Math.Max(_rulerDragStartTick, _rulerDragCurrentTick);
             long start = SnapAbsolute(rawStart);
@@ -3846,6 +3873,12 @@ public sealed partial class TimelineSurface : Control
 
     protected override void OnLostMouseCapture(MouseEventArgs e)
     {
+        ClearCapturedInteraction();
+        base.OnLostMouseCapture(e);
+    }
+
+    private void ClearCapturedInteraction()
+    {
         if (_pendingConductorPress is not null) CancelConductorHit();
         if (_notePlacementStartTick is not null)
         {
@@ -3902,7 +3935,26 @@ public sealed partial class TimelineSurface : Control
             ResetPointerPositionText();
         }
         InvalidateVisual();
-        base.OnLostMouseCapture(e);
+    }
+
+    public static readonly RoutedEvent TickRangeExceededEvent = EventManager.RegisterRoutedEvent(
+        nameof(TickRangeExceeded), RoutingStrategy.Bubble, typeof(RoutedEventHandler), typeof(TimelineSurface));
+
+    public event RoutedEventHandler TickRangeExceeded
+    {
+        add => AddHandler(TickRangeExceededEvent, value);
+        remove => RemoveHandler(TickRangeExceededEvent, value);
+    }
+
+    private void RejectOutOfRangeGesture(MouseEventArgs e)
+    {
+        // This handles arithmetic failure in the input/draft path only. No
+        // completed Project command is fabricated and no shorter edit is sent.
+        ClearCapturedInteraction();
+        ReleaseMouseCapture();
+        e.Handled = true;
+        Cursor = Cursors.Arrow;
+        RaiseEvent(new RoutedEventArgs(TickRangeExceededEvent, this));
     }
 
     protected override void OnMouseWheel(MouseWheelEventArgs e)
@@ -3967,19 +4019,16 @@ public sealed partial class TimelineSurface : Control
             }
             long anchor = viewport.XToTick(e.GetPosition(this).X - GetLaneHeaderWidth());
             double factor = e.Delta > 0 ? 0.8 : 1.25;
-            long newSpan = Math.Clamp(
-                checked((long)Math.Round(TickSpan * factor, MidpointRounding.AwayFromZero)),
-                16,
-                1L << 50);
-            double anchorRatio = (anchor - StartTick) / (double)TickSpan;
-            long newStart = checked(anchor - (long)Math.Round(newSpan * anchorRatio));
-            StartTick = Math.Max(0, newStart);
+            long newSpan = TimelineTickMath.ScaleSpan(TickSpan, factor);
+            double anchorRatio = (anchor - viewport.StartTick) / (double)viewport.TickLength;
+            long offset = TimelineTickMath.RoundSignedDistance(newSpan * anchorRatio);
+            StartTick = TimelineTickMath.Pan(anchor, -offset);
             TickSpan = newSpan;
         }
         else if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
         {
             long delta = Math.Max(1, TickSpan / 10);
-            StartTick = e.Delta > 0 ? Math.Max(0, StartTick - delta) : checked(StartTick + delta);
+            StartTick = TimelineTickMath.Pan(StartTick, e.Delta > 0 ? -delta : delta);
         }
         else
         {
@@ -4134,7 +4183,7 @@ public sealed partial class TimelineSurface : Control
             laneCount = Math.Min(laneCount, 128 - firstLane);
         }
         long span = TickSpan > 0 ? TickSpan : 1;
-        long start = Math.Max(0, StartTick);
+        long start = Math.Clamp(StartTick, 0, long.MaxValue - 1);
         long end = start <= long.MaxValue - span ? start + span : long.MaxValue;
         viewport = new(
             start,
@@ -4291,9 +4340,7 @@ public sealed partial class TimelineSurface : Control
         {
             double dpiScaleX = Math.Max(0.01, VisualTreeHelper.GetDpi(this).DpiScaleX);
             double ticksPerPixel = 1 / (viewport.PixelsPerTick * dpiScaleX);
-            long minimumTickSpacing = ticksPerPixel >= long.MaxValue
-                ? long.MaxValue
-                : Math.Max(1, (long)Math.Ceiling(ticksPerPixel * 4));
+            long minimumTickSpacing = TimelineTickMath.CeilingDistance(ticksPerPixel * 4);
             TimelineGridPresentation.BuildBarGridLines(
                 viewport.StartTick,
                 viewport.EndTick,
@@ -4319,29 +4366,12 @@ public sealed partial class TimelineSurface : Control
         }
 
         long grid = Math.Max(1, GridStepTicks);
-        long first = TimelineGridQuantization.GetGridTickAtOrAfter(
-            viewport.StartTick,
-            grid,
-            DisplayGridUsesBars,
-            TimeSignatureMap);
-        for (long tick = first; tick < viewport.EndTick;)
+        TimelineGridPresentation.BuildFixedGridLines(viewport.StartTick, viewport.EndTick,
+            grid, _gridLines, TimelineTickMath.CeilingDistance(4 / viewport.PixelsPerTick));
+        foreach (TimelineGridLine line in _gridLines)
         {
-            double x = laneHeaderWidth + Math.Round(viewport.TickToX(tick)) + 0.5;
+            double x = laneHeaderWidth + Math.Round(viewport.TickToX(line.Tick)) + 0.5;
             context.DrawLine(_borderPen, new Point(x, rulerHeight), new Point(x, contentBottom));
-            if (tick == long.MaxValue)
-            {
-                break;
-            }
-            long next = TimelineGridQuantization.GetNextGridTick(
-                tick,
-                grid,
-                DisplayGridUsesBars,
-                TimeSignatureMap);
-            if (next <= tick)
-            {
-                break;
-            }
-            tick = next;
         }
     }
 
@@ -4522,9 +4552,9 @@ public sealed partial class TimelineSurface : Control
             if (lastX < firstX) continue;
             long firstY = Math.Max(0, firstVisibleTileY - ring);
             long lastY = Math.Max(firstY, lastVisibleTileY + ring);
-            for (long tileY = firstY; tileY <= lastY; tileY++)
+            foreach (long tileY in TimelineTickMath.InclusiveIndices(firstY, lastY))
             {
-                for (long tileX = firstX; tileX <= lastX; tileX++)
+                foreach (long tileX in TimelineTickMath.InclusiveIndices(firstX, lastX))
                 {
                     bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
                         && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
@@ -4695,9 +4725,9 @@ public sealed partial class TimelineSurface : Control
             if (lastX < firstX) continue;
             long firstY = Math.Max(0, firstTileY - ring);
             long lastY = Math.Max(firstY, lastTileY + ring);
-            for (long tileY = firstY; tileY <= lastY; tileY++)
+            foreach (long tileY in TimelineTickMath.InclusiveIndices(firstY, lastY))
             {
-                for (long tileX = firstX; tileX <= lastX; tileX++)
+                foreach (long tileX in TimelineTickMath.InclusiveIndices(firstX, lastX))
                 {
                     bool visible = tileX >= firstTileX && tileX <= lastTileX
                         && tileY >= firstTileY && tileY <= lastTileY;
@@ -5347,7 +5377,7 @@ public sealed partial class TimelineSurface : Control
             Math.Max(0, ActualWidth - laneHeaderWidth),
             Math.Min(LaneHeight, Math.Max(0, ActualHeight - coreTop)));
         context.PushClip(new RectangleGeometry(clip));
-        for (long tile = firstTile; tile <= lastTile; tile++)
+        foreach (long tile in TimelineTickMath.InclusiveIndices(firstTile, lastTile))
         {
             TimelineRasterCacheKey key = new(
                 TimelineRasterLayer.ArrangementConductorPreview,
@@ -5642,7 +5672,7 @@ public sealed partial class TimelineSurface : Control
 
         _segmentPreviewDetailTiles.Clear();
         _segmentPreviewDetailedBounds.Clear();
-        for (long tile = firstTile; tile <= lastTile; tile++)
+        foreach (long tile in TimelineTickMath.InclusiveIndices(firstTile, lastTile))
         {
             SegmentPreviewWarmupRequest request = CreateSegmentPreviewRequest(
                 preview,
@@ -6147,7 +6177,7 @@ public sealed partial class TimelineSurface : Control
         {
             long firstX = Math.Max(firstContentTileX, firstTileX - ring);
             long lastX = Math.Min(lastContentTileX, lastTileX + ring);
-            for (long tileX = firstX; tileX <= lastX; tileX++)
+            foreach (long tileX in TimelineTickMath.InclusiveIndices(firstX, lastX))
             {
                 bool visible = tileX >= firstTileX && tileX <= lastTileX;
                 if (ring == 1 && visible) continue;
@@ -6432,9 +6462,9 @@ public sealed partial class TimelineSurface : Control
             long lastX = Math.Min(lastContentTileX, lastVisibleTileX + ring);
             long firstY = Math.Max(0, firstVisibleTileY - ring);
             long lastY = Math.Max(firstY, lastVisibleTileY + ring);
-            for (long tileY = firstY; tileY <= lastY; tileY++)
+            foreach (long tileY in TimelineTickMath.InclusiveIndices(firstY, lastY))
             {
-                for (long tileX = firstX; tileX <= lastX; tileX++)
+                foreach (long tileX in TimelineTickMath.InclusiveIndices(firstX, lastX))
                 {
                     bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
                         && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
@@ -6578,9 +6608,9 @@ public sealed partial class TimelineSurface : Control
         long lastX = Math.Min(lastContentTileX, lastVisibleTileX + 1);
         long firstY = Math.Max(0, firstVisibleTileY - 1);
         long lastY = Math.Max(firstY, lastVisibleTileY + 1);
-        for (long tileY = firstY; tileY <= lastY; tileY++)
+        foreach (long tileY in TimelineTickMath.InclusiveIndices(firstY, lastY))
         {
-            for (long tileX = firstX; tileX <= lastX; tileX++)
+            foreach (long tileX in TimelineTickMath.InclusiveIndices(firstX, lastX))
             {
                 bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
                     && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
@@ -6905,7 +6935,7 @@ public sealed partial class TimelineSurface : Control
         if (Snapshot.ConductorSource is not null)
             return TryHitConductorPoint(point, viewport, out item);
         long tick = viewport.XToTick(point.X - GetLaneHeaderWidth());
-        long tolerance = Math.Max(1, checked((long)Math.Ceiling(5 / viewport.PixelsPerTick)));
+        long tolerance = TimelineTickMath.CeilingDistance(5 / viewport.PixelsPerTick);
         _visibleItems.Clear();
         if (!Snapshot.TryHitTestCached(tick, tolerance, 0, _visibleItems))
         {
@@ -6993,8 +7023,7 @@ public sealed partial class TimelineSurface : Control
         {
             Point point = _eventPointTracePoints[index];
             double contentX = Math.Clamp(point.X - header, 0, viewport.Width);
-            double tick = viewport.StartTick
-                + contentX / viewport.Width * viewport.TickLength;
+            long tick = viewport.XToTick(contentX);
             trace[index] = new(
                 tick,
                 Math.Clamp(ValueYToNormalized(point.Y, ruler), 0, 1));
@@ -7271,7 +7300,7 @@ public sealed partial class TimelineSurface : Control
         double ruler = GetRulerHeight();
         long tick = viewport.XToTick(point.X - header);
         double horizontalTolerance = TimelineVelocityTileRasterizer.MarkerSize / 2 + 2;
-        long tolerance = Math.Max(1, (long)Math.Ceiling(horizontalTolerance / viewport.PixelsPerTick));
+        long tolerance = TimelineTickMath.CeilingDistance(horizontalTolerance / viewport.PixelsPerTick);
         _visibleItems.Clear();
         if (!Snapshot.TryHitTestCached(tick, tolerance, 0, _visibleItems))
         {
@@ -7820,9 +7849,9 @@ public sealed partial class TimelineSurface : Control
             if (lastX < firstX) continue;
             long firstY = Math.Max(0, firstVisibleTileY - ring);
             long lastY = Math.Max(firstY, lastVisibleTileY + ring);
-            for (long tileY = firstY; tileY <= lastY; tileY++)
+            foreach (long tileY in TimelineTickMath.InclusiveIndices(firstY, lastY))
             {
-                for (long tileX = firstX; tileX <= lastX; tileX++)
+                foreach (long tileX in TimelineTickMath.InclusiveIndices(firstX, lastX))
                 {
                     bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
                         && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
@@ -7978,9 +8007,9 @@ public sealed partial class TimelineSurface : Control
             / TimelinePianoTileRasterizer.TileSize));
 
         _pianoTileFallbackEntries.Clear();
-        for (long tileY = firstTileY; tileY <= lastTileY; tileY++)
+        foreach (long tileY in TimelineTickMath.InclusiveIndices(firstTileY, lastTileY))
         {
-            for (long tileX = firstTileX; tileX <= lastTileX; tileX++)
+            foreach (long tileX in TimelineTickMath.InclusiveIndices(firstTileX, lastTileX))
             {
                 long requestTileX = tileX;
                 long requestTileY = tileY;
@@ -8137,9 +8166,9 @@ public sealed partial class TimelineSurface : Control
             Color.FromRgb(42, 48, 58));
 
         _dragPreviewEventPointTiles.Clear();
-        for (long tileY = firstTileY; tileY <= lastTileY; tileY++)
+        foreach (long tileY in TimelineTickMath.InclusiveIndices(firstTileY, lastTileY))
         {
-            for (long tileX = firstTileX; tileX <= lastTileX; tileX++)
+            foreach (long tileX in TimelineTickMath.InclusiveIndices(firstTileX, lastTileX))
             {
                 TimelineRasterCacheKey key = new(
                     TimelineRasterLayer.EventPointSelection,
@@ -8430,14 +8459,18 @@ public sealed partial class TimelineSurface : Control
         long rawTickDelta = _dragTimeLocked
             ? 0
             : checked(_dragCurrentTick - _dragOriginTick);
-        long snapTarget = _dragKind == TimelineItemEditKind.ResizeEnd
-            ? checked(anchor.EndTick + rawTickDelta)
-            : checked(anchor.StartTick + rawTickDelta);
+        // The raw pointer can pass the domain before delta snapping chooses a
+        // perfectly representable result (including zero). Only the *snapped*
+        // musical result is an edit boundary, not this lookup coordinate.
+        long snapTarget = TimelineTickMath.Clamp((Int128)(_dragKind == TimelineItemEditKind.ResizeEnd
+            ? anchor.EndTick : anchor.StartTick) + rawTickDelta);
         long tickDelta = SnapOperationDelta(rawTickDelta, snapTarget);
         if (_dragKind is TimelineItemEditKind.Move or TimelineItemEditKind.ResizeStart)
         {
             tickDelta = Math.Max(tickDelta, -_dragPreviewMinimumStartTick);
         }
+        if (_dragKind is TimelineItemEditKind.Move or TimelineItemEditKind.ResizeEnd)
+            _ = checked(anchor.EndTick + Math.Max(0, tickDelta));
 
         int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
         if (_dragCopyRequested
@@ -9099,67 +9132,23 @@ public sealed partial class TimelineSurface : Control
                 new Point(8, 5));
         }
 
-        long localStart = viewport.StartTick;
-        if (ProjectTickOffset < 0)
+        TimelineGridPresentation.BuildBarGridLines(viewport.StartTick, viewport.EndTick,
+            timeSignatureMap, _gridLines, TimelineTickMath.CeilingDistance(88 / viewport.PixelsPerTick),
+            ProjectTickOffset, includeBeats: false);
+        foreach (TimelineGridLine line in _gridLines)
         {
-            long firstLocalProjectTick = ProjectTickOffset == long.MinValue
-                ? long.MaxValue
-                : -ProjectTickOffset;
-            localStart = Math.Max(localStart, firstLocalProjectTick);
-        }
-        if (localStart >= viewport.EndTick) return;
-
-        long projectStart = SaturatingAddSigned(localStart, ProjectTickOffset);
-        long projectEnd = SaturatingAddSigned(viewport.EndTick, ProjectTickOffset);
-        if (projectStart < 0 || projectEnd <= projectStart) return;
-
-        long minimumTickSpacing = viewport.PixelsPerTick <= 0
-            ? long.MaxValue
-            : Math.Max(1, (long)Math.Min(
-                long.MaxValue,
-                Math.Ceiling(88 / viewport.PixelsPerTick)));
-        ProjectBarInfo bar = timeSignatureMap.GetBarContaining(projectStart);
-        double previousLabelX = double.NegativeInfinity;
-        while (bar.StartTick < projectEnd)
-        {
-            long localBarTick = checked(bar.StartTick - ProjectTickOffset);
+            long localBarTick = line.Tick;
             double x = laneHeaderWidth + Math.Round(viewport.TickToX(localBarTick)) + 0.5;
-            if (localBarTick >= localStart
-                && localBarTick < viewport.EndTick
-                && x - previousLabelX >= 88)
-            {
-                context.DrawLine(_textPen, new Point(x, rulerHeight - 5), new Point(x, rulerHeight));
-                FormattedText label = GetFormattedText(
-                    bar.Bar.ToString(CultureInfo.InvariantCulture),
-                    text,
-                    10,
-                    FontWeights.Normal);
-                double labelY = SurfaceMode == TimelineSurfaceMode.Arrangement
-                    ? Math.Max(1, rulerHeight - label.Height - 1)
-                    : 4;
-                context.DrawText(
-                    label,
-                    new Point(x + 4, labelY));
-                previousLabelX = x;
-            }
-
-            if (bar.EndTick <= bar.StartTick || bar.EndTick >= projectEnd) break;
-            long nextBarTick = bar.EndTick;
-            if (double.IsFinite(previousLabelX))
-            {
-                long targetTick = bar.StartTick > long.MaxValue - minimumTickSpacing
-                    ? long.MaxValue
-                    : bar.StartTick + minimumTickSpacing;
-                if (nextBarTick < targetTick)
-                {
-                    ProjectBarInfo containing = timeSignatureMap.GetBarContaining(targetTick);
-                    nextBarTick = containing.StartTick >= targetTick
-                        ? containing.StartTick
-                        : containing.EndTick;
-                }
-            }
-            if (nextBarTick <= bar.StartTick || nextBarTick >= projectEnd) break;
-            bar = timeSignatureMap.GetBarContaining(nextBarTick);
+            context.DrawLine(_textPen, new Point(x, rulerHeight - 5), new Point(x, rulerHeight));
+            FormattedText label = GetFormattedText(
+                timeSignatureMap.GetPosition(checked(localBarTick + ProjectTickOffset)).Bar.ToString(CultureInfo.InvariantCulture),
+                text,
+                10,
+                FontWeights.Normal);
+            double labelY = SurfaceMode == TimelineSurfaceMode.Arrangement
+                ? Math.Max(1, rulerHeight - label.Height - 1)
+                : 4;
+            context.DrawText(label, new Point(x + 4, labelY));
         }
     }
 
@@ -10283,9 +10272,8 @@ public sealed partial class TimelineSurface : Control
             return;
         }
 
-        long tickDelta = (long)Math.Round(
-            delta.X / Math.Max(double.Epsilon, viewport.PixelsPerTick),
-            MidpointRounding.AwayFromZero);
+        long tickDelta = TimelineTickMath.RoundSignedDistance(
+            delta.X / Math.Max(double.Epsilon, viewport.PixelsPerTick));
         _selectionToolPinnedTick = Math.Max(
             0,
             SaturatingAddTick(_selectionToolGripStartTick, tickDelta));
@@ -10545,7 +10533,7 @@ public sealed partial class TimelineSurface : Control
             {
                 return;
             }
-            long pointTick = SnapAbsolute(viewport.XToTick(pointer.X - laneHeaderWidth));
+            if (!TrySnapPointerTick(viewport.XToTick(pointer.X - laneHeaderWidth), out long pointTick)) return;
             double normalized = ValueYToNormalized(pointer.Y, rulerHeight);
             Point center = new(
                 laneHeaderWidth + viewport.TickToX(pointTick),
@@ -10565,19 +10553,20 @@ public sealed partial class TimelineSurface : Control
         {
             return;
         }
-        long start = SnapAbsolute(viewport.XToTick(pointer.X - laneHeaderWidth));
+        if (!TrySnapPointerTick(viewport.XToTick(pointer.X - laneHeaderWidth), out long start)) return;
         long end = start > long.MaxValue - Math.Max(1, DefaultCreationLengthTicks)
             ? long.MaxValue
             : start + Math.Max(1, DefaultCreationLengthTicks);
-        bool invalid = false;
+        bool invalid = start > long.MaxValue - Math.Max(1, DefaultCreationLengthTicks);
         if (SurfaceMode == TimelineSurfaceMode.Arrangement
             && Snapshot is TimelineRenderSnapshot snapshot)
         {
             snapshot.GetSegmentPlacementInfo(
                 lane,
                 start,
-                out invalid,
+                out bool overlaps,
                 out long nextStart);
+            invalid |= overlaps;
             if (!invalid && nextStart != long.MaxValue) end = Math.Min(end, nextStart);
             invalid |= end <= start;
         }
@@ -10802,9 +10791,7 @@ public sealed partial class TimelineSurface : Control
         if (SurfaceMode == TimelineSurfaceMode.Conductor)
         {
             const double hitRadius = 8;
-            long toleranceTicks = Math.Max(
-                1,
-                checked((long)Math.Ceiling(hitRadius / viewport.PixelsPerTick)));
+            long toleranceTicks = TimelineTickMath.CeilingDistance(hitRadius / viewport.PixelsPerTick);
             if (!snapshot.TryHitTestCached(tick, toleranceTicks, lane, _hitItems))
             {
                 ScheduleExactPrefetch(
@@ -10848,10 +10835,8 @@ public sealed partial class TimelineSurface : Control
         }
         if (preferDirectEditEdges)
         {
-            long toleranceTicks = Math.Max(
-                1,
-                checked((long)Math.Ceiling(
-                    TimelineToolPolicy.DirectEditEdgeTolerancePixels / viewport.PixelsPerTick)));
+            long toleranceTicks = TimelineTickMath.CeilingDistance(
+                TimelineToolPolicy.DirectEditEdgeTolerancePixels / viewport.PixelsPerTick);
             if (!snapshot.TryHitTestCached(tick, toleranceTicks, lane, _hitItems))
             {
                 ScheduleExactPrefetch(
@@ -11004,6 +10989,12 @@ public sealed partial class TimelineSurface : Control
 
     private void UpdatePointerPositionText(Point point, TimelineViewport viewport)
     {
+        try { UpdatePointerPositionTextCore(point, viewport); }
+        catch (OverflowException) { ResetPointerPositionText(); }
+    }
+
+    private void UpdatePointerPositionTextCore(Point point, TimelineViewport viewport)
+    {
         double laneHeaderWidth = GetLaneHeaderWidth();
         double rulerHeight = GetRulerHeight();
         bool inTimelineContent = point.X >= laneHeaderWidth
@@ -11013,9 +11004,11 @@ public sealed partial class TimelineSurface : Control
 
         if (SurfaceMode == TimelineSurfaceMode.Arrangement)
         {
+            bool hasTick = inTimelineContent && TrySnapPointerTick(
+                viewport.XToTick(point.X - laneHeaderWidth), out _);
             SetValue(
                 PointerPositionTextPropertyKey,
-                inTimelineContent
+                hasTick
                     ? string.Create(
                         CultureInfo.InvariantCulture,
                         $"({SnapAbsolute(viewport.XToTick(point.X - laneHeaderWidth))})")
@@ -11031,7 +11024,11 @@ public sealed partial class TimelineSurface : Control
                 return;
             }
 
-            long pianoTick = SnapAbsolute(viewport.XToTick(point.X - laneHeaderWidth));
+            if (!TrySnapPointerTick(viewport.XToTick(point.X - laneHeaderWidth), out long pianoTick))
+            {
+                ResetPointerPositionText();
+                return;
+            }
             int lane = YToLane(viewport, point.Y - rulerHeight);
             int keyNumber = Math.Clamp(127 - lane, 0, 127);
             SetValue(
@@ -11083,7 +11080,11 @@ public sealed partial class TimelineSurface : Control
             tickX = GetLaneHeaderWidth() + viewport.TickToX(pointItem.StartTick);
         }
 
-        long tick = SnapAbsolute(viewport.XToTick(tickX - GetLaneHeaderWidth()));
+        if (!TrySnapPointerTick(viewport.XToTick(tickX - GetLaneHeaderWidth()), out long tick))
+        {
+            ResetPointerPositionText();
+            return;
+        }
         double normalized = ValueYToNormalized(valueY, GetRulerHeight());
         SetEventPointPositionText(tick, normalized);
     }
@@ -11126,6 +11127,10 @@ public sealed partial class TimelineSurface : Control
         TimeSignatureMap,
         0);
 
+    private bool TrySnapPointerTick(long tick, out long snapped)
+        => ProjectTimelineGrid.TrySnapAbsolute(Math.Max(0, tick), Math.Max(1, OperationStepTicks),
+            OperationUsesBars, TimeSignatureMap, 0, out snapped);
+
     private long SnapOperationDelta(long delta, long targetTick) =>
         TimelineGridQuantization.SnapDelta(
             delta,
@@ -11140,8 +11145,8 @@ public sealed partial class TimelineSurface : Control
         {
             return Math.Max(1, OperationStepTicks);
         }
-        ProjectBarInfo bar = TimeSignatureMap.GetBarContaining(Math.Max(0, startTick));
-        return Math.Max(1, checked(bar.EndTick - startTick));
+        ProjectBarBounds bar = TimeSignatureMap.GetBarBounds(Math.Max(0, startTick));
+        return Math.Max(1, checked((long)(bar.EndTick - startTick)));
     }
 
     private bool TryGetArrangementSecondaryLink(
@@ -11179,19 +11184,12 @@ public sealed partial class TimelineSurface : Control
         // the final Note length, so the frozen initial length is preserved.
         long cursor = Math.Max(0, _notePlacementPointerAnchorTick);
         long desired = Math.Max(cursor, targetTick);
-        long accumulated = 0;
-        while (cursor < desired)
-        {
-            long next = TimelineGridQuantization.GetNextGridTick(
-                cursor,
-                Math.Max(1, OperationStepTicks),
-                useBars: true,
-                TimeSignatureMap);
-            long increment = Math.Max(1, checked(next - cursor));
-            accumulated = checked(accumulated + increment);
-            cursor = next;
-        }
-        return accumulated;
+        if (cursor >= desired) return 0;
+        // Every crossed signature starts a bar, so a direct ceil lookup is
+        // equivalent to visiting each boundary, including truncated bars.
+        long end = ProjectTimelineGrid.GetGridTickAtOrAfter(desired,
+            Math.Max(1, OperationStepTicks), true, TimeSignatureMap);
+        return checked(end - cursor);
     }
 
     private static long SaturatingAddSigned(long value, long increment)

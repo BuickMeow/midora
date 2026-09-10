@@ -1290,7 +1290,9 @@ public readonly record struct TimelineViewport(
     public double TickToX(long tick)
     {
         Validate();
-        return (tick - StartTick) * PixelsPerTick;
+        // All ordinary/project ticks use one signed subtraction; a negative
+        // projection can require the wider path without wrapping around.
+        return (tick >= 0 ? (double)(tick - StartTick) : (double)((Int128)tick - StartTick)) * PixelsPerTick;
     }
 
     public long XToTick(double x)
@@ -1301,8 +1303,7 @@ public readonly record struct TimelineViewport(
             throw new ArgumentOutOfRangeException(nameof(x));
         }
         double clamped = Math.Clamp(x, 0, Width);
-        double value = StartTick + (clamped / Width * TickLength);
-        return checked((long)Math.Round(value, MidpointRounding.AwayFromZero));
+        return TimelineTickMath.ProjectFraction(StartTick, EndTick, clamped / Width);
     }
 
     public long XToContainingTick(double x)
@@ -1313,11 +1314,7 @@ public readonly record struct TimelineViewport(
             throw new ArgumentOutOfRangeException(nameof(x));
         }
         double clamped = Math.Clamp(x, 0, Math.BitDecrement(Width));
-        double value = StartTick + (clamped / Width * TickLength);
-        return Math.Clamp(
-            checked((long)Math.Floor(value)),
-            StartTick,
-            checked(EndTick - 1));
+        return TimelineTickMath.ProjectFraction(StartTick, EndTick, clamped / Width, containing: true);
     }
 
     public int YToLane(double y)

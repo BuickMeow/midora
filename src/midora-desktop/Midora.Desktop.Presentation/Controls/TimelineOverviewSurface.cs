@@ -231,15 +231,15 @@ public sealed class TimelineOverviewSurface : Control
         long maximumStart = Math.Max(0, extent - Math.Min(TickSpan, extent));
         StartTick = maximumStart == 0
             ? 0
-            : (long)Math.Round(desiredLeft / Math.Max(1, width - thumb.Width) * maximumStart,
-                MidpointRounding.AwayFromZero);
+            : TimelineTickMath.ProjectFraction(0, maximumStart,
+                desiredLeft / Math.Max(1, width - thumb.Width));
     }
 
     private Rect ViewportThumb(long extent)
     {
         double width = Math.Max(1, ActualWidth);
         long span = Math.Min(Math.Max(1, TickSpan), extent);
-        double thumbWidth = Math.Clamp(width * span / extent, 18, width);
+        double thumbWidth = Math.Clamp(width * span / extent, Math.Min(18, width), width);
         long maximumStart = Math.Max(0, extent - span);
         double left = maximumStart == 0
             ? 0

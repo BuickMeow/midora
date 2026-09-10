@@ -976,10 +976,8 @@ public static class TimelinePianoTileRasterizer
             return false;
         }
 
-        startTick = Math.Max(0, FloorToLong(worldLeft / devicePixelsPerTick));
-        endTick = Math.Max(
-            startTick + 1,
-            CeilingToLong((worldLeft + RasterSize) / devicePixelsPerTick));
+        startTick = TimelineTickMath.RasterQueryStart(worldLeft / devicePixelsPerTick);
+        endTick = TimelineTickMath.RasterQueryEnd((worldLeft + RasterSize) / devicePixelsPerTick, startTick);
         firstLane = Math.Max(0, FloorToInt(worldTop / devicePixelsPerLane));
         lastLaneExclusive = Math.Min(
             128,
@@ -989,7 +987,7 @@ public static class TimelinePianoTileRasterizer
         return firstLane < 128;
     }
 
-    private static int RoundPixelBoundary(double value) => checked((int)Math.Floor(value + 0.5));
+    private static int RoundPixelBoundary(double value) => TimelineTickMath.RoundRasterBoundary(value);
 
     private static long FloorToLong(double value) => value <= long.MinValue
         ? long.MinValue
@@ -1222,7 +1220,7 @@ public static class TimelineSegmentPreviewRasterizer
             ? long.MaxValue
             : Math.Max(1, checked((long)width));
         double scaledWidth = baseWidth / GetFixedPreviewLodDivisor(lod);
-        return Math.Max(1, checked((long)Math.Ceiling(scaledWidth)));
+        return scaledWidth >= long.MaxValue ? long.MaxValue : Math.Max(1, (long)Math.Ceiling(scaledWidth));
     }
 
     public static int SelectDisplayLod(
@@ -1740,10 +1738,8 @@ public static class TimelineEventPointTileRasterizer
         int height = checked(TileSize + gutterY * 2);
         double worldLeft = tileX * (double)TileSize - gutterX;
         double worldTop = tileY * (double)TileSize - gutterY;
-        long startTick = Math.Max(0, FloorToLong(worldLeft / devicePixelsPerTick));
-        long endTick = Math.Max(
-            startTick + 1,
-            CeilingToLong((worldLeft + width) / devicePixelsPerTick));
+        long startTick = TimelineTickMath.RasterQueryStart(worldLeft / devicePixelsPerTick);
+        long endTick = TimelineTickMath.RasterQueryEnd((worldLeft + width) / devicePixelsPerTick, startTick);
         byte[] pixels = new byte[checked(width * height * 4)];
         double pointRadiusX = Math.Max(1, PointRadius * dpiScaleX);
         double pointRadiusY = Math.Max(1, PointRadius * dpiScaleY);
@@ -1922,10 +1918,8 @@ public static class TimelineEventPointTileRasterizer
         int height = checked(TileSize + gutterY * 2);
         double worldLeft = tileX * (double)TileSize - gutterX;
         double worldTop = tileY * (double)TileSize - gutterY;
-        long startTick = Math.Max(0, FloorToLong(worldLeft / devicePixelsPerTick));
-        long endTick = Math.Max(
-            startTick + 1,
-            CeilingToLong((worldLeft + width) / devicePixelsPerTick));
+        long startTick = TimelineTickMath.RasterQueryStart(worldLeft / devicePixelsPerTick);
+        long endTick = TimelineTickMath.RasterQueryEnd((worldLeft + width) / devicePixelsPerTick, startTick);
         double selectionRadiusY = Math.Max(1, SelectionRadius * dpiScaleY);
         List<TimelineRenderItem> materialized = [];
         snapshot.QueryMaterializedInto(startTick, endTick, 0, 1, materialized);
@@ -2043,7 +2037,7 @@ public static class TimelineConductorTileRasterizer
         foreach (ConductorTilePoint point in points)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            double centerX = point.DeviceColumn - worldLeft;
+            double centerX = point.DeviceColumn;
             double normalizedY = 0.2 + Math.Clamp(point.Type, 0, 3) * 0.15;
             double centerY = gutterY + normalizedY * deviceLaneHeight;
             if (centerX + radiusX < 0 || centerX - radiusX >= width) continue;
@@ -2100,10 +2094,8 @@ public static class TimelineConductorTileRasterizer
         int gutterX = GetGutter(dpiScaleX);
         double worldLeft = tileX * (double)TileSize - gutterX;
         double worldRight = worldLeft + TileSize + gutterX * 2;
-        long startTick = Math.Max(0, FloorToLong(worldLeft / devicePixelsPerTick));
-        long endTick = Math.Max(
-            startTick + 1,
-            CeilingToLong(worldRight / devicePixelsPerTick));
+        long startTick = TimelineTickMath.RasterQueryStart(worldLeft / devicePixelsPerTick);
+        long endTick = TimelineTickMath.RasterQueryEnd(worldRight / devicePixelsPerTick, startTick);
         Dictionary<(long DeviceColumn, int Type), ConductorTilePoint> aggregated = [];
         int visited = 0;
         snapshot.VisitConductorPreview(startTick, endTick, item =>
@@ -2113,14 +2105,14 @@ public static class TimelineConductorTileRasterizer
             {
                 return;
             }
-            long deviceColumn = checked((long)Math.Round(
-                item.StartTick * devicePixelsPerTick,
-                MidpointRounding.AwayFromZero));
-            if (deviceColumn + PointRadius * dpiScaleX < worldLeft
-                || deviceColumn - PointRadius * dpiScaleX >= worldRight)
+            double column = Math.Round(item.StartTick * devicePixelsPerTick,
+                MidpointRounding.AwayFromZero) - worldLeft;
+            if (column + PointRadius * dpiScaleX < 0
+                || column - PointRadius * dpiScaleX >= TileSize + gutterX * 2)
             {
                 return;
             }
+            long deviceColumn = checked((long)Math.Round(column, MidpointRounding.AwayFromZero));
             (long, int) key = (deviceColumn, item.ZIndex);
             ConductorTilePoint point = new(deviceColumn, item.ZIndex, item.AccentColor);
             if (!aggregated.TryGetValue(key, out ConductorTilePoint existing)
@@ -2178,8 +2170,8 @@ public static class TimelineVelocityTileRasterizer
         cancellationToken.ThrowIfCancellationRequested();
         double pixelsPerTick = TimelineRasterLod.GetScale(horizontalLod);
         double worldLeft = tileX * (double)TileSize - Gutter;
-        long startTick = Math.Max(0, FloorToLong(worldLeft / pixelsPerTick));
-        long endTick = Math.Max(startTick + 1, CeilingToLong((worldLeft + RasterWidth) / pixelsPerTick));
+        long startTick = TimelineTickMath.RasterQueryStart(worldLeft / pixelsPerTick);
+        long endTick = TimelineTickMath.RasterQueryEnd((worldLeft + RasterWidth) / pixelsPerTick, startTick);
         byte[] pixels = new byte[RasterWidth * RasterHeight * 4];
         if ((selection is null || selection.Count == 0)
             && pixelsPerTick <= AggregatePixelsPerTickThreshold)
@@ -2350,8 +2342,8 @@ public static class TimelineVelocityTileRasterizer
         ArgumentNullException.ThrowIfNull(snapshot);
         double pixelsPerTick = TimelineRasterLod.GetScale(horizontalLod);
         double worldLeft = tileX * (double)TileSize - Gutter;
-        long startTick = Math.Max(0, FloorToLong(worldLeft / pixelsPerTick));
-        long endTick = Math.Max(startTick + 1, CeilingToLong((worldLeft + RasterWidth) / pixelsPerTick));
+        long startTick = TimelineTickMath.RasterQueryStart(worldLeft / pixelsPerTick);
+        long endTick = TimelineTickMath.RasterQueryEnd((worldLeft + RasterWidth) / pixelsPerTick, startTick);
         List<TimelineRenderItem> materialized = [];
         snapshot.QueryMaterializedInto(startTick, endTick, 0, 1, materialized);
         ulong content = TimelineContentFingerprint.Combine(
@@ -2407,10 +2399,9 @@ internal static class TimelineResizePreviewRasterizer
 
         double worldLeft = tileX * (double)TileSize - Gutter;
         double worldTop = tileY * (double)TileSize - Gutter;
-        long destinationStart = Math.Max(0, FloorToLong(
-            viewportStartTick + worldLeft / devicePixelsPerTick));
-        long destinationEnd = Math.Max(destinationStart + 1, CeilingToLong(
-            viewportStartTick + (worldLeft + RasterSize) / devicePixelsPerTick));
+        long destinationStart = TimelineTickMath.RasterQueryStart(viewportStartTick + worldLeft / devicePixelsPerTick);
+        long destinationEnd = TimelineTickMath.RasterQueryEnd(
+            viewportStartTick + (worldLeft + RasterSize) / devicePixelsPerTick, destinationStart);
         long queryStart = destinationStart;
         long queryEnd = destinationEnd;
         if (edge == TimelineResizeEdge.End && tickDelta > 0)
@@ -2538,9 +2529,7 @@ internal static class TimelineResizePreviewRasterizer
     private static byte Premultiply(byte value, byte alpha) =>
         (byte)((value * alpha + 127) / 255);
 
-    private static int RoundBoundary(double value) => value <= int.MinValue
-        ? int.MinValue
-        : value >= int.MaxValue ? int.MaxValue : (int)Math.Floor(value + 0.5);
+    private static int RoundBoundary(double value) => TimelineTickMath.RoundRasterBoundary(value);
 
     private static long FloorToLong(double value) => value <= long.MinValue
         ? long.MinValue

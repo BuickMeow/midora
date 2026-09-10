@@ -122,6 +122,19 @@ public readonly record struct ProjectBarInfo(
     int TicksPerBeat,
     bool IsTruncatedByTimeSignatureChange);
 
+/// <summary>
+/// Exact mathematical bar bounds. The end of the final representable bar may
+/// exceed Int64; it is not a new Project tick or an implicit musical cutoff.
+/// </summary>
+public readonly record struct ProjectBarBounds(
+    ulong Bar,
+    long StartTick,
+    Int128 EndTick,
+    int Numerator,
+    int Denominator,
+    int TicksPerBeat,
+    bool IsTruncatedByTimeSignatureChange);
+
 public readonly record struct ProjectTimeSignaturePoint(
     MidoraId Id,
     long Tick,
@@ -392,12 +405,22 @@ public sealed class ProjectTimeSignatureMap
 
     public ProjectBarInfo GetBarContaining(long tick)
     {
-        ProjectMusicalPosition position = GetPosition(tick);
-        int index = FindEntryForBar(position.Bar);
+        ProjectBarBounds bounds = GetBarBounds(tick);
+        return new(bounds.Bar, bounds.StartTick, checked((long)bounds.EndTick),
+            bounds.Numerator, bounds.Denominator, bounds.TicksPerBeat,
+            bounds.IsTruncatedByTimeSignatureChange);
+    }
+
+    public ProjectBarBounds GetBarBounds(long tick)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(tick);
+        int index = FindEntryForTick(tick);
         Entry entry = _entries[index];
-        long startTick = GetTick(new(position.Bar, 1, 0));
-        long naturalEnd = checked(startTick + entry.TicksPerBar);
-        long endTick = naturalEnd;
+        long localTick = tick - entry.StartTick;
+        long localBar = localTick / entry.TicksPerBar;
+        long startTick = entry.StartTick + localBar * entry.TicksPerBar;
+        Int128 naturalEnd = (Int128)startTick + entry.TicksPerBar;
+        Int128 endTick = naturalEnd;
         bool truncated = false;
         if (index + 1 < _entries.Length && _entries[index + 1].StartTick < naturalEnd)
         {
@@ -405,7 +428,7 @@ public sealed class ProjectTimeSignatureMap
             truncated = true;
         }
         return new(
-            position.Bar,
+            checked(entry.StartBar + (ulong)localBar),
             startTick,
             endTick,
             entry.Numerator,
@@ -423,6 +446,9 @@ public sealed class ProjectTimeSignatureMap
     }
 
     public long GetBeatGridTickAtOrAfter(long tick)
+        => checked((long)GetBeatGridTickAtOrAfterWide(tick));
+
+    private Int128 GetBeatGridTickAtOrAfterWide(long tick)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(tick);
         int index = FindEntryForTick(tick);
@@ -433,7 +459,7 @@ public sealed class ProjectTimeSignatureMap
         {
             return tick;
         }
-        long candidate = checked(tick + entry.TicksPerBeat - remainder);
+        Int128 candidate = (Int128)tick + entry.TicksPerBeat - remainder;
         return index + 1 < _entries.Length && candidate > _entries[index + 1].StartTick
             ? _entries[index + 1].StartTick
             : candidate;
@@ -442,8 +468,8 @@ public sealed class ProjectTimeSignatureMap
     public long SnapToNearestBeatGrid(long tick)
     {
         long before = GetBeatGridTickAtOrBefore(tick);
-        long after = GetBeatGridTickAtOrAfter(tick);
-        return tick - before < after - tick ? before : after;
+        Int128 after = GetBeatGridTickAtOrAfterWide(tick);
+        return tick - before < after - tick ? before : checked((long)after);
     }
 
     private int FindEntryForTick(long tick)

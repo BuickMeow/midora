@@ -310,6 +310,12 @@ public sealed class CanonicalOpaqueMidiEventPage
     public IReadOnlyList<CanonicalOpaqueMidiEvent> Items => _events;
 }
 
+/// <summary>A channel event in a canonical SMF track projection.</summary>
+/// <param name="ExportTrackId">Required stable identity of the owning SMF track.</param>
+/// <param name="SourceObjectId">
+/// Direct source object identity, or default for generated events without a
+/// direct source (for example Root lifecycle/default state). Not a new Project ID.
+/// </param>
 public readonly record struct CanonicalSmfTrackChannelEvent(
     MidoraId ExportTrackId,
     long Tick,

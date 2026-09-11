@@ -742,7 +742,8 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
     public async Task<MidiExportTaskResult> ExecuteMidiExportAsync(
         PreparedDesktopMidiExport prepared,
         bool overwriteAuthorized,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<MidiExportProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(prepared);
         if (_context is null)
@@ -750,13 +751,13 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
             throw new InvalidOperationException("No Project is open.");
         }
         using IDisposable editLock = _context.Compilation.AcquireProjectEditLock();
-        return await new MidiExportTaskRunner().ExecuteAsync(new()
+        return await Task.Run(() => new MidiExportTaskRunner().ExecuteAsync(new()
         {
             Compilation = prepared.Compilation,
             OutputPlan = prepared.OutputPlan,
             Readme = prepared.Readme,
             OverwriteAuthorized = overwriteAuthorized
-        }, cancellationToken);
+        }, cancellationToken, progress));
     }
 
     public void StartPlayback(long? cursorTick = null)

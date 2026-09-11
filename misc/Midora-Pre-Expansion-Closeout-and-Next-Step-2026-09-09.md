@@ -111,6 +111,15 @@
 - 以已复现的网格/坐标、非空瓦片、超长音符失败为回归基线。六套最终完整回归合计 2830 项通过、0 项失败；普通网格 10,000 组与旧版一致，普通钢琴瓦片 420 块 BGRA 字节与旧版一致。未重新测真实声卡或 9KX2 整体性能，未使用 computer-use。
 - 自动验证完成，用户已确认本轮验收通过，并单独授权提交、推送；未授权本地发布。具体改动、测试证据、微基准波动、浮点栅格剩余边界及三条人工清单见[实施与验证记录](Midora-Extreme-Tick-Overflow-Protection-Implementation-2026-09-10.md)。
 
+### 4.3 SMF 编码边界实施（2026-09-10）
+
+用户在极端 Tick 防护验收后单独授权实施 MIDI 导出编码边界。本轮不更改 SRS、Compiler、音频、版本或 Project Format。
+
+- 超长 delta 包括 EOT 尾段统一以空 Text Meta 分段；每个 MTrk 写记录前预算，超过 `0xFFFFFFFF` 数据字节原子失败，不拆分。
+- resident/paged 均为正式流式编码，填充块 56 KiB，payload 写入块最多 64 KiB；UI 不承担同步编码。结构化错误、取消、清理和已有文件保护贯通全部模式。
+- 填充汇总独立于编译诊断，README 关闭仍在结果窗口可见。自动回归与计数流 4 GiB 边界已通过；不能由此声称已验证真实 4 GiB 磁盘写入。
+- 待本轮人工验收；未提交、推送或本地发布。人工清单、测试和时间性能范围见[SMF 实施记录](Midora-SMF-Encoding-Boundaries-Implementation-2026-09-10.md)。
+
 ## 5. 本轮文档验证（2026-09-09 历史记录）
 
 - 同步 17 份既有 Markdown，新增本台账；没有修改 `src`、`eng`、脚本、schema/descriptor、版本源或发布产物。SRS 仅将 INV-091 的过期 presentation writer 版本同步到既有 INV-116，不新增语义。

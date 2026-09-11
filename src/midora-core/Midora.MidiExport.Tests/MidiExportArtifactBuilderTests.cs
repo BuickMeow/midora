@@ -130,6 +130,11 @@ public sealed class MidiExportArtifactBuilderTests
                 LogicalTracks = compilation.Layouts
             }, readme);
         MidiExportPreparedArtifact artifact = Assert.Single(artifacts.Artifacts, value => value.SourceKey == "readme");
+        foreach (MidiExportPreparedArtifact midi in artifacts.Artifacts.Where(value => value.SourceKey != "readme"))
+        {
+            using MemoryStream encoded = new();
+            midi.WriteTo(encoded);
+        }
         FieldInfo content = typeof(MidiExportPreparedArtifact).GetField("_content",
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         Assert.Null(content.GetValue(artifact));

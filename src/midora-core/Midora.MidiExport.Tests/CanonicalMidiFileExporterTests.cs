@@ -285,7 +285,7 @@ public sealed class CanonicalMidiFileExporterTests
     }
 
     [Fact]
-    public void AcceptsMaximumSmfDeltaAndRejectsTheNextTickWithoutSpacerEvents()
+    public void AcceptsMaximumSmfDeltaAndPadsTheNextTickWithoutChangingCanonical()
     {
         CanonicalCompiledResult maximum = CreateSyntheticCompiled(
             [],
@@ -300,7 +300,7 @@ public sealed class CanonicalMidiFileExporterTests
             ConductorTrackName = "Conductor",
             LogicalTracks = []
         });
-        MidiExportEncodingResult rejected = CanonicalMidiFileExporter.EncodeWholeProject(new()
+        MidiExportEncodingResult padded = CanonicalMidiFileExporter.EncodeWholeProject(new()
         {
             CompiledResult = overflow,
             ConductorTrackName = "Conductor",
@@ -312,11 +312,12 @@ public sealed class CanonicalMidiFileExporterTests
         Assert.Equal(StandardMidiFile.MaximumVariableLengthValue, acceptedTrack.EndTick);
         Assert.Single(acceptedTrack.MetaEvents, value => value.Type == StandardMidiFile.EndOfTrackMetaType);
 
-        Assert.False(rejected.Succeeded);
-        Assert.Empty(rejected.FileBytes);
-        MidiExportDiagnostic diagnostic = Assert.Single(rejected.Diagnostics);
-        Assert.Equal("MIDORA-MIDI-EXPORT-ENCODING", diagnostic.Code);
-        Assert.Contains("delta time", diagnostic.Message, StringComparison.Ordinal);
+        Assert.True(padded.Succeeded);
+        ParsedTrack paddedTrack = Assert.Single(ParseTracks(padded.FileBytes));
+        Assert.Equal((long)StandardMidiFile.MaximumVariableLengthValue + 1, paddedTrack.EndTick);
+        Assert.Single(paddedTrack.MetaEvents, value => value.Type == StandardMidiFile.TextMetaType);
+        Assert.Equal(new StandardMidiFileWriteSummary(1, 1), padded.WriteSummary);
+        Assert.Empty(overflow.Events.ToArray());
     }
 
     [Fact]

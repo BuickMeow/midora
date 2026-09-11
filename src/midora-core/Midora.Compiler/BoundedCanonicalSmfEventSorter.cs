@@ -260,7 +260,16 @@ internal sealed class BoundedCanonicalSmfEventSorter : IDisposable
         MidiMessage.FromPackedValue(BinaryPrimitives.ReadUInt32LittleEndian(source[32..])),
         (CanonicalEventRole)source[38],
         BinaryPrimitives.ReadInt64LittleEndian(source[16..]),
-        MidoraId.FromSequence(BinaryPrimitives.ReadInt64LittleEndian(source[24..])));
+        ReadOptionalSourceId(source[24..]));
+
+    private static MidoraId ReadOptionalSourceId(ReadOnlySpan<byte> source)
+    {
+        // Root lifecycle/default events have a required ExportTrackId, but no
+        // direct source object. Preserve that absence across spill/merge just
+        // as the resident path does; negative/corrupt IDs must still fail.
+        long value = BinaryPrimitives.ReadInt64LittleEndian(source);
+        return value == 0 ? default : MidoraId.FromSequence(value);
+    }
 
     private readonly record struct RunDescriptor(long Offset, int RecordCount);
 

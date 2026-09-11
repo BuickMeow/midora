@@ -123,7 +123,7 @@ Project Source Data
 30. 当前 `.midora` writer 固定为 Project Format 3，并要求唯一 `settings/project-presentation.json`。Format 1/2 继续只读并 detached migration；迁移会话普通 Save 必须在用户确认后先创建或复用来源逐字节一致的可见永久副本，再原子替换原路径。确认框显示并冻结副本路径；来源 identity 改变、路径被不同内容抢占或任一步失败均不得改变来源。Save Copy 写 Format 3，但不得清除 migration-dirty 或覆盖受保护来源。
 31. Midora 自建正式数据只写 `<ProgramRoot>\Data\{Preferences,Recent,Catalogs,Presets,Diagnostics}`，可重建工作数据只写 `<ProgramRoot>\.tmp\{AudioCache,SessionContent,CompilerRuns,AudioWorkerExchange}`；ProgramRoot 固定为 executable base directory。主窗口创建前必须验证本机 fixed drive、普通非 reparse-point 目录及 create/write/flush/atomic-replace/exclusive-lock/delete 能力，失败时 fail closed。当前版本不得 fallback、探测、读取、迁移或删除旧 `%LOCALAPPDATA%\Midora`。
 
-32. 2026-09-10 已定案、产品代码待实施的 SMF 编码边界：超长 delta 仅由导出器插入空 Text Meta `FF 01 00` 分段，Compiler 不增加间隔扫描，Project/canonical/音频不包含占位。每个 MTrk 数据区最多 `0xFFFFFFFF` 字节（4 GiB − 1 byte，不含 8 字节 chunk 头），不因大小拆分，超限只令本次 MIDI 导出原子失败，编译不感知；不能误作整个 `.mid` 文件上限。保持其他 MIDI 硬限制，填充前做安全字节预算，有界流式写入且可取消，成功只给导出级 Info/README 汇总。完整规则见 SRS §14.12.2/8/9、§14.15.7、§14.19.8 与 INV-118；新规则实施后再更新此状态，不把旧拒绝测试当作新规则已通过。
+32. 2026-09-10 已实施的 SMF 编码边界：超长 delta 仅由导出器插入空 Text Meta `FF 01 00` 分段，Compiler 不增加间隔扫描，Project/canonical/音频不包含占位。每个 MTrk 数据区最多 `0xFFFFFFFF` 字节（4 GiB − 1 byte，不含 8 字节 chunk 头），不因大小拆分，超限只令本次 MIDI 导出原子失败，编译不感知；不能误作整个 `.mid` 文件上限。保持其他 MIDI 硬限制，填充前做安全字节预算，有界流式写入且可取消，成功只给导出级 Info/README 汇总。完整规则见 SRS §14.12.2/8/9、§14.15.7、§14.19.8 与 INV-118；实施与验证见 `misc/Midora-SMF-Encoding-Boundaries-Implementation-2026-09-10.md`。不得恢复旧超长 delta 一律拒绝行为，不得把计数流验证等同于真实 4 GiB 文件 I/O 验证。
 
 ## 8. 已批准的 UI 样式基线
 

@@ -1,8 +1,8 @@
 # SMF 导出：超长 delta 填充与单个 MTrk 大小限制
 
-日期：2026-09-10。状态：**产品所有者已定案，规范已同步；产品代码和新验证门尚未实施**。
+日期：2026-09-10。状态：**产品所有者已定案，规范已同步；后续产品实施与自动验证已完成，待人工验收**。实施、实测及剩余边界见[实施记录](Midora-SMF-Encoding-Boundaries-Implementation-2026-09-10.md)。
 
-本轮只修改文档，不提交/推送、不本地发布、不使用 computer-use。软件版本 `1.0.0-dev`、Project Format 3、presentation schema 2 和已有旧格式读取能力不变。
+本文最初为只修改文档的定案记录；§7～9 保留当时的源码与验证状态，不代表后续实现仍缺失。软件版本 `1.0.0-dev`、Project Format 3、presentation schema 2 和已有旧格式读取能力不变。
 
 ## 1. 决策与需求追踪
 
@@ -102,7 +102,7 @@ Compiler 不计算或预测 MTrk 字节数，不把合法 canonical 标成失败
 - 超限失败：明确显示具体上限及实际值/确定超限下界，尽可能附文件、Track 名称、Tick 与源位置；不要求用户理解内部 ID/类型名，也不把编码超限显示成笼统的“写 staging 目录失败”。
 - 导出失败无成功 README，原项目保持可保存、可编辑和原有编译状态。
 
-## 7. 当前源码事实与待实施改动
+## 7. 定案时的源码事实与待实施改动（历史）
 
 以下为源码核对，不代表本次已运行新测试：
 
@@ -111,7 +111,7 @@ Compiler 不计算或预测 MTrk 字节数，不把合法 canonical 标成失败
 - [CanonicalMidiFileExporter](../src/midora-core/Midora.MidiExport/CanonicalMidiFileExporter.cs) 存在立即编码与延迟分页写入路径；[输出事务](../src/midora-core/Midora.MidiExport/MidiExportOutputTransaction.cs) 中延迟编码异常可能归入通用 staging 写入失败。应打通结构化编码错误和任务 UI，而非只修一个 catch。
 - [Exporter 测试](../src/midora-core/Midora.MidiExport.Tests/CanonicalMidiFileExporterTests.cs) 的 `AcceptsMaximumSmfDeltaAndRejectsTheNextTickWithoutSpacerEvents` 与 [Task 测试](../src/midora-core/Midora.MidiExport.Tests/MidiExportTaskRunnerTests.cs) 的 `SmfDeltaOverflowFailsBeforePublishingAnyOutput` 仍锁定旧失败行为；必须在实际实施时替换为新规则，并另保留 payload/MTrk 等真正失败的原子性测试。本轮不修改这些测试，不把旧 Passed 当成新验证。
 
-## 8. 实施顺序与验证门（待执行）
+## 8. 定案时的实施顺序与验证门（已由实施记录承接）
 
 不改变已批准顺序：**Logical 编译结果内存优化 → 极端 Tick 防护及本次 SMF 编码边界 → 新一轮功能需求**。见 [收尾与下一步台账](Midora-Pre-Expansion-Closeout-and-Next-Step-2026-09-09.md)。本文的定案不代表已经启动任一产品实现。
 
@@ -135,7 +135,7 @@ Compiler 不计算或预测 MTrk 字节数，不把合法 canonical 标成失败
 
 本轮只做文档一致性、链接和 diff 检查；不构建、不运行产品测试。后续实施必须补实际结果，不能用本节计划代替测试证据。
 
-## 9. 本轮文档验证记录
+## 9. 定案时的文档验证记录（历史）
 
 - 更新 14 份既有 Markdown，新增本文，共 15 份文档；未修改产品源码、测试、构建配置、版本、schema、发布产物或用户草稿。
 - `git diff --check` 通过；新增/修改文字的 18 个本地文件链接全部可解析，0 个缺失目标；INV-001～118 编号无重复，INV-118 位于原不变量表内，新增 SRS 小节无重复。

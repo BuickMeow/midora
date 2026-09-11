@@ -9116,15 +9116,32 @@ public partial class MainWindow : Window
         if (overwrite ? confirmation != MessageBoxResult.Yes : confirmation != MessageBoxResult.OK) return;
 
         MidiExportTaskResult? result = null;
+        using DispatcherCoalescingProgress<MidiExportProgress> progress = new(
+            Dispatcher, TimeSpan.FromMilliseconds(100), value =>
+            {
+                if (_session.ActiveForegroundTask is not DesktopTaskViewModel active) return;
+                active.SetCancellationAvailable(value.Phase != "Finalizing");
+                string detail = $"{value.Phase}: {value.FileName}";
+                if (value.Encoding is { } encoded)
+                {
+                    detail += $" · MTrk {encoded.TrackIndex + 1}/{encoded.TrackCount} · " +
+                        $"{encoded.EventCount:N0} events · {encoded.DataByteCount:N0} bytes";
+                    if (encoded.PaddingEventsRequired > 0)
+                        detail += $" · Timing padding {encoded.PaddingEventsWritten:N0}/{encoded.PaddingEventsRequired:N0}";
+                }
+                // No invented event total or extra scan just to obtain a percentage.
+                _session.ReportTask(active, detail, null);
+            });
         bool completed = await RunOperationAsync(
             "MIDI Export",
-            async cancellationToken => result = await _session.ExecuteMidiExportAsync(prepared, overwrite, cancellationToken),
+            async cancellationToken => result = await _session.ExecuteMidiExportAsync(prepared, overwrite, cancellationToken, progress),
             canCancel: true);
         if (!completed || result is null) return;
         string resultMessage = result.Status switch
         {
             MidiExportTaskStatus.Succeeded =>
-                $"MIDI export completed.\n\n{result.Output?.Items.Count ?? 0} artifact(s) were published.",
+                $"MIDI export completed.\n\n{result.Output?.Items.Count ?? 0} artifact(s) were published." +
+                (result.PaddingSummary.HasPadding ? $"\n\nInfo: {result.PaddingSummary.Message}" : ""),
             MidiExportTaskStatus.Cancelled => "MIDI export was cancelled. No uncommitted target was published.",
             _ => result.OutputFailure?.Message
                 ?? string.Join("\n", result.ArtifactDiagnostics.Select(item =>

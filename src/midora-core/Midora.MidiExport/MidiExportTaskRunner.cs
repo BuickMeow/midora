@@ -26,13 +26,15 @@ public sealed class MidiExportTaskResult
         IEnumerable<CompilerDiagnostic> compilerDiagnostics,
         MidiExportArtifactDiagnostic[] artifactDiagnostics,
         MidiExportOutputResult? output,
-        MidiExportOutputException? outputFailure)
+        MidiExportOutputException? outputFailure,
+        MidiExportPaddingSummary paddingSummary = default)
     {
         Status = status;
         CompilerDiagnostics = CompilerDiagnosticSequence.Wrap(compilerDiagnostics);
         ArtifactDiagnostics = Array.AsReadOnly(artifactDiagnostics);
         Output = output;
         OutputFailure = outputFailure;
+        PaddingSummary = paddingSummary;
     }
 
     public MidiExportTaskStatus Status { get; }
@@ -40,6 +42,7 @@ public sealed class MidiExportTaskResult
     public ReadOnlyCollection<MidiExportArtifactDiagnostic> ArtifactDiagnostics { get; }
     public MidiExportOutputResult? Output { get; }
     public MidiExportOutputException? OutputFailure { get; }
+    public MidiExportPaddingSummary PaddingSummary { get; }
 }
 
 public sealed class MidiExportTaskRunner
@@ -58,7 +61,8 @@ public sealed class MidiExportTaskRunner
 
     public async Task<MidiExportTaskResult> ExecuteAsync(
         MidiExportTaskRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<MidiExportProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Compilation);
@@ -81,6 +85,7 @@ public sealed class MidiExportTaskRunner
 
         try
         {
+            progress?.Report(new("", "Preparing encoding"));
             MidiExportArtifactBuildResult artifacts = BuildArtifacts(request, cancellationToken);
             if (!artifacts.Succeeded)
             {
@@ -96,13 +101,13 @@ public sealed class MidiExportTaskRunner
                 request.OutputPlan,
                 artifacts.Artifacts,
                 request.OverwriteAuthorized,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken, progress).ConfigureAwait(false);
             return new(
                 MidiExportTaskStatus.Succeeded,
                 request.Compilation.Diagnostics,
                 [],
                 output,
-                null);
+                null, artifacts.PaddingSummary);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -115,10 +120,12 @@ public sealed class MidiExportTaskRunner
         }
         catch (MidiExportOutputException exception)
         {
+            MidiExportArtifactDiagnostic? diagnostic = exception.EncodingDiagnostic
+                ?? (exception.InnerException as MidiExportOutputException)?.EncodingDiagnostic;
             return new(
                 MidiExportTaskStatus.Failed,
                 request.Compilation.Diagnostics,
-                [],
+                diagnostic is null ? [] : [diagnostic],
                 null,
                 exception);
         }

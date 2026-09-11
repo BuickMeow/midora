@@ -5,6 +5,45 @@ namespace Midora.Compiler.Tests;
 
 public sealed class BoundedCanonicalSmfEventSorterTests
 {
+    [Theory]
+    [InlineData(128, 64)] // Entirely resident.
+    [InlineData(4, 64)]   // Several disk runs, one merge.
+    [InlineData(3, 2)]    // Several bounded merge passes.
+    public void GeneratedEventsWithoutDirectSourceKeepTheirIdentityAcrossEveryStoragePath(
+        int runSize, int fanIn)
+    {
+        MidoraId trackId = MidoraId.FromSequence(101);
+        CanonicalSmfTrackChannelEvent[] source = Enumerable.Range(0, 67).Select(index => new CanonicalSmfTrackChannelEvent(
+            trackId, index / 4, 3, 9,
+            index % 4 == 0 ? MidiMessage.ControlChange(9, 120, 0) : MidiMessage.NoteOn(9, 60, 100),
+            index % 4 == 0 ? CanonicalEventRole.RootBoundaryCleanup : CanonicalEventRole.DirectMidi,
+            index, index % 4 == 0 ? default : MidoraId.FromSequence(long.MaxValue - index))).ToArray();
+        using BoundedCanonicalSmfEventSorter oracle = new(128, 64);
+        using BoundedCanonicalSmfEventSorter subject = new(runSize, fanIn);
+        foreach (CanonicalSmfTrackChannelEvent value in source.Reverse())
+        {
+            oracle.Add(value);
+            subject.Add(value);
+        }
+        CanonicalSmfTrackChannelEvent[] expected = oracle.ReadPages(CancellationToken.None)
+            .SelectMany(page => page.Items).ToArray();
+        CanonicalSmfTrackChannelEvent[] actual = subject.ReadPages(CancellationToken.None)
+            .SelectMany(page => page.Items).ToArray();
+        Assert.Equal(expected, actual);
+        Assert.Equal(17, actual.Count(value => value.SourceObjectId == default));
+        Assert.All(actual, value => Assert.Equal(trackId, value.ExportTrackId));
+    }
+
+    [Fact]
+    public void SpillStillRejectsAMissingRequiredExportTrackIdentity()
+    {
+        using BoundedCanonicalSmfEventSorter sorter = new(1, 2);
+        sorter.Add(new(default, 0, 0, 0, MidiMessage.ControlChange(0, 120, 0),
+            CanonicalEventRole.RootBoundaryCleanup, 0, MidoraId.FromSequence(1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => sorter.ReadPages(CancellationToken.None)
+            .SelectMany(page => page.Items).ToArray());
+    }
+
     [Fact]
     public void SpillMergeOrdersDirectNoteOffEndpointsBeforeOtherMessagesAtEqualOrder()
     {

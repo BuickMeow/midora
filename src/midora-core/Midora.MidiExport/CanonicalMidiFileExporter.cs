@@ -7,7 +7,6 @@ namespace Midora.MidiExport;
 
 public static class CanonicalMidiFileExporter
 {
-    private const string GenericEncodingErrorCode = "MIDORA-MIDI-EXPORT-ENCODING";
     private const byte ReverbSendController = 91;
     private const byte ChorusSendController = 93;
     private static ReadOnlySpan<byte> RolandGsChannel10NormalPart =>
@@ -92,177 +91,11 @@ public static class CanonicalMidiFileExporter
         bool includePureMidiTracks,
         CancellationToken cancellationToken)
     {
-        if (compiledResult.HasPagedEvents)
-        {
-            return EncodePagedCore(
-                compiledResult,
-                conductorTrackName,
-                logicalTracks,
-                includedTrackId,
-                includedPort,
-                mapOutputPort,
-                requireIncludedEvent,
-                includePureMidiTracks, cancellationToken);
-        }
-
         List<MidiExportDiagnostic> diagnostics = [];
         try
         {
             ValidateCompiledResult(compiledResult, diagnostics);
-            Dictionary<MidoraId, MidiExportLogicalTrackLayout> layouts =
-                BuildLayoutIndex(logicalTracks, diagnostics);
-            Dictionary<MidiExportChannelUnit, string> unitTrackNames =
-                BuildUnitTrackNameIndex(logicalTracks, diagnostics);
-            if (diagnostics.Count != 0)
-            {
-                return Failure(diagnostics);
-            }
-
-            long duration = checked(compiledResult.EndTick - compiledResult.StartTick);
-            List<StandardMidiFileTrack> tracks =
-                [BuildConductorTrack(compiledResult, conductorTrackName, duration)];
-
-            CanonicalSmfTrackDescriptor[] pureDescriptors = compiledResult.SmfTracks.ToArray()
-                .Where(value => value.Kind == CanonicalSmfTrackKind.PureMidiTrack
-                    && includePureMidiTracks
-                    && (!includedPort.HasValue || value.ZeroBasedPort == includedPort.Value))
-                .OrderBy(value => value.SourceTrackOrder)
-                .ToArray();
-            Dictionary<MidoraId, CanonicalSmfTrackDescriptor> pureById = pureDescriptors
-                .ToDictionary(value => value.ExportTrackId);
-
-            Dictionary<MidiExportChannelUnit, List<CanonicalMidiEvent>> grouped = [];
-            foreach (CanonicalMidiEvent value in compiledResult.EnumerateResidentAndLogicalEvents(cancellationToken))
-            {
-                bool isPure = value.Source.PureMidiTrackId != default
-                    || value.Source.MidiChannelRootId != default
-                    || value.ExportTrackId != default && pureById.ContainsKey(value.ExportTrackId);
-                ValidateCanonicalEvent(compiledResult, value, diagnostics, isPure);
-                if (isPure)
-                {
-                    continue;
-                }
-                MidoraId ownerTrackId = ResolveTrackId(compiledResult, value, diagnostics);
-                if (ownerTrackId == default)
-                {
-                    continue;
-                }
-                if (includedTrackId.HasValue && ownerTrackId != includedTrackId.Value)
-                {
-                    continue;
-                }
-                if (includedPort.HasValue && value.ZeroBasedPort != includedPort.Value)
-                {
-                    continue;
-                }
-                if (!layouts.TryGetValue(ownerTrackId, out MidiExportLogicalTrackLayout? ownerLayout))
-                {
-                    diagnostics.Add(new(
-                        "MIDORA-MIDI-EXPORT-TRACK-LAYOUT",
-                        MidiExportDiagnosticCategory.CanonicalConsistency,
-                        $"Canonical event references Track {ownerTrackId}, but the export layout does not contain it.",
-                        value.Source));
-                    continue;
-                }
-
-                MidiExportChannelUnit unit = new(value.ZeroBasedPort, value.ZeroBasedChannel);
-                if (!ownerLayout.EventTrackNamesByUnit.ContainsKey(unit))
-                {
-                    diagnostics.Add(new(
-                        "MIDORA-MIDI-EXPORT-UNIT-LAYOUT",
-                        MidiExportDiagnosticCategory.Encoding,
-                        $"The frozen layout for Track {ownerTrackId} does not contain Port {unit.ZeroBasedPort + 1}, Channel {unit.ZeroBasedChannel + 1}.",
-                        value.Source));
-                    continue;
-                }
-                if (!unitTrackNames.ContainsKey(unit))
-                {
-                    diagnostics.Add(new(
-                        "MIDORA-MIDI-EXPORT-UNIT-LAYOUT",
-                        MidiExportDiagnosticCategory.Encoding,
-                        $"The export layout does not provide a Track Name for Port {unit.ZeroBasedPort + 1}, Channel {unit.ZeroBasedChannel + 1}.",
-                        value.Source));
-                    continue;
-                }
-                grouped.GetOrAdd(unit).Add(value);
-            }
-            if (diagnostics.Count != 0)
-            {
-                return Failure(diagnostics);
-            }
-            if (requireIncludedEvent && grouped.Count == 0)
-            {
-                if (pureDescriptors.Length == 0)
-                {
-                    diagnostics.Add(new(
-                        "MIDORA-MIDI-EXPORT-UNUSED-PORT",
-                        MidiExportDiagnosticCategory.Encoding,
-                        "Per-Port export does not create a file for a Port with no canonical events."));
-                    return Failure(diagnostics);
-                }
-            }
-
-            foreach (CanonicalSmfTrackDescriptor descriptor in pureDescriptors)
-            {
-                tracks.Add(BuildPureMidiTrack(
-                    compiledResult,
-                    descriptor,
-                    mapOutputPort(descriptor.ZeroBasedPort)));
-            }
-
-            foreach ((MidiExportChannelUnit unit, List<CanonicalMidiEvent> values) in grouped
-                .OrderBy(group => group.Key.ZeroBasedPort)
-                .ThenBy(group => group.Key.ZeroBasedChannel))
-            {
-                string eventTrackName = unitTrackNames[unit];
-                ValidateUnitTrack(unit, values, diagnostics);
-                ValidateBankProgramOrder(values, diagnostics);
-                tracks.Add(BuildEventTrack(
-                    compiledResult.StartTick,
-                    duration,
-                    unit,
-                    mapOutputPort(unit.ZeroBasedPort),
-                    eventTrackName,
-                    values));
-            }
-            if (diagnostics.Count != 0)
-            {
-                return Failure(diagnostics);
-            }
-
-            byte[] bytes = StandardMidiFile.EncodeType1(
-                compiledResult.TicksPerQuarterNote,
-                tracks);
-            return new(bytes, []);
-        }
-        catch (Exception exception) when (exception is MidoraMidiException
-            or ArgumentException
-            or OverflowException
-            or System.Text.EncoderFallbackException)
-        {
-            diagnostics.Add(new(
-                GenericEncodingErrorCode,
-                MidiExportDiagnosticCategory.Encoding,
-                exception.Message));
-            return Failure(diagnostics);
-        }
-    }
-
-    private static MidiExportEncodingResult EncodePagedCore(
-        CanonicalCompiledResult compiledResult,
-        string conductorTrackName,
-        IReadOnlyList<MidiExportLogicalTrackLayout> logicalTracks,
-        MidoraId? includedTrackId,
-        byte? includedPort,
-        Func<byte, byte> mapOutputPort,
-        bool requireIncludedEvent,
-        bool includePureMidiTracks,
-        CancellationToken cancellationToken)
-    {
-        List<MidiExportDiagnostic> diagnostics = [];
-        try
-        {
-            ValidateCompiledResult(compiledResult, diagnostics);
+            StandardMidiFile.ValidateEncodingHeader(compiledResult.TicksPerQuarterNote, 1);
             Dictionary<MidoraId, MidiExportLogicalTrackLayout> layouts =
                 BuildLayoutIndex(logicalTracks, diagnostics);
             Dictionary<MidiExportChannelUnit, string> unitTrackNames =
@@ -276,8 +109,9 @@ public static class CanonicalMidiFileExporter
                 duration);
             List<StandardMidiFileTrackSource> tracks =
             [
-                new(conductor.EndTick, conductor.Events)
+                new(conductor.EndTick, conductor.Events, conductorTrackName)
             ];
+            List<SourceReference> sources = [default];
 
             CanonicalSmfTrackDescriptor[] pureDescriptors = compiledResult.SmfTracks.ToArray()
                 .Where(value => value.Kind == CanonicalSmfTrackKind.PureMidiTrack
@@ -290,6 +124,7 @@ public static class CanonicalMidiFileExporter
                 .ToHashSet();
 
             HashSet<MidiExportChannelUnit> usedUnits = [];
+            Dictionary<MidiExportChannelUnit, SourceReference> unitSources = [];
             Dictionary<MidiExportChannelUnit, (long Tick, int Phase)> bankState = [];
             foreach (CanonicalMidiEvent value in compiledResult.EnumerateResidentAndLogicalEvents(cancellationToken))
             {
@@ -326,6 +161,7 @@ public static class CanonicalMidiFileExporter
                     continue;
                 }
                 usedUnits.Add(unit);
+                unitSources.TryAdd(unit, new SourceReference(TrackId: ownerTrackId));
                 ValidateBankProgramEvent(value, unit, bankState, diagnostics);
             }
             if (diagnostics.Count != 0) return Failure(diagnostics);
@@ -338,12 +174,17 @@ public static class CanonicalMidiFileExporter
                 return Failure(diagnostics);
             }
 
+            StandardMidiFile.ValidateEncodingHeader(compiledResult.TicksPerQuarterNote,
+                checked(1 + pureDescriptors.Length + usedUnits.Count));
             foreach (CanonicalSmfTrackDescriptor descriptor in pureDescriptors)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 tracks.Add(BuildPureMidiTrackSource(
                     compiledResult,
                     descriptor,
                     mapOutputPort(descriptor.ZeroBasedPort), cancellationToken));
+                sources.Add(new(PureMidiTrackId: descriptor.SourceTrackId,
+                    MidiChannelRootId: descriptor.MidiChannelRootId, ExportTrackId: descriptor.ExportTrackId));
             }
             foreach (MidiExportChannelUnit unit in usedUnits
                 .OrderBy(value => value.ZeroBasedPort)
@@ -352,26 +193,24 @@ public static class CanonicalMidiFileExporter
                 tracks.Add(new StandardMidiFileTrackSource(
                     duration,
                     EnumerateLogicalTrackEvents(compiledResult, unit, mapOutputPort(unit.ZeroBasedPort),
-                        unitTrackNames[unit], includedTrackId, cancellationToken)));
+                        unitTrackNames[unit], includedTrackId, cancellationToken), unitTrackNames[unit]));
+                sources.Add(unitSources[unit]);
             }
             if (diagnostics.Count != 0) return Failure(diagnostics);
 
             return new MidiExportEncodingResult(
-                output => StandardMidiFile.WriteType1(
+                (output, token, progress) => StandardMidiFile.WriteType1(
                     output,
                     compiledResult.TicksPerQuarterNote,
-                    tracks),
-                []);
+                    tracks, token, progress),
+                [], sources, compiledResult.StartTick);
         }
         catch (Exception exception) when (exception is MidoraMidiException
             or ArgumentException
             or OverflowException
             or System.Text.EncoderFallbackException)
         {
-            diagnostics.Add(new(
-                GenericEncodingErrorCode,
-                MidiExportDiagnosticCategory.Encoding,
-                exception.Message));
+            diagnostics.Add(MidiExportEncodingErrors.FromException(exception));
             return Failure(diagnostics);
         }
     }
@@ -381,7 +220,7 @@ public static class CanonicalMidiFileExporter
         CanonicalSmfTrackDescriptor descriptor,
         byte outputPort, CancellationToken cancellationToken = default) => new(
             descriptor.EndTick,
-            EnumeratePureMidiTrackEvents(compiled, descriptor, outputPort, cancellationToken));
+            EnumeratePureMidiTrackEvents(compiled, descriptor, outputPort, cancellationToken), descriptor.Name);
 
     private static IEnumerable<StandardMidiFileEvent> EnumeratePureMidiTrackEvents(
         CanonicalCompiledResult compiled,
@@ -621,9 +460,8 @@ public static class CanonicalMidiFileExporter
         }
         foreach (CanonicalTimeSignature value in compiled.Conductor.TimeSignatures)
         {
-            if (value.Numerator is < 1 or > byte.MaxValue
-                || value.Denominator <= 0
-                || (value.Denominator & (value.Denominator - 1)) != 0)
+            if (value.Numerator is < 1 or > 99
+                || value.Denominator is not (1 or 2 or 4 or 8 or 16 or 32 or 64))
             {
                 throw new MidoraMidiException(
                     $"Time Signature {value.Numerator}/{value.Denominator} cannot be encoded in SMF.");
@@ -721,48 +559,6 @@ public static class CanonicalMidiFileExporter
             "Bank/Program order must be CC0, then CC32, then Program Change at the same tick.", value.Source));
     }
 
-    private static StandardMidiFileTrack BuildEventTrack(
-        long startTick,
-        long duration,
-        MidiExportChannelUnit unit,
-        byte port,
-        string trackName,
-        IReadOnlyList<CanonicalMidiEvent> values)
-    {
-        List<StandardMidiFileEvent> events =
-        [
-            StandardMidiFileEvent.Text(0, StandardMidiFile.TrackNameMetaType, trackName),
-            StandardMidiFileEvent.Meta(0, StandardMidiFile.MidiPortMetaType, [port])
-        ];
-        if (unit.ZeroBasedChannel == 9)
-        {
-            events.Add(StandardMidiFileEvent.SystemExclusive(0, RolandGsChannel10NormalPart));
-            events.Add(StandardMidiFileEvent.SystemExclusive(0, YamahaXgChannel10NormalPart));
-        }
-        AddEffectsOffInitialization(events, unit.ZeroBasedChannel);
-        foreach (CanonicalMidiEvent value in values)
-        {
-            events.Add(StandardMidiFileEvent.ChannelVoice(
-                checked(value.Tick - startTick),
-                value.Message));
-        }
-        return new(duration, events);
-    }
-
-    private static StandardMidiFileTrack BuildPureMidiTrack(
-        CanonicalCompiledResult compiled,
-        CanonicalSmfTrackDescriptor descriptor,
-        byte outputPort) => new(descriptor.EndTick,
-            EnumeratePureMidiTrackEvents(compiled, descriptor, outputPort).ToArray());
-
-    private static void AddEffectsOffInitialization(
-        ICollection<StandardMidiFileEvent> events,
-        byte zeroBasedChannel)
-    {
-        events.Add(EffectsOffEvent(zeroBasedChannel, ReverbSendController));
-        events.Add(EffectsOffEvent(zeroBasedChannel, ChorusSendController));
-    }
-
     private static StandardMidiFileEvent EffectsOffEvent(
         byte zeroBasedChannel,
         byte controller) =>
@@ -794,27 +590,6 @@ public static class CanonicalMidiFileExporter
         writer.Write(checked((ushort)name.Length));
         writer.Write(name);
         return output.ToArray();
-    }
-
-    private static void ValidateUnitTrack(
-        MidiExportChannelUnit unit,
-        IReadOnlyList<CanonicalMidiEvent> values,
-        List<MidiExportDiagnostic> diagnostics)
-    {
-        foreach (CanonicalMidiEvent value in values)
-        {
-            if (value.ZeroBasedPort == unit.ZeroBasedPort
-                && value.ZeroBasedChannel == unit.ZeroBasedChannel)
-            {
-                continue;
-            }
-
-            diagnostics.Add(new(
-                "MIDORA-MIDI-EXPORT-UNIT-TRACK",
-                MidiExportDiagnosticCategory.Encoding,
-                $"A MIDI event Track for Port {unit.ZeroBasedPort + 1}, Channel {unit.ZeroBasedChannel + 1} contains an event from another Channel Unit.",
-                value.Source));
-        }
     }
 
     private static void ValidateCanonicalEvent(
@@ -904,40 +679,6 @@ public static class CanonicalMidiFileExporter
         return default;
     }
 
-    private static void ValidateBankProgramOrder(
-        IReadOnlyList<CanonicalMidiEvent> values,
-        List<MidiExportDiagnostic> diagnostics)
-    {
-        foreach (IGrouping<(long Tick, byte Channel), CanonicalMidiEvent> group in values
-            .GroupBy(value => (value.Tick, value.ZeroBasedChannel)))
-        {
-            int phase = 0;
-            foreach (CanonicalMidiEvent value in group)
-            {
-                MidiMessage message = value.Message;
-                if (message.MessageType == MidiMessageType.ControlChange && message.Byte1 == 0)
-                {
-                    if (phase != 0) Fail(value);
-                }
-                else if (message.MessageType == MidiMessageType.ControlChange && message.Byte1 == 32)
-                {
-                    if (phase > 1) Fail(value);
-                    phase = 1;
-                }
-                else if (message.MessageType == MidiMessageType.ProgramChange)
-                {
-                    phase = 2;
-                }
-            }
-        }
-
-        void Fail(CanonicalMidiEvent value) => diagnostics.Add(new(
-            "MIDORA-MIDI-EXPORT-BANK-ORDER",
-            MidiExportDiagnosticCategory.CanonicalConsistency,
-            "Bank/Program order must be CC0, then CC32, then Program Change at the same tick.",
-            value.Source));
-    }
-
     private static long RelativeTick(CanonicalCompiledResult compiled, long tick)
     {
         if (tick < compiled.StartTick || tick > compiled.EndTick)
@@ -951,17 +692,4 @@ public static class CanonicalMidiFileExporter
     private static MidiExportEncodingResult Failure(List<MidiExportDiagnostic> diagnostics) =>
         new([], diagnostics.ToArray());
 
-    private static TValue GetOrAdd<TKey, TValue>(
-        this Dictionary<TKey, TValue> dictionary,
-        TKey key)
-        where TKey : notnull
-        where TValue : new()
-    {
-        if (!dictionary.TryGetValue(key, out TValue? value))
-        {
-            value = new();
-            dictionary.Add(key, value);
-        }
-        return value;
-    }
 }

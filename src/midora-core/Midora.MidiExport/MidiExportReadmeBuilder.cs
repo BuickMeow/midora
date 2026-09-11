@@ -79,7 +79,8 @@ public static class MidiExportReadmeBuilder
     public static void WriteTo(
         Stream destination,
         MidiExportReadmeRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        MidiExportPaddingSummary paddingSummary = default)
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(request);
@@ -181,6 +182,14 @@ public static class MidiExportReadmeBuilder
             "selection, RPN/NRPN, Pitch Bend Range, and overlapping equal-pitch notes.");
 
         AppendLine(output);
+        if (paddingSummary.HasPadding)
+        {
+            AppendLine(output, "## SMF Timing Compatibility (Export Info)");
+            AppendLine(output);
+            AppendLine(output, paddingSummary.Message);
+            AppendLine(output, "On re-import, these standard empty Text Meta events may remain visible as imported metadata.");
+            AppendLine(output);
+        }
         AppendLine(output, "## Diagnostics");
         AppendLine(output);
         long diagnosticCount = GetTotalDiagnosticCount(request);

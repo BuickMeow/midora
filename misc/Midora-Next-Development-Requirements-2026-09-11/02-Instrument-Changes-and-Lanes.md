@@ -1,8 +1,8 @@
 # 乐器变化点、Lane Tabs 与事件呈现
 
-覆盖 R27（P0）、R28（P1）、R12/R29（P2）；关联 R24/26、R06/07。源码审计基线 `0bb9670`；本文同步[决策与问答主文档](04-Decisions-and-Preparation.md)中的 Q1 用户回答，尚未修改规格和产品代码。
+覆盖 R27（P0）、R28（P1）、R12/R29（P2）；关联 R24/26、R06/07。源码审计基线 `0bb9670`；本文同步[决策与问答主文档](04-Decisions-and-Preparation.md)中的 Q1／Q2 用户回答，尚未修改规格和产品代码。
 
-2026-09-14 Q1 归并：`04` 是本专题唯一问答入口，集中保存原问题、推荐、用户原回答、补充问答及确认状态。本文保留需求、审计事实与技术推导，不另开答复记录；已明确决定与仍待确认的建议分别标注。普通 Tab 隐藏／目录方案见 D-LANE01.g，工具表达式以外的 Mapping 数值域范围见 D-VAL01.d；两项新增建议未获批准。文档归并不代表产品已经实施，也不自动修改 SRS。
+2026-09-14 Q1／Q2 归并：`04` 是本专题唯一问答入口，集中保存原问题、推荐、用户原回答、补充问答及确认状态。本文保留需求、审计事实与技术推导，不另开答复记录。D-LANE01.g 已确认普通 Tab 隐藏及全部 target 目录，D-VAL01.d 已确认显示域仅作用于编辑显示／数值编辑工具，Mapping 保持原语义且须在 Help 中说明区别；D-UI01.d 已撤回删除 Draw 的方案。上述问题不再作为待答项，本专题无新增 Q3。文档归并不代表产品已经实施，也不自动修改 SRS。
 
 ## 1. 目标与不能误改的底层能力
 
@@ -96,7 +96,7 @@ Bank A → PC P → Bank B（尚未下一次PC）→ 从中途开始 / 查询名
 ### 4.1 Instrument Changes 视图
 
 - 仅 MIDI Segment / SubVoice；Logical Segment 没有这个 Tab。Tab 头固定为 `Inst.`，位于 `Vel.` 之后且不可关闭；无包装时仍保留空视图，MIDI 导入不向其中填入任何投影。
-- 一个包装点对应一次乐器变化；y固定中线，x=Tick。创建工具单击创建／选中，不通过拖线生成很多乐器弹窗；删除Draw后的非数值区Pen按钮衔接见D-UI01.d。
+- 一个包装点对应一次乐器变化；y 固定中线，x=Tick。Draw 单击创建／选中，不通过拖线生成很多乐器弹窗。D-UI01.d 已确认保留共享 Draw 工具及原图标，Free／Line／Horizontal 是事件数值区额外的绘制形态按钮组，不替换 Draw，也不使 Inst. 产生沿线创建行为。
 - 在点的上或下方择有空间一侧显示带边框标签，包含Bank、PC值和名称；密集点使用有限标签布局 / LOD，命中依据正式数据，不从bitmap反推对象。
 - 对象List合并为特殊行；双击行 / 点、右键Properties复用同一个选择器。远处数据按页准备，不整表构建字符串。
 - R18实施后右拖负责框选，不能再为此Tab保留暗含的右拖创建。
@@ -130,12 +130,12 @@ D-IN03.c 已确认范围仅为 Event Instrument 全局与 SubVoice Initial State
 
 ## 5. R28：每目标一个 Lane Tab
 
-用户已确定布局：原LANE标题、下拉框及通用Event/Parameter Tab退出；每个实际事件/参数一个Tab，名称作为Tab头。坐标、Snap、Snap值、Add入口搬到Tab头同一行的最右侧，内容区不再占第二行工具栏。
+用户已确定布局：原LANE标题、下拉框及通用Event/Parameter Tab退出；每个实际事件/参数一个Tab，名称作为Tab头。坐标、Snap、Snap值、Add入口搬到Tab头同一行的最右侧，内容区不再占第二行工具栏。按 D-UI01.d 保留 Piano／事件区域共享的 Draw 工具，在支持数值绘线的事件区域额外设置 Free／Line／Horizontal 三个纯图标按钮；非 Draw 模式下整组禁用，不拆成三个独立顶层工具。原 Draw 及已指定的形态图标继续保留，完整手势与工具状态归属见 `01`／`04`。
 
 Tab行为：
 
 1. `Vel.` 固定第一；适用的 `Inst.` 固定第二；两者常驻且不可关闭，即使没有内容。其他按用户视图顺序。
-2. 头部溢出支持鼠标滚轮水平滚动、拖拽重排、最右下箭头弹Tab列表；活动Tab键盘可达、长名称不裁按钮。工具区和溢出按钮宽度不足时需有最小布局规则。
+2. 头部溢出支持鼠标滚轮水平滚动、拖拽重排；最右下箭头按 D-LANE01.g 打开可搜索、虚拟化的全部 target 目录，包含已显示与已隐藏项。活动 Tab 键盘可达、长名称不裁按钮。工具区和溢出按钮宽度不足时需有最小布局规则。
 3. Add 成功激活目标 Tab；导入只为实际涉及的普通 target 创建，不预建全 128 CC，也不生成 Instrument Changes 包装。
 4. 每Tab独立纵向缩放 / value viewport；横向时间轴仍与同Workspace的Piano/Velocity同步。
 5. 以owner+正式target身份识别，不用Tab文本或数组位置；重命名不丢状态，视图重排不改MIDI事件顺序/Mapping顺序。
@@ -143,19 +143,19 @@ Tab行为：
 
 ### 5.1 常驻基础 Tab、普通 Tab 隐藏与目录（D-LANE01）
 
-**已确认：** D-LANE01.a 只同意“删除数据／删除 owner 是独立命令”，尚未同意普通 Tab 可隐藏。D-LANE01.b 已决定 `Vel.`／`Inst.` 常驻不可关闭。不能将后续显隐交互的答复当成隐藏方案本身已经获批。
+**已确认：** Q1 的 D-LANE01.a 仅先确认“删除数据／删除 owner 是独立命令”；Q2 的 D-LANE01.g 已进一步确认普通 Tab 可隐藏，关闭只改变视图，不删除正式数据／owner。D-LANE01.b 的 `Vel.`／`Inst.` 常驻不可关闭规则保持不变。
 
-D-LANE01.c～f 已确认：若采用隐藏方案，显式 Add／Locate 才显示并激活目标，普通刷新／后台／Undo 不抢回隐藏 Tab，普通 Properties 不无故切换当前 Tab；首次普通 targets 按确定顺序排列，新建追加末尾并保留用户重排；切 Lane 不清旧选择；Piano 与底部 Event Snap 保持独立，各事件 target 共用 Event Snap、各自记忆纵轴、共享水平时间轴。
+D-LANE01.c～f 已确认：显式 Add／Locate 才显示并激活目标，普通刷新／后台／Undo 不抢回隐藏 Tab，普通 Properties 不无故切换当前 Tab；首次普通 targets 按确定顺序排列，新建追加末尾并保留用户重排；切 Lane 不清旧选择；Piano 与底部 Event Snap 保持独立，各事件 target 共用 Event Snap、各自记忆纵轴、共享水平时间轴。目录点击显示并激活目标属于 D-LANE01.g 已确认的显式导航。
 
-**用户疑问与技术解释：** 用户担心隐藏后忘记有内容的 target，提出显示名称及事件数量的目录，并询问是否会增加昂贵的 O(N) 遍历。目录不必每次扫描全部事件：可以按 owner＋target 维护派生计数／曲线存在摘要，在导入或页构建时统计，正式编辑按最终结果更新，Undo／Redo 同步还原；目录打开读取 K 个 target 摘要，而不是 N 条事件。没有现成摘要的旧数据首次仍可能需要有界、可取消的后台统计，未完成时显示“统计中”，不能伪装为 0。当前 §2.1 所述索引确实全源构建，不能声称该性能方案已经实现或已经验证。
+**用户疑问与已确认方案：** 用户担心隐藏后忘记有内容的 target，提出显示名称及事件数量的目录，并询问是否会增加昂贵的 O(N) 遍历。Q2 已同意按 owner＋target 维护派生计数／曲线存在摘要，在导入或页构建时统计，正式编辑按最终结果更新，Undo／Redo 同步还原；目录打开读取 K 个 target 摘要，而不是 N 条事件。没有现成摘要的旧数据首次仍可能需要有界、可取消的后台统计，未完成时显示“统计中”，不能伪装为 0。当前 §2.1 所述索引确实全源构建，实施时仍须改造，不能声称该方案已经实现或性能已经验证。
 
-**待确认建议（D-LANE01.g）：** 普通 Tab 允许隐藏但不删除数据／owner；复用最右下箭头作为全部已有事件／参数 target 的目录，显示名称、数量及显隐状态，点击显示并激活目标。不另建常驻重面板；无点但有 Value Curve／Mapping owner 的目标使用明确标记，避免遗漏。包装数与成员消息数应区分，不能将不同视图的重复投影加成事件总数。此方案仍须用户确认；无论最终选择哪种方案，“没有可见 Tab”都不等于“没有正式数据”。
+**目录行为（D-LANE01.g 已确认）：** 复用最右下箭头作为可搜索、虚拟化的全部已有事件／参数 target 目录，显示名称、精确数量及显隐状态，点击显示并激活目标；不另建常驻重面板。无点但有 Value Curve／Mapping owner 的目标也列出并使用明确标记，避免遗漏。包装数与成员消息数应区分，不能将不同视图的重复投影加成事件总数。“没有可见 Tab”不等于“没有正式数据”。
 
 ### 5.2 与状态持久化衔接
 
 R07按Track共享的是通用编辑profile；**Lane存在性仍由该Segment内容/owner决定** ，不能在另一个Segment里凭共享Tab创建新的参数或事件。
 
-D-STATE03.a 已确认 **Lane 纵轴、排列与活动 target 按 Segment 独立** ，不因同 Track 其他 Segment 实际内容不同而联动重置；若普通 Tab 隐藏方案获批，显隐也按该所有权保存，基础 Tab 不存在隐藏状态。Track 只共享附表 B 明确的通用 profile；其中主 Piano Snap 和底部 Event Snap 是两套独立设置，底部数值 targets 共用 Event Snap，不因工具栏合并而变成一套。SubVoice 仍独立。R28 先实现会话内稳定状态，后续独立 schema 保存，不序列化整个 Tab VM；完整状态白名单以 `04` 为准。
+D-STATE03.a 已确认 **Lane 纵轴、显隐、排列与活动 target 按 Segment 独立** ，不因同 Track 其他 Segment 实际内容不同而联动重置；基础 Tab 不存在隐藏状态。Track 只共享附表 B 明确的通用 profile；其中主 Piano Snap 和底部 Event Snap 是两套独立设置，底部数值 targets 共用 Event Snap，不因工具栏合并而变成一套。SubVoice 仍独立。R28 先实现会话内稳定状态，后续独立 schema 保存，不序列化整个 Tab VM；完整状态白名单以 `04` 为准。
 
 ## 6. R12：友好CC显示
 
@@ -167,7 +167,9 @@ D-VAL01.a～c 已明确：白名单为 **CC10、CC71～78** ，统一显示 −6
 
 D-VAL01.b 已要求编辑表达式采用显示值，并明确不要求兼容旧表达式／预设结果；Batch Edit、Batch Create／Generator 等编辑工具的相关值输入和输出应与界面一致，再按目标规则转换为正式 raw 值。Note、Logical Parameter 自有值域、时间、目标编号等不属于这些 CC 的偏移对象，不能机械减 64。该答复不等于取消所有旧 `.midora` 的读取能力。
 
-**仍待确认（D-VAL01.d）：** Q1 具体问题以 Batch Edit 为例，未区分编辑工具表达式与 Project Mapping Function。不得据此认定用户已批准改变音乐 Mapping 链的数值域。新增建议为编辑工具使用显示域，而 Project Mapping accumulator／ABI 保持既有 raw 语义；若用户也要求 Mapping 使用显示值，则须明确整条链、内置／图形 Step、相关 Context 与取整的一致规则，不能只转换函数边界。例如 CC10 raw96／显示32，显示域 Multiply 0.5 得16（raw80），现行 raw 域 Multiply 得raw48（显示−16），可听结果不同。加法 delta、乘法 factor、Envelope 因子及 Logical Parameter 自有范围也不能被机械偏移。该范围尚未决定，实施前必须落实数值契约与必要的版本记录。
+**编辑层／数据层边界（D-VAL01.d 已确认）：** 显示域限定到编辑显示及数值编辑工具，不扩大到 Project Mapping Function 或整条音乐 Mapping 链。目标 CC 的属性、坐标、列表及 Batch Edit／Batch Create 等工具使用显示值，再转换为正式 MIDI 数值；Project Mapping 的 Function、内置／图形 Step、共享 accumulator、相关 Context、取整与 ABI 保持既有 raw 契约，不在函数入口减 64。加法 delta、乘法 factor、Envelope 因子及 Logical Parameter 自有范围不能被机械偏移。该边界已经定案，实施前只需落实编辑工具数值契约与必要的版本记录，不重新开放 Mapping 改域选项。
+
+**Help 要求：** 必须明确说明“外侧编辑层”与“数据层”的区别，以及工具表达式和 Project Mapping 使用不同的数值契约。例：CC10 raw96 在界面显示 32，编辑工具的 `=p0*0.5` 得到显示 16、写入 raw80；Project Mapping 的 `value*0.5` 或内置 Multiply 0.5 仍按 raw96 计算，输出 raw48、界面显示 −16。Help 可解释这种编码关系，但不恢复普通编辑入口的 raw Tooltip／辅助值或全局 raw 显示开关；也不因此放弃旧 `.midora` 音乐读取。
 
 测试raw↔display全边界、往返无损、Clamp、不适用目标不减64；分别识别Direct MIDI的14-bit raw与SubVoice signed PitchBend，按源编码显式转换、禁止重复偏移；Catalog字段与事件身份不转换。同操作由列表/图形/Properties进入结果一致。
 
@@ -198,7 +200,8 @@ D-VAL01.b 已要求编辑表达式采用显示值，并明确不要求兼容旧�
 - Initial State不改变未编辑override/继承，旧SubVoice的Bank/PC/Mapping可继续操作；新旧格式golden与source trace。
 - Catalog缺失/损坏/disabled/orphan/override、数值fallback、配置热更新；仅浏览不扫描SF2、更不读sample或改Modified。
 - 试听默认 500ms、程序偏好重开、快速换选、按住/释放、无 SoundFont、Percussion、关闭/取消/编辑抢占、旧任务迟到、音量/Limiter/预载/voices 一致。
-- CC10／CC71～78 的图形、List、Properties、Initial State 与编辑工具显示域一致；不额外显示 raw；非白名单及目标身份不偏移。Mapping 数值域测试按 D-VAL01.d 最终决定补齐，不能将待答建议写成已通过验证。
+- CC10／CC71～78 的图形、List、Properties、Initial State 与编辑工具显示域一致；不额外显示 raw；非白名单及目标身份不偏移。按 D-VAL01.d 回归 Project Mapping Function／内置 Step／ABI 的既有 raw 结果，并覆盖 Help 中两类表达式的差异示例，不能将已确认需求写成已通过验证。
+- 普通 Tab 隐藏／目录重开、名称／精确数量／显隐、无点曲线与 Mapping owner、编辑碰撞及 Undo／Redo 后计数、冷摘要“统计中”／取消、关闭释放均须验证；确认目录不重复全事件扫描。Draw 与原图标保留、数值区三形态按钮组在非 Draw 模式禁用，Inst. 仍只单点创建。
 - 目标很多但单目标很少、单目标百万、所有目标百万、长名称、多同Tick、首次冷页、切Tab/隐藏/关闭释放；阶段开始前固定可测性能预算。
 
-本专题不得以“新点能发声”代替上述顺序、兼容性与资源测试。本次仅同步 Q1 文档结论与 Q2 待答入口，未实施产品、未修改 SRS，也未运行构建、自动测试或 UI／音频验收。
+本专题不得以“新点能发声”代替上述顺序、兼容性与资源测试。本次仅同步 Q1／Q2 已确认文档结论，未实施产品、未修改 SRS，也未运行构建、自动测试或 UI／音频验收；无新增 Q3。

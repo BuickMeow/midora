@@ -1,6 +1,8 @@
 # 乐器变化点、Lane Tabs 与事件呈现
 
-覆盖 R27（P0）、R28（P1）、R12/R29（P2）；关联 R24/26、R06/07。基线 `0bb9670`，只读设计调查；方案须按[决策清单](04-Decisions-and-Preparation.md)定案后再修改规格和代码。
+覆盖 R27（P0）、R28（P1）、R12/R29（P2）；关联 R24/26、R06/07。基线 `0bb9670`，只读设计调查；方案须按[决策与问答主文档](04-Decisions-and-Preparation.md)定案后再修改规格和代码。
+
+2026-09-11 文档问答整理：`04` 是本专题唯一待确认问答入口，集中保存每项问题、推荐、用户回答与追问。本文保留需求、审计事实与技术推导，不另开答复记录；以下新增或更正的推荐均未定案，文档落地不代表批准产品实现。
 
 ## 1. 目标与不能误改的底层能力
 
@@ -55,14 +57,14 @@
 
 另一候选是新增真正 `InstrumentChange` 源事件，由Compiler展开。它能表达整体操作，但扩大Domain、Mapping ABI/context、canonical来源、wire及兼容面；目前没有证据表明首版必须走这条更重路线。
 
-**持久化必须决定：** 显式包装如果要求重开后仍作为一个可编辑对象，关联究竟是正式编辑组织元数据，还是允许损坏丢失的presentation？建议把会改变选择/删除单位的显式关联作为严格版本化编辑组织数据，并要求它不改变raw播放顺序；代价是需评估新source契约。也可采用仅presentation关联、失效退回raw，但要接受包装体验在旧版本保存后消失。不能本轮未经批准塞进既有schema。
+**持久化必须决定（D-IN01.a/b）：** 显式包装如果要求重开后仍作为一个可编辑对象，关联究竟是正式编辑组织元数据，还是允许损坏丢失的presentation？建议把会改变选择/删除单位的显式关联作为严格版本化编辑组织数据，随正式编辑进入Undo/Redo，并要求它不改变raw播放顺序；代价是需评估新source契约和必要的Project Format升级。也可采用仅presentation关联、失效退回raw，但要接受包装体验在旧版本保存后消失。新版本持续读取旧项目，升级保存沿用确认与永久旧版副本流程；不承诺旧软件可读新增源格式，也不能未经批准塞进既有schema。
 
 ### 3.2 导入、同Tick与共享Root的底线
 
-- 默认不自动包装任意导入Bank/PC序列；仅把用户在新入口明确创建的组合包装显示。导入轨道即使有CC0/32/PC同Tick，也可能夹NoteOn、多个PC或跨Track状态，不能据“碰巧同Tick”擅自改写 / 合并。
-- 可将“把合法raw选择显式组合显示”作为将来扩展，不是本轮暗含操作。
-- 组合创建应按正式Bank→PC顺序原子发布，定义同Tick插入位置和exact-key覆盖范围；同Tick有多个包装被操作时，使用冻结formal order，不能按HashSet或ID排序决定结果。
-- 单独改动成员后建议解除包装、保留剩余raw数据，不偷偷补回缺失成员；这是D-IN02，不是已批准规则。
+- 默认不自动改写或包装任意导入Bank/PC序列。**更正旧的“新Tab仅显示新建包装”建议：** D-IN01.c 推荐每条导入PC在新Tab形成显示投影，按正式顺序查询该PC实际使用的Bank；不把前驱Bank认领为独占成员，不因同Tick就合并原始消息。导入轨道可能夹NoteOn、多个PC或跨Track状态，浏览本身必须零源变更。
+- D-IN01.d 推荐导入PC投影也能打开选择器；确认完整preset后，在原PC顺序位置形成局部Bank→PC组合，不修改此前可能被多个PC共用的Bank。删除未包装投影只删除该PC，完整包装删除按其明确成员处理；UI区分两者。任意raw选择的显式组合不是本轮已批准操作。
+- 组合创建按正式Bank→PC顺序原子发布，精确命中键执行既有later-wins覆盖；D-IN02.b 推荐新建组合位于本Track同Tick对应NoteOn之前，而编辑导入PC保留原PC顺序位置。同Root较早Track同Tick的Note不受后面Track新消息追溯影响。同Tick多个包装被操作时，使用冻结formal order，不能按HashSet或ID排序决定结果。
+- **更正旧的“单独改成员即解组”建议：** D-IN02.a 推荐仅改数值、同owner/同Tick/正确target关系仍完整时保留包装并刷新名称；部分移动、删除、改target或覆盖使最终结构不完整时才解组，保留剩余raw且不补回成员。必须按整个原子事务的最终态判断，整组移动过程不能误解组。这是待确认规则。
 - List的包装行和raw行需避免对同一成员重复显示/重复选中；原raw Lane仍可访问。选中wrapper映射到成员ID集合，数量提示需区分“一处乐器变化”与“三条MIDI消息”。
 
 跨Track状态是另一个必须验证的边界。SRS §23.4.2顺序为绝对Tick→全局Track顺序→Track内事件顺序，同Root子Segment结束不清共享Bank/Program。
@@ -84,9 +86,9 @@ Bank A → PC P → Bank B（尚未下一次PC）→ 从中途开始 / 查询名
 | 创建 / Properties / 双击 | draft中选Bank/PC，OK一次发布全部成员；Cancel不分配正式内容 |
 | 水平移动 / Ctrl复制 | 整个包装同Tick移动；目标碰撞按批准的成员覆盖策略原子归并 |
 | 删除 / 剪切 / 粘贴 | 包装与成员关系同步，有限内存、有取消、目标选择、Undo完整还原 |
-| raw成员单独修改 | 解除或同步按D-IN02；禁止悬空关联、重复显示、静默复活成员 |
+| raw成员单独修改 | 按D-IN02.a最终结构决定保留或解除；禁止悬空关联、重复显示、静默复活成员 |
 | Split / owner转换 / 删除owner | 重映射或解除关联的规则明确；不能指向别的Segment或保留源ID悬空 |
-| 多选 / 混合对象 | 既有类型子菜单机制；整体InstrumentChanges允许哪些批量动作需明确，不把固定y当数值曲线 |
+| 多选 / 混合对象 | 既有类型子菜单机制；D-IN02.c推荐Copy/Cut/Paste/Delete/水平Move及复制/水平翻转/Scale/量化/多选Properties，不提供纵移、移调、Note Split/Join；普通单字段Point Value Batch不直接套三元组 |
 | Save / Reopen / 旧项目 | 不丢旧Bank缺分量、独立PC、Mapping；raw声音 / 顺序持续等价 |
 
 不要求这张表所有动作都在A2a首个切片交付，但A2b整体验收前必须每项有实现或用户明确批准的限制。
@@ -111,21 +113,21 @@ Bank A → PC P → Bank B（尚未下一次PC）→ 从中途开始 / 查询名
 - 列表选项变化触发自动试听。试听先停旧音，任何编辑/确认/取消/关闭/跳转都先终止该弹窗拥有的试听，不让用户重复操作一次才能编辑。
 - 点 / List / Initial State共同使用该选择器；draft、Validate / 输入错误、OK / Cancel使用现有主题与统一按钮 / Enter / Esc / 焦点规则。
 
-D-IN05需要补全自动试听Gate长度、快速换选节流及复合键盘行为。推荐自动试听为短单音，例如300ms作为试验初值，快速连续选择只保留最新请求；手按琴键走held生命周期，释放即结束gate。无SoundFont仍允许编辑，明确试听不可用。这个300ms是新建议，与删除的右双击300ms无关系。
+D-IN05.a～e 已将试听Gate、模式、记忆与Catalog范围列全，待用户在 `04` 回答。推荐自动试听为300ms短单音，可关闭，快速连续选择只保留最新请求；手按琴键走held生命周期，释放即结束gate。自动试听开关、Key、Velocity和时长建议保存为程序偏好（不是Project，也不再建议仅会话内记忆）；初值仍为Key60/Velocity100。Bank/Program列表优先展示现有resolver解析出的有效Catalog，缺名称仍允许输入任意合法值。无SoundFont仍允许编辑，明确试听不可用。这个300ms是新建议，与删除的右双击300ms无关系。
 
-试听必须冻结当前Enabled SoundFonts、Bank映射、Channel Mode、voices配置，完成所需preset预载；不能用Catalog名称或Profile索引作为声音身份。D-IN05还需决定它是“干净控制器状态的独立preset audition”还是“当前时间线Root有效状态下试听”；后者还需正式范围前状态查询，不能把Root初始Mode误当后续SysEx改变后的活动Mode。推荐首切片前者，明确所采用模式。建立临时受控canonical试听计划或先批准明确的audition合同；不得让项目文件提供自由raw命令绕过白名单。Master→Limiter、NoteOff、抢占、关闭、原生错误和工作线程资源门都要覆盖。
+试听必须冻结当前Enabled SoundFonts、Bank映射、Channel Mode、voices配置，完成所需preset预载；不能用Catalog名称或Profile索引作为声音身份。D-IN05.b 推荐干净控制器状态的独立preset audition，而非当前时间线Root有效状态下试听；后者还需正式范围前状态查询，不能把Root初始Mode误当后续SysEx改变后的活动Mode。D-IN05.c 推荐提供仅影响试听的Melodic/Percussion选择、以已知目标初始模式为初值，不改Root或写项目SysEx。建立临时受控canonical试听计划或先批准明确的audition合同；不得让项目文件提供自由raw命令绕过白名单。Master→Limiter、NoteOff、抢占、关闭、原生错误和工作线程资源门都要覆盖，正常项目播放不被试听抢停。
 
-SRS §8.55.1曾规定Program显示1–128，而内部0–127；现有各处需源码核对统一。D-IN04建议所有新数值字段清楚采用0–127，并配名称，不混用“一基PC”和内部字节；如果保留一基显示，要中央转换、明确标签，不让预览与保存差1。
+SRS §8.55.1仍有Program显示1–128、内部0–127的口径；现有各处需源码核对统一。D-IN04建议所有相关数值入口统一采用0–127并标明范围、配名称，不只改新弹窗而混用“一基PC”和内部字节；若获批需同步更正该规格。若保留一基显示，要中央转换、明确标签，不让预览与保存差1。
 
 ### 4.3 Initial State 与旧SubVoice
 
-用户明确范围为Event Instrument全局与SubVoice Initial State，**不是自动扩展到Project Global Initial State**。
+用户明确范围为Event Instrument全局与SubVoice Initial State，**不是自动扩展到Project Global Initial State** ；D-IN03.c 已列是否扩大这一范围，默认推荐不扩大，待回答。
 
 用一行Instrument selector替代三行裸数值，但初始状态每字段的空值 / override / 继承是正式语义：
 
 - 打开弹窗、只浏览Catalog再取消不得补0或显式固定继承值。
 - 若只修改一个原有override，必须有方法保留其余继承状态；选择一个完整preset可以明确一次覆盖三个字段。
-- 旧项目独立Bank/PC、只有MSB或LSB、scalar Mapping依然可查看与编辑。SubVoice可优先推荐包装创建入口，但不能把已有独立数据变为无法访问。
+- 旧项目独立Bank/PC、只有MSB或LSB、scalar Mapping依然可查看与编辑。D-IN03.a 推荐SubVoice普通新增以完整包装为主，保留高级raw入口；D-IN03.b推荐保留逐字段继承/覆盖，不能把已有独立数据变为无法访问。
 - 若要彻底删除SubVoice独立Bank/PC编辑能力，需批准替代的高级展开UI与兼容方案，不能误以为“底层还在”就等于功能仍可用。
 
 ## 5. R28：每目标一个 Lane Tab
@@ -143,15 +145,17 @@ Tab行为：
 
 ### 5.1 是否允许关闭（D-LANE01）
 
-用户提出“仅空Tab可关”或“不允许关闭”，也允许评估。建议第三种更明确的语义：**Close只隐藏视图，不删数据 / Mapping owner**，可从Tab列表重新打开；Delete Lane / Delete Mapping仍是独立正式操作。这样无需为了关Tab扫描所有事件，而且有Mapping无点的owner不会被误删。
+用户提出“仅空Tab可关”或“不允许关闭”，也允许评估。建议第三种更明确的语义：**Close只隐藏视图，不删数据 / Mapping owner** ，可从Tab列表重新打开；Delete Lane / Delete Mapping仍是独立正式操作。这样无需为了关Tab扫描所有事件，而且有Mapping无点的owner不会被误删。
+
+是否包括Velocity/InstrumentChanges可隐藏、新增/定位的激活、初始顺序与切Lane保选，均在 D-LANE01.a～f 待集中回答：推荐两基础Tab也可隐藏（显示时固定先后）、显式Add/Locate才自动显示激活、导入首次target按确定顺序、新建追加末尾、切Lane不清旧选择。普通刷新/后台/Undo不能抢回隐藏Tab，普通Properties也不无故切换当前Tab。
 
 若用户选择仅空可关：用维护的target计数/curve存在摘要判断，不在点击时扫描全Segment；空owner仍保留。任何一种选择都必须说明“没有Tab”不等于“没有正式数据”。新导入自动发现规则也不能在刷新后把用户刚隐藏的Tab强制打开。
 
 ### 5.2 与状态持久化衔接
 
-R07按Track共享的是通用编辑profile；**Lane存在性仍由该Segment内容/owner决定**，不能在另一个Segment里凭共享Tab创建新的参数或事件。
+R07按Track共享的是通用编辑profile；**Lane存在性仍由该Segment内容/owner决定** ，不能在另一个Segment里凭共享Tab创建新的参数或事件。
 
-建议Track记同类target的默认纵轴 / 顺序偏好，Segment记其实际Tab开关 / 当前target / 局部viewport；最终所有权表在R06/07定案。R28先实现会话内稳定状态，后续独立schema保存，不现在序列化整个Tab VM。
+更正旧的“Track默认纵轴/顺序”候选：D-STATE03.a 推荐 **Lane纵轴、显隐、排列与活动target按Segment独立** ，不因同Track其他Segment实际内容不同而联动重置。Track只共享明确的通用profile；其中主Piano Snap和底部Event Snap是两套独立设置，底部数值targets共用Event Snap，不因工具栏合并而变成一套。SubVoice仍独立。R28先实现会话内稳定状态，后续独立schema保存，不现在序列化整个Tab VM；最终所有权在 `04` 集中确认。
 
 ## 6. R12：友好CC显示
 
@@ -159,7 +163,7 @@ R07按Track共享的是通用编辑profile；**Lane存在性仍由该Segment内�
 
 Pan示例为 `display = raw - 64`，边界raw0/64/127显示−64/0/63；Cutoff应精确指具体CC（如CC74），不暗示“0”是任何设备共同的物理Hz或声学中性点。
 
-D-VAL01需批准白名单及覆盖入口。建议覆盖ruler、鼠标坐标、点/条tooltip、List和Properties；现有Batch/Generator/Humanize/Mapping表达式与预设继续使用正式raw值，并在相关Help/标签清楚说明，避免旧预设音乐结果改变。是否增加显示单位模式是以后独立需求。
+D-VAL01.a～c 已列本次白名单、入口和raw提示方式：推荐首批只CC10/CC74；覆盖ruler、鼠标坐标、点/条tooltip、List、Properties及适用Initial State。现有Batch/Generator/Humanize/Mapping表达式与预设继续使用各上下文正式值，并在相关Help/标签清楚说明，避免旧预设音乐结果改变。推荐raw在tooltip/辅助信息显示、不增加全局raw/display开关；若用户需要该开关，在 `04` 本轮决定，不留到实现时暗选。
 
 测试raw↔display全边界、往返无损、Clamp、不适用目标不减64；分别识别Direct MIDI的14-bit raw与SubVoice signed PitchBend，按源编码显式转换、禁止重复偏移；Catalog字段与事件身份不转换。同操作由列表/图形/Properties进入结果一致。
 
@@ -172,9 +176,10 @@ D-VAL01需批准白名单及覆盖入口。建议覆盖ruler、鼠标坐标、�
 - Logical Parameter离散Step、MIDI/SubVoice状态型标量点适用。
 - Velocity仍是NoteOn力度柱，不变成持续状态；InstrumentChanges固定y点；opaque Meta/SysEx不是数值线。
 - Bank/PC、CC120–127等命令/结构目标不可被错误描述为普通持续数值，需明确显示策略。SubVoice既有Value Curve / Envelope不得被本项强制变Step；它们在正式绘制模式下保留原语义。
-- 可视左边界查询最近前驱；无前驱时是否从Initial/default起线、跨Segment到哪结束、右尾如何延伸均依正式owner生命周期，不从相邻不相关Segment借状态。
+- D-STEP02 推荐仅表达当前Lane自己的显式记录：可视左边界查询同owner最近前驱，无前驱时从首显式点起线，不凭Initial/default或其他轨道构造线；若需真正Channel有效状态，必须另有正式查询与来源说明。D-STEP03推荐Segment界外既有点仍可见/编辑，界外线与可听区间明确区分，不代表那里实际发声，不跨不相关owner接线；SubVoice按模板边界处理。
 - Pure MIDI同Tick允许多事件，首末取正式order；可视LOD合并只改像素、不删记录、不改变命中 / selection / export。
 - 只画线，不为每点建WPF控件；线与点/选择层局部失效；全源扫描、全量prefix数组不作为默认百万级实现。
+- D-STEP04 推荐线只辅助、不命中，仍拖点编辑；默认显示并提供关闭线的视图选项。D-STEP01～04均待 `04` 回答，不从上述技术可行性推定产品已经定案。
 
 验收：左边界前驱、无点/单点/同Tick多个点、跨Track共享状态标签不误导、半开边界、PB值域、稀疏长间隔、百万密集点、局部编辑Undo与缓存修订；原编辑采样密度/碰撞/快捷键不变。若状态基线需要更大canonical查询能力，先分阶段增加，不在UI线程临时编译。
 

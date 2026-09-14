@@ -1,6 +1,8 @@
 # 交互、显示与常规 UI 任务
 
-关联：[总表与执行边界](00-Overview-and-Delivery-Plan.md)、[待决策项](04-Decisions-and-Preparation.md)。基线 `0bb9670`；以下“原因”未注明运行证据时均为源码判断，本轮不实施、不运行产品测试。
+关联：[总表与执行边界](00-Overview-and-Delivery-Plan.md)、[决策与问答主文档](04-Decisions-and-Preparation.md)。基线 `0bb9670`；以下“原因”未注明运行证据时均为源码判断，本轮不实施、不运行产品测试。
+
+2026-09-11 文档问答整理：本文保留原需求、源码审计和实施候选；所有待确认问题、用户回答与追问统一维护在 `04`，不在本文另开第二份答复记录。下述推荐均待确认，不能将“已落地到文档”解释为用户批准推荐或授权实施；`04` 的逐项定案后再同步本专题与必要的规格变更。
 
 ## 1. P0/P1 常规 UI 与事件创建
 
@@ -16,7 +18,7 @@
 
 建议：抽统一 `OpenApplicationPreferences(initialTab)` 核心方法；现有菜单仍默认 Audio，新入口指定 SoundFonts。不要构造缺失 RoutedEvent 的事件参数再调用事件处理器。打开前停止由当前编辑器持有的试听，不误停正常项目播放。
 
-播放 / 不可中断前台任务期间，建议遵守现有设置编辑禁用规则并给出可理解的 tooltip，不绕过设置保存门；若希望此时仍可只读浏览，属于 D-UI08 的额外选择。
+播放 / 不可中断前台任务期间，建议遵守现有设置编辑禁用规则并给出可理解的 tooltip，不绕过设置保存门；若希望此时仍可只读浏览，属于 D-UI08.a 的额外选择。
 
 验收：无项目、有项目、零 / 多 SoundFont、预览中、正常播放中、正在任务中；初始页正确；Cancel 无改动；设置保存 / Worker 重建行为不退化。
 
@@ -44,7 +46,7 @@
 
 `InstrumentCatalogDialog.xaml:106/137/247` 的 BankList、ProgramList、ScanBankList 采用 `CanContentScroll=True` 与虚拟化；没有专用滚轮处理。通用 `ScrollViewerWheelRouter.cs` 把 `Delta/3` 直接传给 ScrollToVerticalOffset。若该 ScrollViewer 的 offset 是项单位，普通 120 wheel delta 就可能成为 40 项，而非 40px。这是需运行确认的直接候选原因。
 
-建议按逻辑 / 像素滚动模型处理，不对项列表硬套 24px 或假设行高恒定。推荐默认一个标准刻度一项，并累积高分辨率滚轮余量；嵌套列表及边界应消费本次列表滚动，不能同时滚父级。最终量见 D-UI08。
+建议按逻辑 / 像素滚动模型处理，不对项列表硬套 24px 或假设行高恒定。推荐默认一个标准刻度一项，并累积高分辨率滚轮余量；嵌套列表及边界应消费本次列表滚动，不能同时滚父级。最终量见 D-UI08.b。
 
 验收包含 Banks / Programs / Scan 预览的每个列表、长列表虚拟化、无滚动范围、到顶 / 到底、触控板小 delta、选中项不因滚动改变；确认没有破坏已有事件乐器内层列表的滚动隔离。
 
@@ -78,7 +80,7 @@ R23 的具体增宽数值尚未由用户给定；建议依据 Sora 字体、100/
 
 `MainWindow.xaml.cs:7984–8039` 的 Direct MIDI 编辑路径读取选择指标时 value 写为0，只按 anchor Clamp；Application `ProjectPureMidiTimelineEditCommands.cs:836–856` 将相同 Data1/Data2 byte delta 套给每个事件再严格验证。
 
-这不只可能在 value 上下限出错。Pitch Bend 的 14-bit 值127→128，对 anchor 计算成低字节−127、高字节+1；直接套到另一个原值128的事件，会得到负低字节。应在**正式 scalar 值**上做变换，再编码字节，不能把两个 MIDI 数据字节当独立坐标轴。
+这不只可能在 value 上下限出错。Pitch Bend 的 14-bit 值127→128，对 anchor 计算成低字节−127、高字节+1；直接套到另一个原值128的事件，会得到负低字节。应在**正式 scalar 值** 上做变换，再编码字节，不能把两个 MIDI 数据字节当独立坐标轴。
 
 Logical Parameter（`MainWindow.xaml.cs:8174–8217`）与 SubVoice（`:8424–8446`）已有基于整选区 min/max 的共同 delta Clamp。它们不是已确认相同 BUG，但必须一并验证。共享 Surface 的预览用受限 delta，MouseUp 某路径仍提交原 pointer delta（`TimelineSurface.cs:3824/8485`），需核对 preview=commit。
 
@@ -110,14 +112,14 @@ Escape / 失捕获 / 切Tab / owner失效 / source revision变化：取消手势
 
 命中冷页仍须后台 / 有界；“无延迟”是没有双击识别等待，不是要求 UI 同步解压冷页。菜单目标未就绪时建议立即显示不可执行的定位中框架，再按冻结对象更新；另一候选是仅等待实际后台命中。决策见 D-UI01，禁止沿用上回旧 target 开菜单。
 
-旧右键画直线与 Shift+右键水平线将发生直接冲突，包含 Velocity 和 Conductor Tempo，不能漏掉。建议在 Draw 中增加可见 `Free / Line / Horizontal` 绘制形态，左拖执行；Shift+左仍保留锁 Tick / 单点，不能拿它暗替水平线。产品所有者确认前不得删除旧入口。
+旧右键画直线与 Shift+右键水平线将发生直接冲突，包含 Velocity 和 Conductor Tempo，不能漏掉。D-UI01.a 建议在 Draw 中增加可见 `Free / Line / Horizontal` 绘制形态，左拖执行；普通左键命中已有点仍用于移动，`Alt+左拖` 在密集点上强制执行所选绘制形态。Shift+左仍保留锁 Tick / 单点，不能拿它暗替水平线。产品所有者确认前不得删除旧入口。
 
 | 表面 | 新右拖候选范围 / 必须保留 |
 |---|---|
 | Arrangement 实际 Segment 内容 | 框选正式 Segment；头部 / brace / 空轨外区域不借此创建或编辑 Segment |
 | 三种 Piano | 框选 Note；左键继续当前 Draw / Select / Split / Erase 工具 |
 | MIDI / Parameter 数值 lane、Tempo | 框选点；旧绘线迁移后保留完整采样密度与 Shift 行为 |
-| Velocity | 若纳入，框选的是对应 Note，不画新的 velocity；须验证列表与 Piano 选择同步 |
+| Velocity | D-UI01.b 建议纳入，框选的是对应 Note，不画新的 velocity；须验证列表与 Piano 选择同步 |
 | 时间尺 | 不当作普通对象区；保留现行定位例外；底部 / SubVoice 禁 Time Range 的规则不恢复 |
 | Piano 左侧琴键尺 | 仍无右键菜单，不产生空菜单或穿透框选 |
 | 浮动工具 / grip | 有独立命中优先级，不能穿透到背景启动第二手势 |
@@ -127,9 +129,9 @@ Escape / 失捕获 / 切Tab / owner失效 / source revision变化：取消手势
 
 ### 3.2 设置编辑指针而不清选（R19，P1，待 D-UI02）
 
-不能回答“点顶部尺子就行”：`MainWindow.xaml.cs:6267` 标尺更新的是 **Playback Cursor**，`:7330–7345` Select 单击清选后改的是 **Edit Cursor**。
+不能回答“点顶部尺子就行”：`MainWindow.xaml.cs:6267` 标尺更新的是 **Playback Cursor** ，`:7330–7345` Select 单击清选后改的是 **Edit Cursor** 。
 
-推荐保留 plain Select 左单击的清选 + 设置编辑指针，明确 **Ctrl+左单击且未拖动**只设置编辑指针并保留选择。现有清选条件已排除修饰键，但需验证点击 Note / 空白 / 不同模式的真实路由，不能把候选现状当成已完整支持。左拖仍按修饰键框选。
+推荐保留 plain Select 内容区左单击的清选 + 设置编辑指针，新增 **Ctrl+左单击顶部时间尺** 只设置 Edit Cursor 并保留选择；普通顶部时间尺单击仍设置 Playback Cursor。这里明确更正旧的“Ctrl+左单击内容区”建议：内容区 Ctrl 单击 / 拖动已承担多选和复制拖动，不能被新定位操作占用。新手势仍待 D-UI02 确认，不是已存在能力；底部禁止 Time Range 的规则不因此恢复。
 
 备选是 plain 左键只设指针、Esc 清选，但它改变用户希望保留的单击清选习惯。不擅自选择。增加 tooltip / 帮助说明，避免成为隐藏手势。
 
@@ -143,7 +145,7 @@ Escape / 失捕获 / 切Tab / owner失效 / source revision变化：取消手势
 
 R21 候选原因：`TimelineSurface.cs:10213/3449` 用 viewport `YToLane`，`TimelineRenderModel.cs:1320–1328` 将 y 先夹到当前可见 viewport；使鼠标离开后无法表达连续世界坐标 delta。现有 `AutoScrollEditGesture(:3527)` 只在 MouseMove 驱动，不能据此保证鼠标静止在边缘外也持续滚动。
 
-建议冻结 pointer-down 的世界坐标，capture 期间继续将外部位置映射成 delta；视觉裁切与数据约束分开。自动滚动与普通 Draw 拖动共用，不建立浮动工具专用低性能预览。MIDI key硬边界及普通 Move / Copy 的既有删除或 Clamp 规则保持；不要一律 Clamp所有Note并改变既有行为。
+建议冻结 pointer-down 的世界坐标，capture 期间继续将外部位置映射成 delta；视觉裁切与数据约束分开。D-UI09 建议鼠标静止于边缘外时也持续自动滚屏并更新 delta。自动滚动与普通 Draw 拖动共用，不建立浮动工具专用低性能预览。MIDI key硬边界及普通 Move / Copy 的既有删除或 Clamp 规则保持；不要一律 Clamp所有Note并改变既有行为。
 
 测试：三类Note、事件/Segment适用分支、1/10/40万/百万选择；上下出界、停留、返回、四角、Ctrl变化、失捕获、Escape、切Tab、鼠标静止边缘；预览、delta、最终结果一致，内存 / 首次冷区不退化。
 
@@ -151,7 +153,7 @@ R21 候选原因：`TimelineSurface.cs:10213/3449` 用 viewport `YToLane`，`Tim
 
 用户要求在 SubVoice 顶部时间线的 Template Length 位置显示窄手柄，拖动时显示新长度和 delta；Snap只量化delta。
 
-当前 `ProjectEventInstrumentEditCommands.cs:7–22/385–414` 不允许模板短于 SubVoice Note尾、事件、曲线、Loop端点及 Pre-Roll 下界。**模板不是可任意 crop 的 Segment**；不得默认“缩短后隐藏保留”也可成立。
+当前 `ProjectEventInstrumentEditCommands.cs:7–22/385–414` 不允许模板短于 SubVoice Note尾、事件、曲线、Loop端点及 Pre-Roll 下界。**模板不是可任意 crop 的 Segment** ；不得默认“缩短后隐藏保留”也可成立。
 
 推荐复用现有合法下界，D-UI05 决定拖到下界时饱和还是 Invalid。冻结原长度、Snap和最小长度；最小长度摘要需 revision-bound，不每 MouseMove 全扫内容。preview显示实际受限长度 / delta，抬起一次正式command，取消零变更；长度改变应刷新同Definition所有SubVoice视图并进入既有编译失效路径。不得移动Loop/Pre-Roll迁就手柄。
 
@@ -167,7 +169,7 @@ R21 候选原因：`TimelineSurface.cs:10213/3449` 用 viewport `YToLane`，`Tim
 
 ### R32：All Tracks 首开垂直缩放（P2）
 
-当前 `AllTracksWorkspaceViewModel.cs:32–33` 默认 FirstLane48、LaneHeight15；`AllTracksView.xaml.cs:62` 手动Fit用全控件高度除128，没有扣ruler。新增需求应在**首次有效布局**测量内容设备像素，不在每次激活 / resize重置。
+当前 `AllTracksWorkspaceViewModel.cs:32–33` 默认 FirstLane48、LaneHeight15；`AllTracksView.xaml.cs:62` 手动Fit用全控件高度除128，没有扣ruler。新增需求应在**首次有效布局** 测量内容设备像素，不在每次激活 / resize重置。
 
 建议 `N=max(4,floor(contentDeviceHeight/128))`，以显示key0..127为目标；N为整数，DPI转换只做一次。内容不足512device pixels时，无法同时做到N>3和全128key可见，D-UI07建议优先N≥4、允许滚动。未来恢复保存的有效视图时，恢复值优先于首次默认。
 
@@ -185,13 +187,15 @@ D-UI06建议仅有可靠total时显示百分比，否则显示 `Compile…` 或�
 
 当前 `TimelinePlaybackFollowPolicy.cs:26–35` 是越出10%..90%区域后跳到约20%的窗口跟随；`MainWindow.xaml.cs:153/697/725` 使用33ms UI刷新。固定指针会持续改变世界坐标可视范围，比只画一条cursor成本高。
 
-原范围只包括两类Segment Piano及All Tracks，默认不扩大到SubVoice。用户可配置指针锚点，至少评估最左 / 居中；是否仅提供预置或允许任意百分比，在性能 / UX实验后决定，不把原文例子当作排他限制。不改音频时钟。建议固定世界坐标tile、热tile平移复用、边缘后台预取、隐藏Tab停工，不随每像素滚动重建音符索引。停止、Seek、Loop、Buffering、手动Pan时何时恢复跟随需与既有Follow开关统一，先记录性能 / 手感再定。
+原范围只包括两类Segment Piano及All Tracks，默认不扩大到SubVoice。锚点、默认模式、手动操作和退让政策已经完整列入 D-VIS02.a～e / D-VIS03，待本次集中问答，不再留到实现中隐式决定。推荐保留跳跃模式为默认、连续模式可选，Follow 总开关仍默认关闭；连续锚点允许 0～100%（默认50%），不显示负Tick，手动Pan明确关闭Follow、手动Zoom保持Follow。上述是待批候选，其中手动操作政策会改变 SRS §20.1.9 当前的“临时中断”，不能当作纯渲染实现细节。
+
+不改音频时钟。建议固定世界坐标tile、热tile平移复用、边缘后台预取、隐藏Tab停工，不随每像素滚动重建音符索引。性能 / OS能力门仍须实测；用户批准行为不等于已经证明可以默认启用新效果。
 
 ### R11：播放琴键色（P3，先实验 / D-VIS01）
 
 当前 `TimelineSurface.cs:9155–9240` 琴键底图缓存与单个HighlightedPitch不是播放多音高状态。建议独立最多128key的轻量显示层，按明确来源和范围增量计数，不每帧扫所有Note、不修改音符tile、不让音频callback分配UI对象。
 
-需决定“按下”是视图源Note Gate，还是canonical最终pitch。Logical mapping、Loop/Pre-Roll以及All Tracks混合Compiled模式下，两者不相同；二者也都不等于SoundFont仍在release的真实voice。推荐与当前所见图形一致的Gate活动层，并明确非音频表头；同key来源竞争、Onion颜色、Mute/Solo、停止 / Seek / Loop / Buffering须冻结规则。
+“按下”是视图源Note Gate还是canonical最终pitch，以及同key来源竞争、Onion颜色、Mute/Solo、停止 / Seek / Loop / Buffering，已拆到 D-VIS01.a～d 待回答。Logical mapping、Loop/Pre-Roll以及All Tracks混合Compiled模式下，两种来源不相同；二者也都不等于SoundFont仍在release的真实voice。推荐与当前所见图形一致的Gate活动层、不按Mute/Solo过滤、当前编辑轨道优先、其余取最上层来源色；Buffering冻结、Stop清空、Seek/Loop按新Tick更新。该推荐是视觉活动层，不是音频表头。
 
 R10/11性能实验共同输出：相同镜头轨迹下cursor-only与连续滚屏 / 键色的p95/p99帧耗时、首次冷tile显示时间、后台队列 / 取消、内存 / 分配、underrun；稀疏、密集、长Gate、大量Onion来源全部覆盖。未通过前不承诺它们已适合默认开启。
 
@@ -199,19 +203,19 @@ R10/11性能实验共同输出：相同镜头轨迹下cursor-only与连续滚屏
 
 顶部 `Tracks` Toggle 位于List左侧；展开面板位于对象List更左。复用Arrangement的轨头presenter、命令、唯一排序、group brace、runtimeMuteSolo，不能复制业务处理器形成第三套顺序。
 
-默认隐藏是建议，不是原文已给定。先明确“几乎所有操作”的矩阵：Properties/改名/颜色/绑定/路由/排序/共享组/MuteSolo可复用；Segment内容绘制不进入轨头列表。双击某Track如何选择其Segment、删除当前owner后Tab处理需要该轮定案。折叠即停止不必要订阅 / 查询，选择/焦点与Arrangement保持明确语境；状态专题以后持久化仅白名单字段。
+默认隐藏是建议，不是原文已给定。“几乎所有操作”、单击/双击、目标Segment选择、删除当前owner和轨道操作目标已列 D-TRACK01.a～d 待集中回答：推荐复用Properties/改名/颜色/绑定/路由/复制剪贴板/排序/共享组/MuteSolo；不加入Segment内容绘制。单击共用Arrangement轨道选择，双击优先编辑指针所在Segment、空隙取最近且等距取前，空轨道不自动创建。删除当前owner沿用关闭相关Tab，轨道操作不无故清除音符选择。折叠即停止不必要订阅 / 查询；持久化只包含 D-STATE 批准白名单。
 
 ### R03：原生窗口效果（P3，建议发布前单轮）
 
 源码大量使用 `WindowStyle=None`、WindowChrome与自绘边框（例如NewProject/About/ApplicationPreferences）。此轮未做Windows运行验证，不能声称只改CornerRadius就能获得原生阴影 / 动画。
 
-实施前做独立小探针验证产品现有Chrome下的最小化 / 最大化 / 恢复、Snap布局、Win11圆角阴影与Win10方角阴影、DPI / 多屏 / 最大化工作区 / resize命中。支持能力以运行OS与窗口实际配置为准；不为效果引入透明大窗口造成渲染回退。不在本次写平台API已验证结论。
+范围和能力不可用时的回退见 D-WIN01；Win10实机条件也在 `04` 留有待填写项。实施前做独立小探针验证产品现有Chrome下的最小化 / 最大化 / 恢复、Snap布局、Win11圆角阴影与Win10方角阴影、DPI / 多屏 / 最大化工作区 / resize命中。支持能力以运行OS与窗口实际配置为准；不为效果引入透明大窗口造成渲染回退。不在本次写平台API已验证结论。
 
 ### R08 / R09 / R02：等待清单
 
 - R08（P3）：用户先提供“菜单位置 / 命令 / Fluent图标 / variant”表；通用命令多入口共用图标，禁用态 / 对齐 / shortcut栏同时检查。本轮不替用户挑选。
-- R09（P3）：先列现有 / 期望键位与焦点作用域，验证输入框、IME、代码补全、模态、Tab和只读视图。不得借本项随意改本批无关键位；R18/19必要变更先单独批准。
-- R02（P4）：发布稳定后才做。闪烁只是用户举例，不固定为产品方向。推荐短淡入、Reduced Motion / 禁动画可用；只动画独立视觉层，不删粗缓存、不使已显示内容再次空白、不改变命中 / 选择。菜单 / 下拉 / 弹窗动画与亚克力分开评估，性能紧张时确定降级。
+- R09（P3）：D-KEY01/02 已列本次键位补充或授权推荐，以及是否扩大到可配置快捷键系统的问题。推荐保留既有键位、只为本批高频新增命令安排无冲突键位、不附带用户可配置系统；未回答前不视为授权。正式键表必须核对输入框、IME、代码补全、模态、Tab和只读视图；R18/19手势仍单独确认。
+- R02（P4）：发布稳定后才做。闪烁只是用户举例，不固定为产品方向。动效方向、亚克力默认值、首次tile动效范围及性能退让政策已列 D-FX01.a～d 待回答。推荐短淡入、亚克力独立开关默认关闭、Reduced Motion / 禁动画可用；只动画独立视觉层，不删粗缓存、不使已显示内容再次空白、不改变命中 / 选择；编辑/Undo/Selection/热cache不反复动画，繁忙时跳过装饰而不延迟内容。
 
 ## 7. 现有自动测试扩展落点
 

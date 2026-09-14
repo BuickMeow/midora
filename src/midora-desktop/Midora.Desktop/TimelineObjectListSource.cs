@@ -364,8 +364,11 @@ public sealed class TimelineObjectListSource : IDisposable
         TimelineItemKind.LogicalParameterPoint => "Parameter",
         TimelineItemKind.OpaqueMidiEvent => row.OpaqueKind.ToString(),
         TimelineItemKind.TemplateEvent when row.TemplateKind == TemplateEventKind.ControlChange => MidiControlChangeCatalog.Format(row.Number),
+        TimelineItemKind.TemplateEvent when row.TemplateKind is TemplateEventKind.RegisteredParameter
+            or TemplateEventKind.NonRegisteredParameter => $"{row.TemplateKind} {row.Number}",
         TimelineItemKind.TemplateEvent => row.TemplateKind.ToString(),
         TimelineItemKind.DirectMidiEvent when row.DirectKind == DirectMidiChannelEventKind.ControlChange => MidiControlChangeCatalog.Format(row.Number),
+        TimelineItemKind.DirectMidiEvent when row.DirectKind == DirectMidiChannelEventKind.PolyphonicKeyPressure => $"PolyphonicKeyPressure {row.Number}",
         _ => row.DirectKind.ToString()
     };
     public string GetRowTypeLabel(TimelineObjectListRow row) => row.Kind == TimelineItemKind.LogicalParameterPoint
@@ -381,5 +384,5 @@ public sealed class TimelineObjectListSource : IDisposable
         : row.Kind == TimelineItemKind.TemplateEvent && row.TemplateKind == TemplateEventKind.Program
             || row.Kind == TimelineItemKind.DirectMidiEvent && row.DirectKind == DirectMidiChannelEventKind.ProgramChange
             ? $"Program {row.Value + 1}"
-        : $"{row.Number} · {row.Value.ToString("G", CultureInfo.InvariantCulture)}";
+        : row.Value.ToString("G", CultureInfo.InvariantCulture);
 }

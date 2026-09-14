@@ -221,6 +221,8 @@ Logical Segment 变体的下部 Lane 编辑 Logical Parameter，并通过 Track 
 
 Pure MIDI `Add Lane` 使用与 SubVoice `Add Event` 一致的分步目标选择器，不得平铺数百个条目。Pure MIDI 允许选择 MIDI 1.0 的全部 CC `0..127`；已被 BASSMIDI 名称表识别者统一显示为 `CC <n> - <Name>`，未识别者显示为 `CC <n>`。活动 Event Lane 下拉框使用同一格式。
 
+Pure MIDI 与 SubVoice 的 Pitch Bend Event Lane 统一使用 `−8192..8191` 显示标尺及指针坐标；中性刻度必须标为实际值 `0`，不能将非对称范围的算术中点 `−0.5` 标成 `−1`。Direct MIDI 正式 scalar 仍为 `0..16383`，显示值等于 scalar 减 8192；SubVoice 正式值仍为 `−8192..8191`。此显示转换不改变持久化、编码、编译结果或批量编辑的正式输入值域。
+
 Pure MIDI 的 opaque SysEx/Meta 只在 Event List 中选择、移动和删除，并通过只读 `Properties...` 查看 payload 摘要；不提供自由 payload 编辑。两种变体必须共享 Grid/Snap/zoom/pan/scroll、tile cache、临时编辑覆盖层、批量选择与 Segment Content Window 行为；修复共享交互缺陷不得要求分别修改复制实现。
 
 Pure MIDI 编辑器提交 Direct Note 创建、移动、复制、粘贴或其他位置变更时，若产生同 start tick + key exact collision，则静默保留原先/更早进入结果的 Note 并丢弃后来对象。提交 Direct Channel Event 创建、画线、移动、复制、粘贴或其他位置变更时，若产生同 tick + 同正式事件类型 exact collision，则后来编辑对象覆盖原对象。上述归并属于一次编辑事务并随 Undo 恢复；SMF 导入后尚未触及该 exact key 的重复 Direct 数据必须继续原样显示和保存。
@@ -236,8 +238,10 @@ Logical 与 Pure MIDI Segment Editor 的水平滚动 extent 必须同时覆盖�
 ### 18.2.8 三种钢琴卷帘的 Timeline 对象列表
 
 Logical Segment、MIDI Segment 与 SubVoice 共享左侧 owner-data 对象列表，开关位于 `Lanes` 左侧、默认隐藏。显隐、宽度与滚动位置仅属于 Workspace Session，不进入 Project、Undo、Modified 或文件格式。
+新建列表状态的默认宽度为 400 DIP；用户已经调整的宽度在同一会话隐藏/重开时保留，不因新默认值被覆盖，继续使用既有 240～700 DIP 范围。
 
 列表按 local tick 和确定性同 tick 顺序合并当前 owner 的所有音符和非音符事件：Logical 包含全部参数 Lane point，MIDI 包含 Channel Event 与 Opaque SysEx/Meta，SubVoice 包含 Template Note/MIDI Event。音符每个对象一行，不拆 NoteOn/NoteOff；展示 Tick、Gate/Length、Key、Velocity，内部 Stable ID 不显示。
+Value 列按正式事件类型显示数值，不拼接无意义的 `Number · Value` 前缀；CC、RPN/NRPN、Polyphonic Key Pressure 的目标编号必须在 Type/Target 中保留。Bank 的 MSB/LSB 存在性与 Pitch Bend Range 的复合值不得丢失。这里只调整格式，不改变 raw 值域或现行 Program 的显示编号。
 
 列表与图形共用 Selection。单击、Ctrl toggle、Shift 冻结 ordinal 范围及拖动范围遵循 §20.3；双击只针对被双击对象打开 `Properties...`。`Locate` 定位到对象，事件必须自动打开 Lanes 并选择对应 Lane。右键目标在打开时冻结；无效/旧修订后台结果不能恢复旧选区。Opaque payload 仅可读，不得作为普通数值点执行表达式工具。
 
@@ -337,6 +341,7 @@ Initial State
 SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll Grid / Snap、默认 Note 长度和默认 velocity。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
 
 从 Velocity 切换到 Event Lane 后，键盘焦点必须在布局更新后进入 Event Lane Timeline Surface，不得停留在 `LANE` 下拉框；因此 `D` / `S` / `E`、Space 及其他焦点敏感 Workspace 快捷键必须立即可用。
+SubVoice `Add Event` 成功后必须按稳定 MIDI target 显示并激活新 Lane、打开下部事件区，并在布局完成后把焦点交回对应 Surface；不得仅依赖列表下标，也不得在绑定列表尚未刷新时查找新 Lane 并放弃导航。此后 `A` 操作该事件视图的 Snap，不是上方 piano roll 的独立 Snap。取消、失败、旧 Workspace 或已失效导航不能改变当前 Lane/选择或抢回焦点。添加空 Lane 本身不延长模板。
 
 SubVoice Note piano roll 复用第 18.2.3～18.2.4 节的 Pitch Ruler 琴键与 C 音名规则、Draw / Select 直接编辑边界、拖动预览和第 20 章的工具互斥、指针及快捷键规则。
 SubVoice 不提供 Time Range 选择：主 piano ruler、Velocity ruler 与 Event Lane ruler 均不得开始时间范围拖选，右键菜单的 Time Range 命令禁用；对象框选、列表范围选择和直接编辑不受影响。
@@ -351,6 +356,7 @@ A user event at tick 0 may override the corresponding Initial State.
 同一 SubVoice Section 的 `Initial State` 子页还必须提供该 SubVoice 的 Name、Root Note inherited/override 与全部现有 Initial State target 的精确编辑。添加新的 CC/RPN/NRPN target 使用显式选择器；空值表示删除该 Initial State override。提交失败恢复最后合法值。
 ### 18.4.4 Template 与 Root Note
 Template Length 属于 Event Instrument，不是每条 SubVoice 独立长度。
+可视模板末端不是 SubVoice 普通事件的创建上界。单击、Shift 单点、自由绘线、右键直线/水平线、批量创建、粘贴、复制拖动，以及已有事件 Move/Properties 等正式入口，创建或移到模板外的点必须在同一原子命令中把 Template Length 扩至至少 `tick + 1`；原有 Value Curve 点创建遵循同一边界但不转换为离散事件。所有打开的同 Definition 视图随成功提交刷新；一次 Undo 同时恢复内容与旧模板长度，Redo 恢复结果。负 tick、溢出、取消、过期 owner/revision 或资源失败不得部分发布。不要为扩模板重建已删除的可选 Mapping；Initial State 无 tick，不参与扩长。Logical/Pure MIDI Segment 的 crop 和合法编辑边界不由此改变。
 Configurations 的 Template 区必须提供 `Pre-Roll Ticks` 非负整数编辑，显示范围 `0..当前 Template Length`、默认 0。Configuration 输入留空或仅含空白时，提交前静默将输入框及待提交值归为 `0`；原正式值已为 `0` 时不产生 History edit。提交只在 `0 <= value <= Template Length` 时通过一个正式原子 Definition 命令生效；非空非法输入仍拒绝并恢复打开/提交前的合法值，不进行 Clamp。Properties Dialog 同时修改 Template Length、Pre-Roll Ticks、Loop 边界与 Per-Note Instance Isolation 时，必须按最终 draft 一次验证并作为一个 History edit 提交。帮助文本须说明 Logical Note start 是 Gate anchor、模板 origin 会提前，并提示实例 origin 越过 Segment 左边界将导致编译 Error。
 SubVoice 显示 Root Note 的 inherited / override 状态和 Effective Value。
 Loop 区域可以只读显示，但在 Lifecycle Editor 中编辑。

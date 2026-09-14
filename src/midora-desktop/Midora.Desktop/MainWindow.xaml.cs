@@ -365,6 +365,15 @@ public partial class MainWindow : Window
     }
 
     private async void OnApplicationPreferencesClick(object sender, RoutedEventArgs e)
+        => await OpenApplicationPreferencesAsync(ApplicationPreferencesPage.Audio);
+
+    private async void OnSoundFontStatusMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        await OpenApplicationPreferencesAsync(ApplicationPreferencesPage.SoundFonts);
+    }
+
+    private async Task OpenApplicationPreferencesAsync(ApplicationPreferencesPage initialPage)
     {
         if (!PrepareForModalSurface()) return;
         if (!_session.CanStartForegroundTask)
@@ -377,7 +386,7 @@ public partial class MainWindow : Window
         ApplicationPreferencesDialog dialog = new(
             _preferences,
             _instrumentCatalog,
-            TryPublishApplicationPreferences) { Owner = this };
+            TryPublishApplicationPreferences, initialPage) { Owner = this };
         if (ShowModalDialog(dialog) != true || dialog.Result is null) return;
 
         ApplicationPreferences preferences = dialog.Result;
@@ -7666,6 +7675,19 @@ public partial class MainWindow : Window
                 edits), workspace, sender as TimelineSurface);
     }
 
+    private async void OnSubVoiceEventPointTraceCompleted(object? sender, TimelineEventPointTraceEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
+            || workspace.ObjectId is not MidoraId instrumentId || workspace.ActiveSubVoiceId is not MidoraId voiceId
+            || workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)?.Target is not MidiValueTarget target
+            || e.Trace.Count == 0) return;
+        await ExecuteStagedProjectOperationAsync("Draw Event points",
+            ProjectDomainEditCommands.DrawTemplateEventPoints(instrumentId, voiceId, target,
+                token => e.Sample(token).Select(point => new TemplateEventPointEdit(point.Tick,
+                    checked((int)InstrumentWorkspaceViewModel.DenormalizeMidiValue(target, point.NormalizedValue))))),
+            workspace, sender as TimelineSurface);
+    }
+
     private async Task EditArrangementItem(
         TimelineWorkspaceViewModel workspace,
         TimelineItemEditEventArgs edit,
@@ -8003,7 +8025,12 @@ public partial class MainWindow : Window
         var frozenIds = CompressedMidoraIdSet.Create(selectedIds).Add(point.Id);
         DirectMidiEventLaneTarget pointTarget = TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(point);
         var read = await ReadSelectionInputAsync((readProject, token) => ReadSelectionInputMetrics(readProject, eventSource, frozenIds,
-            static value => (value.Tick, value.Tick, 0, 0d), token,
+            static value => (value.Tick, value.Tick, 0, (double)(value.Kind switch
+            {
+                DirectMidiChannelEventKind.PitchBend => (value.Data2 << 7) | value.Data1,
+                DirectMidiChannelEventKind.ProgramChange or DirectMidiChannelEventKind.ChannelPressure => value.Data1,
+                _ => value.Data2
+            })), token,
             value => TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value) == pointTarget));
         if (!read.Completed || read.Value.Ids.Count == 0) return;
         var selectedEventIds = read.Value.Ids;
@@ -8014,37 +8041,14 @@ public partial class MainWindow : Window
         int valueDelta = checked((int)Math.Round(
             edit.ValueDelta * (point.Kind == DirectMidiChannelEventKind.PitchBend ? 16383 : 127),
             MidpointRounding.AwayFromZero));
-        int data1Delta = point.Kind is DirectMidiChannelEventKind.ProgramChange
-            or DirectMidiChannelEventKind.ChannelPressure
-            or DirectMidiChannelEventKind.PitchBend
-                ? valueDelta
-                : 0;
-        int data2Delta = point.Kind is DirectMidiChannelEventKind.ProgramChange
-            or DirectMidiChannelEventKind.ChannelPressure
-                ? 0
-                : valueDelta;
-        if (point.Kind == DirectMidiChannelEventKind.PitchBend)
-        {
-            int oldValue = (point.Data2 << 7) | point.Data1;
-            int newValue = Math.Clamp(oldValue + valueDelta, 0, 16383);
-            data1Delta = (newValue & 0x7f) - point.Data1;
-            data2Delta = ((newValue >> 7) & 0x7f) - point.Data2;
-        }
-        else if (data1Delta != 0)
-        {
-            data1Delta = Math.Clamp(point.Data1 + data1Delta, 0, 127) - point.Data1;
-        }
-        else
-        {
-            data2Delta = Math.Clamp(point.Data2 + data2Delta, 0, 127) - point.Data2;
-        }
+        valueDelta = Math.Clamp(valueDelta, checked(-(int)read.Value.MinimumValue),
+            checked((point.Kind == DirectMidiChannelEventKind.PitchBend ? 16383 : 127) - (int)read.Value.MaximumValue));
         long firstNewStableId = project.NextStableId;
-        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustDirectMidiEventPoints(
+        if (!await ExecuteWorkspaceEditAsync(ProjectDomainEditCommands.AdjustDirectMidiEventPointValues(
             segmentId,
             selectedEventIds,
             tickDelta,
-            data1Delta,
-            data2Delta,
+            valueDelta,
             edit.CopyRequested))) return;
         if (edit.CopyRequested)
         {
@@ -8278,6 +8282,7 @@ public partial class MainWindow : Window
                 workspace.ActiveParameterLaneIndex = workspace.ParameterLaneOptions.ToList()
                     .FindIndex(value => value.DirectMidiTarget == target);
                 _session.RefreshWorkspace(workspace);
+                RestoreModalCommandFocus(workspace, FindWorkspaceElement<TimelineSurface>("ParameterLanes"));
             }
             return;
         }
@@ -8303,8 +8308,11 @@ public partial class MainWindow : Window
         SelectionDialog dialog = new("Add Logical Parameter Lane", "Select a Logical Parameter from the bound Event Instrument.", options) { Owner = this };
         if (ShowModalDialog(dialog) == true && dialog.SelectedValue is MidoraId parameterId)
         {
-            RunSynchronous("Create Logical Parameter Lane", () => ExecuteAndSelectCreated(
-                ProjectDomainEditCommands.CreateLogicalParameterLane(segmentId, parameterId), workspace));
+            if (RunSynchronous("Create Logical Parameter Lane", () => ExecuteAndSelectCreated(
+                ProjectDomainEditCommands.CreateLogicalParameterLane(segmentId, parameterId), workspace)))
+            {
+                RestoreModalCommandFocus(workspace, FindWorkspaceElement<TimelineSurface>("ParameterLanes"));
+            }
         }
     }
 
@@ -8578,11 +8586,21 @@ public partial class MainWindow : Window
                 $"The {TemplateEventMidiTargets.Format(target)} event lane already exists in this SubVoice.");
             return;
         }
-        RunSynchronous($"Create {TemplateEventMidiTargets.Format(target)} lane", () =>
+        if (!RunSynchronous($"Create {TemplateEventMidiTargets.Format(target)} lane", () =>
             _session.Execute(ProjectDomainEditCommands.CreateSubVoiceEventLane(
                 instrumentId,
                 voiceId.Value,
-                target)));
+                target)))) return;
+        if (!_session.ActivateCreatedSubVoiceEventLane(workspace, voiceId.Value, target)) return;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+        {
+            if (!IsActive || !ReferenceEquals(_session.ActiveWorkspace, workspace)
+                || workspace.ActiveSubVoiceId != voiceId.Value
+                || workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)?.Target != target) return;
+            if (FindWorkspaceElement<TimelineSurface>("SubVoiceEvents") is { IsVisible: true, IsEnabled: true } surface
+                && ReferenceEquals(surface.DataContext, workspace))
+                surface.Focus();
+        }));
     }
 
     private void OnDeleteSubVoiceEventLaneClick(object sender, RoutedEventArgs e)
@@ -9505,17 +9523,27 @@ public partial class MainWindow : Window
 
     private void RestoreModalCommandFocus(
         WorkspaceViewModel? sourceWorkspace,
+        TimelineSurface? sourceSurface) =>
+        QueueTimelineCommandFocus(Dispatcher, _session, sourceWorkspace, sourceSurface);
+
+    internal static void QueueTimelineCommandFocus(
+        Dispatcher dispatcher,
+        DesktopSessionController session,
+        WorkspaceViewModel? sourceWorkspace,
         TimelineSurface? sourceSurface)
     {
         if (sourceWorkspace is null || sourceSurface is null
             || !ReferenceEquals(sourceSurface.DataContext, sourceWorkspace)) return;
         TimelineCommandTarget target = new();
         target.Set(sourceSurface);
-        _ = Dispatcher.BeginInvoke(
+        // Success navigation is queued after the dialog's original-source
+        // restore, at the same priority, so that the destination wins after
+        // the higher-priority model refresh and bindings have completed.
+        _ = dispatcher.BeginInvoke(
             DispatcherPriority.Input,
             new Action(() =>
             {
-                if (_session.ActiveWorkspace is { } active && _session.Workspaces.Contains(active))
+                if (session.ActiveWorkspace is { } active && session.Workspaces.Contains(active))
                     target.RestoreFocus(active);
             }));
     }

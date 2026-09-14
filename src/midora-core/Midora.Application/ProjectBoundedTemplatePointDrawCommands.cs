@@ -4,9 +4,17 @@ namespace Midora.Application;
 
 public static partial class ProjectDomainEditCommands
 {
-    private readonly record struct BoundedTemplateDrawPoint(long Tick, int Value);
+    private readonly record struct BoundedTemplateDrawPoint(long Tick, int Value, int Order);
     private static IProjectEditCommand BoundedUpsertTemplatePoints(MidoraId instrumentId, MidoraId voiceId,
         MidiValueTarget target, IReadOnlyCollection<TemplateEventPointEdit> points) =>
+        BoundedUpsertTemplatePoints(instrumentId, voiceId, target, _ => points, mergeRepeatedTicks: false);
+
+    public static IProjectEditCommand DrawTemplateEventPoints(MidoraId instrumentId, MidoraId voiceId,
+        MidiValueTarget target, Func<CancellationToken, IEnumerable<TemplateEventPointEdit>> points) =>
+        BoundedUpsertTemplatePoints(instrumentId, voiceId, target, points, mergeRepeatedTicks: true);
+
+    private static IProjectEditCommand BoundedUpsertTemplatePoints(MidoraId instrumentId, MidoraId voiceId,
+        MidiValueTarget target, Func<CancellationToken, IEnumerable<TemplateEventPointEdit>> points, bool mergeRepeatedTicks) =>
         new BoundedProjectEditCommand("Draw template event points", (project, token, progress) =>
         {
             var scope = BulkEditPreparationContext.Current!;
@@ -15,8 +23,9 @@ public static partial class ProjectDomainEditCommands
             var stamp = ProjectTimelineOwnerSourceStamp.Capture(instrument, voice);
             var source = voice.Events.CreateQuerySnapshot();
             source.PrepareOrdinalLookup(BoundedTimelineOrdinalIndexBuilder.Instance, token);
-            using var ordered = BoundedEditSort.Sort(points.Select(static p => new BoundedTemplateDrawPoint(p.Tick, p.Value)),
-                Comparer<BoundedTemplateDrawPoint>.Create((a, b) => a.Tick.CompareTo(b.Tick)), scope.Resources, token);
+            using var ordered = BoundedEditSort.Sort(points(token).Select(static (p, index) => new BoundedTemplateDrawPoint(p.Tick, p.Value, index)),
+                Comparer<BoundedTemplateDrawPoint>.Create((a, b) =>
+                { int tick = a.Tick.CompareTo(b.Tick); return tick != 0 ? tick : a.Order.CompareTo(b.Order); }), scope.Resources, token);
             long expectedId = project.NextStableId, nextId = expectedId;
             using var plan = BoundedTemplatePointPlan.Build(source, Rows());
             return PublishBoundedTemplatePoints(project, instrument, voice, stamp, plan, expectedId, nextId,
@@ -24,14 +33,11 @@ public static partial class ProjectDomainEditCommands
 
             IEnumerable<BoundedTemplatePointPlan.Row> Rows()
             {
-                long previousTick = -1;
                 int additionOrdinal = source.Count, processed = 0;
-                foreach (var point in ordered.ReadValues(token))
+                foreach (var point in FinalPoints())
                 {
                     scope.Checkpoint(processed++, ordered.Count);
                     ValidateTemplateEventPoint(target, new(point.Tick, point.Value));
-                    if (previousTick == point.Tick) throw new ArgumentException("Template Event point ticks must be unique.", nameof(points));
-                    previousTick = point.Tick;
                     TemplateEventSnapshotValue? found = null;
                     foreach (var candidate in source.EnumerateEventExactTick(point.Tick))
                     {
@@ -56,6 +62,23 @@ public static partial class ProjectDomainEditCommands
                     var details = TemplateEventExactCollision.Details(value);
                     yield return new(ordinal, old, value, created, false, details.First, details.Second, details.Count);
                 }
+            }
+
+            IEnumerable<BoundedTemplateDrawPoint> FinalPoints()
+            {
+                BoundedTemplateDrawPoint? pending = null;
+                foreach (var point in ordered.ReadValues(token))
+                {
+                    token.ThrowIfCancellationRequested();
+                    ValidateTemplateEventPoint(target, new(point.Tick, point.Value));
+                    if (pending is { } previous)
+                    {
+                        if (previous.Tick != point.Tick) yield return previous;
+                        else if (!mergeRepeatedTicks) throw new ArgumentException("Template Event point ticks must be unique.", nameof(points));
+                    }
+                    pending = point;
+                }
+                if (pending is { } last) yield return last;
             }
         });
 

@@ -28,6 +28,7 @@ Metadata
 Review
 ```
 ### 19.1.2 创建参数
+主操作文案为 `Create`。窗口与保存路径区的 Browse 按钮必须为正式字体保留完整文本和可达操作空间，不能靠裁字容纳；沿用共享红色 Primary、Cancel、Enter/Escape 与 Owner 契约，不全局改变其他按钮尺寸。
 创建时确定：
 ```text
 Optional Project Name

@@ -307,6 +307,7 @@ Relative Adjust
 ```
 Enum 只支持统一设值，不支持相对数值 Delta。
 Parameter Point 只有同 Definition、同类型、同值域和同语义时才能共同纵向调整。
+SubVoice 数值 MIDI 点、Logical 数值参数点、Pure MIDI Channel Event 的纵向批移/复制批移必须保持整组形状：根据完整选区的最小/最大值求一个共同合法 delta，任一点先触边时整组停止，不逐点分别压平。预览、delta 提示和 Pointer Up 提交使用同一有效 delta。Direct Pitch Bend 使用 `0..16383` scalar、SubVoice Pitch Bend 使用 `-8192..8191`；必须在对应标量域调整后再编码，不能把主点高/低字节的增量套到其他点。目标 selector、Bank/Range 的未编辑分量、精确碰撞规则与 Undo/Redo 均保留。Enum 的相对纵向调整禁用，水平移动和精确设值仍可用。
 ### 20.4.6 Segment 跨 Track
 保持 Track 相对间距，并保留全部内容和 crop 外数据。
 同类型跨 Track 保留全部源内容，Midi Segment 可改变 parent Root。跨类型与混合选择的跨 Track 移动/复制遵循第 20.6.14 节；未确认不可转换数据损失时不得提交。
@@ -1711,6 +1712,9 @@ Velocity 低水平缩放时，onset marker 仍保持固定 device-size、不得�
 ComboBox 的可编辑文本和下拉指示必须分别在内容区与按钮区垂直居中；下拉指示使用同一 Fluent 图标体系，不得使用字体符号代替。显式垂直 ScrollBar 的 Track 必须完整铺满可用高度；Thumb 长度必须按当前可见范围相对完整有界范围的比例计算，不得使用与视口无关的固定值。Diagnostics Workspace 的筛选 ComboBox 和 Segment Piano Roll 顶部左侧文本不得裁切或偏离垂直中心。Timeline 和 piano roll 的显式垂直 ScrollBar 必须始终占据其布局位置；无可滚动范围时只 Disabled，不得 Collapsed 或以透明 Disabled 样式消失。
 
 ComboBox 下拉内容打开时，鼠标滚轮必须由该下拉表面消费；即使当前项数不足以显示垂直 ScrollBar 或滚动位置已经到达边界，也不得把同一滚轮手势路由到外层 ScrollViewer。该规则由共享 ComboBox template 统一提供；非 ComboBox 的代码补全、Menu 与自定义 Popup 按各自交互规格处理。
+展开 ComboBox 的指针仅停留在上下边缘时不得自动滚动，包括悬停焦点触发的 BringIntoView；必须保留实际滚轮、滚动条拖柄/按钮、键盘导航和显式定位请求，不能冻结全部 offset。隐式、显式、keyed、可编辑样式必须共用此规则，不引入永久轮询。
+
+Instrument Catalog 的 Banks、Programs、Scan Presets 的源 SF2 选择列表及 bank 结果列表使用逻辑项滚动：每个标准 wheel 刻度移动一项，高精度不足一刻度的余量由每个控件独立累计，反向时清除相反方向余量。列表到顶/底或不足一屏时仍消费该手势，外层表单不得一起滚动；不改变 Selection，不取消虚拟化。普通像素滚动表面不套用逻辑项单位。
 ### 20.15.5 Resize 语义
 Resize 只改变视图，不：
 ```text

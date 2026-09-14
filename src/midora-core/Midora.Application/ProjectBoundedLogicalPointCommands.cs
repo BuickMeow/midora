@@ -42,6 +42,9 @@ public static partial class ProjectDomainEditCommands
             ProjectTimelineOwnerSourceStamp stamp = ProjectTimelineOwnerSourceStamp.Capture(location.Segment);
             LogicalParameterDefinition definition = FindBoundLogicalParameter(project, location.Track, lane.ParameterId);
             if (!double.IsFinite(valueDelta) || !Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(valueDelta));
+            if (operation == BoundedPointOperation.Adjust
+                || operation == BoundedPointOperation.SetValue && mode != ProjectBatchValueEditMode.ExactSet)
+                ValidateLogicalParameterRelativeDelta(definition, valueDelta);
             if (interpolation is not null && interpolation != CurveInterpolation.Step)
                 throw new ArgumentOutOfRangeException(nameof(interpolation));
             if (operation == BoundedPointOperation.Set && tick is null && value is null && interpolation is null)

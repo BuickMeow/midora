@@ -1068,7 +1068,9 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
     private TimelineToolMode _toolMode = TimelineToolMode.Select;
     private double _activeValueMinimum;
     private double _activeValueMaximum = 127;
+    private double _activeValueDisplayOffset;
     private bool _activeValueIntegral = true;
+    private bool _activeValueDragEnabled = true;
     private bool _isLowerEditorVisible = true;
     private double _lowerEditorHeight = TimelineLowerEditorLayout.DefaultHeight;
     private bool _isEventInstrumentPaneVisible;
@@ -1355,15 +1357,35 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
     {
         _directMidiLaneTargets.Add(target);
     }
+
+    public bool ActiveValueDragEnabled
+    {
+        get => _activeValueDragEnabled;
+        private set => Set(ref _activeValueDragEnabled, value);
+    }
+
     public double ActiveValueMinimum
     {
         get => _activeValueMinimum;
-        private set => Set(ref _activeValueMinimum, value);
+        private set { if (Set(ref _activeValueMinimum, value)) Raise(nameof(ActiveValueAxisMinimum)); }
     }
     public double ActiveValueMaximum
     {
         get => _activeValueMaximum;
-        private set => Set(ref _activeValueMaximum, value);
+        private set { if (Set(ref _activeValueMaximum, value)) Raise(nameof(ActiveValueAxisMaximum)); }
+    }
+    // Display coordinates only. Bulk commands still receive the formal scalar
+    // range above (Direct MIDI Pitch Bend is encoded as 0..16383).
+    public double ActiveValueAxisMinimum => ActiveValueMinimum + _activeValueDisplayOffset;
+    public double ActiveValueAxisMaximum => ActiveValueMaximum + _activeValueDisplayOffset;
+    private double ActiveValueDisplayOffset
+    {
+        set
+        {
+            if (!Set(ref _activeValueDisplayOffset, value)) return;
+            Raise(nameof(ActiveValueAxisMinimum));
+            Raise(nameof(ActiveValueAxisMaximum));
+        }
     }
     public bool ActiveValueIntegral
     {
@@ -2289,7 +2311,9 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         ActiveValueMinimum = 0;
         ActiveValueMaximum = 127;
         ActiveValueIntegral = true;
+        ActiveValueDisplayOffset = 0;
         ParameterLaneOption? activeOption = GetActiveParameterLaneOption();
+        ActiveValueDragEnabled = true;
         if (activeOption is not null)
         {
             LogicalParameterDefinition? definition = instrument?.LogicalParameters
@@ -2306,6 +2330,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
                 ActiveValueMinimum = minimum;
                 ActiveValueMaximum = maximum;
                 ActiveValueIntegral = definition.Type is LogicalParameterType.Integer or LogicalParameterType.Enum;
+                ActiveValueDragEnabled = definition.Type != LogicalParameterType.Enum;
             }
             parameterLabels.Add(activeOption.Label);
             LogicalParameterLane? lane = activeOption.LaneId is MidoraId laneId
@@ -2445,6 +2470,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
             : 127;
         ActiveValueIntegral = true;
         DirectMidiEventLaneTarget? activeTarget = GetActiveParameterLaneOption()?.DirectMidiTarget;
+        ActiveValueDisplayOffset = activeTarget is { Kind: DirectMidiChannelEventKind.PitchBend } ? -8192 : 0;
         bool activeOpaque = GetActiveParameterLaneOption()?.IsOpaqueMidiLane == true;
         ITimelineRenderItemSource? activeSource = activeOpaque
             ? new PagedDirectMidiTimelineItemSource(
@@ -3211,6 +3237,27 @@ public sealed class InstrumentWorkspaceViewModel(
     {
         _explicitRenderLaneTarget = GetRenderLane(ActiveRenderLaneIndex)?.Target;
         _explicitRenderLaneSelectionRevision = Selection.Revision;
+    }
+
+    internal void PreferEventLaneOnNextRebuild(MidiValueTarget target)
+    {
+        // Creation is committed before the dispatcher rebuilds RenderLanes.
+        // Record stable navigation intent without consulting that stale list.
+        _explicitRenderLaneTarget = target;
+        _explicitRenderLaneSelectionRevision = Selection.Revision;
+    }
+
+    public bool TryActivateEventLane(MidiValueTarget target)
+    {
+        int index = -1;
+        for (int i = 0; i < RenderLanes.Count; i++)
+            if (RenderLanes[i].Target == target) { index = i; break; }
+        if (index < 0) return false;
+        ActiveRenderLaneIndex = index;
+        PreferCurrentRenderLaneOnNextRebuild();
+        IsLowerEditorVisible = true;
+        ActiveLowerEditorIndex = 1;
+        return true;
     }
     public double ActiveValueMinimum
     {

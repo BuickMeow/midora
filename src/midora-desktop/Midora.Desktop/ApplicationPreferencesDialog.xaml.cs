@@ -15,6 +15,8 @@ using Midora.Domain;
 
 namespace Midora.Desktop;
 
+internal enum ApplicationPreferencesPage { Audio, SoundFonts, Appearance }
+
 public partial class ApplicationPreferencesDialog : Window
 {
     private const decimal BytesPerGibibyte = 1024m * 1024m * 1024m;
@@ -40,7 +42,8 @@ public partial class ApplicationPreferencesDialog : Window
     internal ApplicationPreferencesDialog(
         ApplicationPreferences initial,
         InstrumentCatalogState instrumentCatalog,
-        Func<ApplicationPreferences, string?>? submit)
+        Func<ApplicationPreferences, string?>? submit,
+        ApplicationPreferencesPage initialPage = ApplicationPreferencesPage.Audio)
     {
         _initial = initial ?? throw new ArgumentNullException(nameof(initial));
         _instrumentCatalog = instrumentCatalog
@@ -52,6 +55,7 @@ public partial class ApplicationPreferencesDialog : Window
         SoundFontListBox.ItemsSource = _soundFonts;
         _soundFonts.CollectionChanged += OnSoundFontsCollectionChanged;
         Populate(initial);
+        PreferencesTabs.SelectedIndex = (int)initialPage;
         Loaded += OnLoaded;
     }
 

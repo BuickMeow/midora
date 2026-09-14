@@ -22,7 +22,7 @@ using Xunit;
 namespace Midora.Desktop.Tests;
 
 [Collection(DesktopSharedPresentationStateCollection.Name)]
-public sealed class WpfInteractionRegressionTests
+public sealed partial class WpfInteractionRegressionTests
 {
     private static void AssertSharedTaskProgressStyleResolvesInPropertiesBamlAndRealMainWindowOverlayMarkup(
         System.Windows.Application application)
@@ -502,6 +502,7 @@ public sealed class WpfInteractionRegressionTests
             try
             {
                 Style combo = Assert.IsType<Style>(controls[typeof(ComboBox)]);
+                AssertA1DialogLayoutsAndInitialSettingsPage();
                 Style comboItem = Assert.IsType<Style>(controls[typeof(ComboBoxItem)]);
                 Style scrollBar = Assert.IsType<Style>(controls[typeof(ScrollBar)]);
                 Style menuSeparator = Assert.IsType<Style>(

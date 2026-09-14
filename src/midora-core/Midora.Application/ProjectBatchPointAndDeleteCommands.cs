@@ -68,6 +68,7 @@ public static partial class ProjectDomainEditCommands
                 project,
                 segment.Track,
                 lane.ParameterId);
+            ValidateLogicalParameterRelativeDelta(definition, valueDelta);
             CurvePoint[] replacement = selected.Select(value => new CurvePoint(
                 project,
                 value.Point.Id,
@@ -117,6 +118,7 @@ public static partial class ProjectDomainEditCommands
                 project,
                 segment.Track,
                 lane.ParameterId);
+            ValidateLogicalParameterRelativeDelta(definition, valueDelta);
             CurvePoint[] replacements = selected.Select(value => new CurvePoint(
                 project,
                 value.Point.Id,
@@ -180,6 +182,7 @@ public static partial class ProjectDomainEditCommands
                 project,
                 segment.Track,
                 lane.ParameterId);
+            if (mode != ProjectBatchValueEditMode.ExactSet) ValidateLogicalParameterRelativeDelta(definition, value);
             CurvePoint[] replacement = selected.Select(item => new CurvePoint(
                 project,
                 item.Point.Id,
@@ -199,6 +202,12 @@ public static partial class ProjectDomainEditCommands
                 selected,
                 replacement);
         });
+
+    private static void ValidateLogicalParameterRelativeDelta(LogicalParameterDefinition definition, double delta)
+    {
+        if (definition.Type == LogicalParameterType.Enum && delta != 0)
+            throw new InvalidOperationException("Enum parameters support exact values, not relative value changes.");
+    }
 
     public static IProjectEditCommand SetLogicalParameterPoints(
         MidoraId segmentId,

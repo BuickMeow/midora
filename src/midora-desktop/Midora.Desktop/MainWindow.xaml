@@ -697,7 +697,8 @@
                                     StartTick="{Binding StartTick, Mode=TwoWay}" TickSpan="{Binding TickSpan, Mode=TwoWay}"
                                     FirstLane="0" LaneHeight="160" GridStepTicks="{Binding GridStepTicks}" OperationStepTicks="{Binding LaneEditorSettings.EffectiveOperationStepTicks}"
                                     DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" OperationUsesBars="{Binding LaneEditorSettings.EffectiveOperationUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}" ProjectTickOffset="{Binding ProjectTickOffset}"
-                                    ValueAxisMinimum="{Binding ActiveValueMinimum}" ValueAxisMaximum="{Binding ActiveValueMaximum}" ValueAxisIntegral="{Binding ActiveValueIntegral}"
+                                    ValueAxisMinimum="{Binding ActiveValueAxisMinimum}" ValueAxisMaximum="{Binding ActiveValueAxisMaximum}" ValueAxisIntegral="{Binding ActiveValueIntegral}"
+                                    CanDragEventValue="{Binding ActiveValueDragEnabled}"
                                     SurfaceMode="EventLanes" ToolMode="{Binding ToolMode}" EditCursorTick="{Binding EditCursorTick}" GridVisible="{Binding GridVisible}"
                                     IsTimeRangeSelectionEnabled="False"
                                     PlaybackCursorTick="{Binding PlaybackCursorTick}" RangeStartTick="{Binding RangeStartTick}" RangeEndTick="{Binding RangeEndTick}"
@@ -952,9 +953,10 @@
                                               LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" OperationStepTicks="{Binding EventLaneEditorSettings.EffectiveOperationStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"
                                               DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" OperationUsesBars="{Binding EventLaneEditorSettings.EffectiveOperationUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
                                               ValueAxisMinimum="{Binding ActiveValueMinimum}" ValueAxisMaximum="{Binding ActiveValueMaximum}" ValueAxisIntegral="{Binding ActiveValueIntegral}"
-                                              EditCursorTick="{Binding EditCursorTick}" RangeStartTick="0" RangeEndTick="{Binding TemplateLengthTicks}"
+                                              EditCursorTick="{Binding EditCursorTick}" RangeStartTick="0" RangeEndTick="{Binding TemplateLengthTicks}" CanExtendEventCreationRange="True"
                                               ItemInvoked="OnTimelineItemInvoked" ItemEditCompleted="OnTimelineItemEditCompleted" BackgroundInvoked="OnTimelineBackgroundInvoked" LaneHeaderInvoked="OnTimelineLaneHeaderInvoked"
                                               EventPointEditCompleted="OnTimelineEventPointEditCompleted"
+                                              EventPointTraceCompleted="OnSubVoiceEventPointTraceCompleted"
                                               SelectionReplacementStarted="OnTimelineSelectionReplacementStarted" MarqueeCompleted="OnTimelineMarqueeCompleted"/>
                           <ui:TimelineSemanticOverlay StartTick="{Binding StartTick, ElementName=SubVoiceEventTimeline}" TickSpan="{Binding TickSpan, ElementName=SubVoiceEventTimeline}" ShowRulerLabels="False"
                               PreRollTicks="{Binding PreRollTicks}" LoopStartTick="{Binding LoopStartTick}" LoopEndTick="{Binding LoopEndTick}"/>
@@ -1386,7 +1388,25 @@
             <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>
             <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding CompileState}"/>
             <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>
-            <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding SoundFontState}"/>
+            <TextBlock Text="{Binding SoundFontState}" IsEnabled="{Binding CanStartForegroundTask}"
+                       ToolTipService.ShowOnDisabled="True" AutomationProperties.Name="Open SoundFont Settings"
+                       MouseLeftButtonUp="OnSoundFontStatusMouseLeftButtonUp">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+                  <Setter Property="Cursor" Value="Hand"/>
+                  <Setter Property="ToolTip" Value="Open SoundFont Settings"/>
+                  <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                      <Setter Property="Cursor" Value="Arrow"/>
+                      <Setter Property="ToolTip" Value="Stop playback and finish the current task before changing SoundFonts."/>
+                    </Trigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
             <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>
             <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ProjectState}"/>
             <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>

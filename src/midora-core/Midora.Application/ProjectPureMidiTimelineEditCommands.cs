@@ -834,24 +834,28 @@ public static partial class ProjectDomainEditCommands
         long tickDelta,
         int data1Delta,
         int data2Delta,
-        bool duplicate) =>
+        bool duplicate) => AdjustDirectMidiEventPointsCore(segmentId, eventIds, tickDelta,
+            data1Delta, data2Delta, duplicate, scalarValueDelta: null);
+
+    public static IProjectEditCommand AdjustDirectMidiEventPointValues(
+        MidoraId segmentId, IReadOnlyCollection<MidoraId> eventIds, long tickDelta,
+        int valueDelta, bool duplicate) => AdjustDirectMidiEventPointsCore(segmentId, eventIds,
+            tickDelta, 0, 0, duplicate, valueDelta);
+
+    private static IProjectEditCommand AdjustDirectMidiEventPointsCore(
+        MidoraId segmentId, IReadOnlyCollection<MidoraId> eventIds, long tickDelta,
+        int data1Delta, int data2Delta, bool duplicate, int? scalarValueDelta) =>
         Command(duplicate ? "Duplicate Direct MIDI Event points" : "Move Direct MIDI Event points", project =>
         {
             if (eventIds.Count > 4096 || FindMidiSegment(project, segmentId).Segment.ChannelEvents.Count > 4096)
             {
                 if (!duplicate)
-                    return PrepareBoundedDirectMidiEventTransform(project, segmentId, eventIds, _ => value => value with
-                    { Tick = checked(value.Tick + tickDelta), Data1 = checked(value.Data1 + data1Delta), Data2 = checked(value.Data2 + data2Delta) });
+                    return PrepareBoundedDirectMidiEventTransform(project, segmentId, eventIds, _ => value => ShiftRecord(value));
                 return PrepareBoundedDirectMidiEventAppend(project, segmentId, firstId => ReadCopies(firstId), eventIds);
             }
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             DirectEventSelection[] selected = SelectDirectEvents(location.Segment, eventIds);
-            DirectMidiEventValue[] values = selected.Select(value => SnapshotDirectEvent(value.Event) with
-            {
-                Tick = checked(value.Event.Tick + tickDelta),
-                Data1 = checked(value.Event.Data1 + data1Delta),
-                Data2 = checked(value.Event.Data2 + data2Delta)
-            }).ToArray();
+            DirectMidiEventValue[] values = selected.Select(value => Shift(SnapshotDirectEvent(value.Event))).ToArray();
             foreach (DirectMidiEventValue value in values)
                 ValidateDirectMidiEvent(value.Tick, value.Kind, value.Data1, value.Data2);
             DirectMidiChannelEvent[]? copies = null;
@@ -904,9 +908,26 @@ public static partial class ProjectDomainEditCommands
                     if (value.Id == previous)
                         throw new ArgumentOutOfRangeException(nameof(eventIds));
                     previous = value.Id;
-                    yield return value with { Id = new(nextId++), Tick = checked(value.Tick + tickDelta),
-                        Data1 = checked(value.Data1 + data1Delta), Data2 = checked(value.Data2 + data2Delta) };
+                    yield return ShiftRecord(value) with { Id = new(checked(nextId++)) };
                 }
+            }
+
+            DirectMidiEventValue Shift(DirectMidiEventValue value)
+            {
+                var moved = value with { Tick = checked(value.Tick + tickDelta) };
+                if (scalarValueDelta is not int delta)
+                    return moved with { Data1 = checked(value.Data1 + data1Delta), Data2 = checked(value.Data2 + data2Delta) };
+                int scalar = checked(DirectMidiEventPointValue(value) + delta);
+                int maximum = value.Kind == DirectMidiChannelEventKind.PitchBend ? 16383 : 127;
+                if (scalar < 0 || scalar > maximum)
+                    throw new ArgumentOutOfRangeException(nameof(scalarValueDelta));
+                return WithDirectMidiEventPointValue(moved, scalar);
+            }
+
+            DirectMidiChannelEventValue ShiftRecord(DirectMidiChannelEventValue value)
+            {
+                var moved = Shift(new(value.Tick, value.Kind, value.Data1, value.Data2, value.Order));
+                return value with { Tick = moved.Tick, Data1 = moved.Data1, Data2 = moved.Data2 };
             }
         });
 

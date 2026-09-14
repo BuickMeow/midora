@@ -384,6 +384,7 @@ Preference Storage Failed
 左侧状态单元固定按 `Issues → Compile State → SoundFont Resource → Project Save State → Playback State` 排列；Issues 左侧显示同一诊断状态圆点。最右侧只用于瞬时消息；非错误消息使用次要文本色，错误消息使用错误色。该区域不得显示 CPU RID 或 .NET 运行时版本。
 `Playing` 使用成功/绿色文本；`Buffering` 使用纯黄色文本并可附带有界进度百分比。颜色只表达运行状态，不改变 Transport 可用性。
 Issues 显示 Whole Project 当前诊断计数，不受 Diagnostics 当前搜索和筛选影响。计数文本是显式导航入口：鼠标悬停时提亮并显示 Hand 指针，单击后激活 Diagnostics Workspace；激活后的键盘焦点仍遵循 17.5.2 的非编辑表面规则。
+SoundFont Resource 文本使用同样的提亮/Hand 导航表现，单击直接打开 Application Preferences 的 SoundFonts 页。该入口与菜单共用正式设置流程；无 Project 时也可使用。正常播放、Buffering 和不可启动另一前台任务时禁用并说明原因，不得为了打开设置停止正常播放。需要结束的事件乐器试听沿用既有预览所有权流程；Cancel 不保存配置、不重建 Worker。
 Compile State：
 ```text
 Not Compiled

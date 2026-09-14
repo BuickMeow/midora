@@ -745,9 +745,13 @@ public static partial class ProjectDomainEditCommands
                 : checked(replacement.Tick + 1);
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
-            HashSet<TemplateEventMappingTarget> existingTargets = voice.Events
-                .SelectMany(TemplateEventMappingTarget.Enumerate)
-                .ToHashSet();
+            // Use the paged target directory, not a full event enumeration when
+            // creating one point in a large SubVoice. Existing targets without a
+            // Mapping must stay unmapped; creation must not revive deleted owners.
+            HashSet<TemplateEventMappingTarget> existingTargets = [];
+            foreach (long key in voice.Events.CreateQuerySnapshot().DiscoveryKeys)
+                if (TemplateEventMidiTargets.TryDecodeDiscoveryKey(key, out MidiValueTarget target))
+                    existingTargets.Add(TemplateEventMidiTargets.ToMappingTarget(target));
             TemplateEventMappingTarget[] optionalMappingTargetsToCreate =
                 EnumerateTemplateEventMappingTargets(replacement)
                     .Where(target => target.EventKind != TemplateEventKind.Note

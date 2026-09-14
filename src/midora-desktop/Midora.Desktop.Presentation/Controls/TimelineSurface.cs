@@ -452,6 +452,12 @@ public sealed partial class TimelineSurface : Control
         typeof(TimelineSurface),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty CanExtendEventCreationRangeProperty = DependencyProperty.Register(
+        nameof(CanExtendEventCreationRange), typeof(bool), typeof(TimelineSurface), new PropertyMetadata(false));
+
+    public static readonly DependencyProperty CanDragEventValueProperty = DependencyProperty.Register(
+        nameof(CanDragEventValue), typeof(bool), typeof(TimelineSurface), new PropertyMetadata(true));
+
     public static readonly DependencyProperty IsTimeRangeSelectionEnabledProperty =
         DependencyProperty.Register(
             nameof(IsTimeRangeSelectionEnabled),
@@ -1055,6 +1061,22 @@ public sealed partial class TimelineSurface : Control
     {
         get => (long?)GetValue(RangeEndTickProperty);
         set => SetValue(RangeEndTickProperty, value);
+    }
+
+    // Template creation extends the owner atomically; the visual crop remains
+    // unchanged until that command has succeeded.
+    public bool CanExtendEventCreationRange
+    {
+        get => (bool)GetValue(CanExtendEventCreationRangeProperty);
+        set => SetValue(CanExtendEventCreationRangeProperty, value);
+    }
+
+    private long? EventCreationRangeEndTick => CanExtendEventCreationRange ? null : RangeEndTick;
+
+    public bool CanDragEventValue
+    {
+        get => (bool)GetValue(CanDragEventValueProperty);
+        set => SetValue(CanDragEventValueProperty, value);
     }
 
     public long? TimeRangeStartTick
@@ -3723,7 +3745,7 @@ public sealed partial class TimelineSurface : Control
                 UpdateEventPointTrace(_eventPointOrigin.Value, InteractionPosition(e));
                 if (EventPointTraceCompleted is not null)
                     traceResult = new(CreateEventPointTrace(eventViewport), Math.Max(1, OperationStepTicks),
-                        OperationUsesBars, TimeSignatureMap, RangeStartTick, RangeEndTick);
+                        OperationUsesBars, TimeSignatureMap, RangeStartTick, EventCreationRangeEndTick);
                 else BuildEventPointEditsFromTrace(eventViewport);
             }
             IReadOnlyDictionary<long, double> result = new Dictionary<long, double>(_eventPointEdits);
@@ -3821,6 +3843,7 @@ public sealed partial class TimelineSurface : Control
             EndDragPitchPreview();
             if (_dragActivated)
             {
+                _hoverPoint = InteractionPosition(e);
                 int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
                 ItemEditCompleted?.Invoke(
                     this,
@@ -3830,7 +3853,7 @@ public sealed partial class TimelineSurface : Control
                         checked(_dragCurrentTick - _dragOriginTick),
                         laneDelta,
                         IsValueEditableEventPointKind(item.Kind)
-                            ? GetDragNormalizedValueDelta(InteractionPosition(e).Y)
+                            ? GetDragPreviewTransform(item).ValueDelta
                             : -(InteractionPosition(e).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
                         _dragModifiers,
                         _dragCopyRequested));
@@ -7011,7 +7034,7 @@ public sealed partial class TimelineSurface : Control
     private void BuildEventPointEditsFromTrace(TimelineViewport viewport)
     {
         TimelineValueTraceSampler.SampleInto(CreateEventPointTrace(viewport), _eventPointEdits,
-            Math.Max(1, OperationStepTicks), OperationUsesBars, TimeSignatureMap, RangeStartTick, RangeEndTick);
+            Math.Max(1, OperationStepTicks), OperationUsesBars, TimeSignatureMap, RangeStartTick, EventCreationRangeEndTick);
     }
 
     private TimelineValueTracePoint[] CreateEventPointTrace(TimelineViewport viewport)
@@ -7049,9 +7072,10 @@ public sealed partial class TimelineSurface : Control
         for (int index = 0; index <= 4; index++)
         {
             double screenRatio = index / 4d;
-            double normalized = _valueViewMinimum
-                + screenRatio * (_valueViewMaximum - _valueViewMinimum);
-            double value = minimum + normalized * (maximum - minimum);
+            var tick = TimelineValueAxisTick.At(minimum, maximum,
+                _valueViewMinimum, _valueViewMaximum, screenRatio, ValueAxisIntegral);
+            double normalized = tick.Normalized;
+            double value = tick.Value;
             string labelText = ValueAxisIntegral
                 ? Math.Round(value, MidpointRounding.AwayFromZero).ToString(CultureInfo.InvariantCulture)
                 : value.ToString("0.###", CultureInfo.InvariantCulture);
@@ -8483,7 +8507,7 @@ public sealed partial class TimelineSurface : Control
         }
 
         double valueDelta = 0;
-        if (IsValueEditableEventPointKind(anchor.Kind))
+        if (CanDragEventValue && IsValueEditableEventPointKind(anchor.Kind))
         {
             Point current = _hoverPoint ?? _dragOrigin;
             double requested = GetDragNormalizedValueDelta(current.Y);

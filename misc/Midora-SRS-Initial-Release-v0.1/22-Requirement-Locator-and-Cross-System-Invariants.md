@@ -155,6 +155,7 @@
 | 各编辑器工作区、Timeline 精确属性与事务式 Properties | 第 17、18、20、24 章 |
 | Conductor 虚拟列表、Tempo 阶梯图、绘线、密集元事件与原子批量编辑 | 第 4、18、20 章；INV-110～111 |
 | 三种钢琴卷帘虚拟对象列表、混合选择子菜单、SubVoice Loop/Pre-Roll 覆盖层 | 第 18、20 章；INV-112～113 |
+| A1：模板外事件创建、共同 scalar 饱和、PB 显示坐标、Catalog/Combo 滚动、Add Event 导航、对象列表与设置入口 | 第 17.7.3、18.2.7/8、18.4.2/4、19.1.2、20.4.5、20.15.4 节；INV-031、047、075、077、095～096、112 |
 | Track/SubVoice 洋葱皮、All Tracks Raw/Compiled、有界只读缓存、来源色和 Stale | 第 3、16、18 章；INV-115～116 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、分页 ordinal/range query、detached edit、浮动工具、拖放、验证、快捷键和 UI 验收 | 第 18、20、23、24 章；INV-095～100 |

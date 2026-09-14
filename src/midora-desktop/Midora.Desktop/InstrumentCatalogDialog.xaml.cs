@@ -968,13 +968,7 @@ public partial class InstrumentCatalogDialog : Window
         {
             return candidates[0];
         }
-        SelectionDialog dialog = new(
-            "Scan SF2 Presets",
-            "Select a configured SF2. Scanning reads only preset metadata and does not change audio settings.",
-            candidates.Select(value => new SelectionDialogItem(
-                value,
-                Path.GetFileName(value.Path),
-                $"{(value.Enabled ? "Enabled" : "Disabled")} · {value.Path}")));
+        SelectionDialog dialog = CreateSf2SelectionDialog(candidates);
         if (IsVisible)
         {
             dialog.Owner = this;
@@ -983,6 +977,15 @@ public partial class InstrumentCatalogDialog : Window
             ? dialog.SelectedValue as ApplicationSoundFontPreference
             : null;
     }
+
+    internal static SelectionDialog CreateSf2SelectionDialog(IReadOnlyList<ApplicationSoundFontPreference> candidates) => new(
+            "Scan SF2 Presets",
+            "Select a configured SF2. Scanning reads only preset metadata and does not change audio settings.",
+            candidates.Select(value => new SelectionDialogItem(
+                value,
+                Path.GetFileName(value.Path),
+                $"{(value.Enabled ? "Enabled" : "Disabled")} · {value.Path}")),
+            useSingleItemWheel: true);
 
     private async Task BeginSf2ScanAsync(
         ApplicationSoundFontPreference soundFont,

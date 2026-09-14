@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-09-10**
+> 最近修订日期：**2026-09-14**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,14 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-09-14 修订摘要
+
+- A1 验收返修：明确 Scan Presets 的源 SF2 选择与 bank 结果均为单项滚动；Add Event 不得在旧绑定列表中查询新 Lane 而跳过导航，`A` 属于新活动事件视图。按本轮明确要求统一 Direct/SubVoice PB 标尺为 −8192～8191、中性刻度 0，仅改变显示，不改变正式 scalar。
+- 按已确认的下一批需求 A1 同步第 17～20、22 章：SubVoice 模板外创建点自动扩展同 Definition 模板并同事务撤销；现有 Add Event 成功后按稳定 target 导航并恢复 Surface 焦点。
+- 明确三类数值事件批移采用整组选区共同 scalar delta 饱和；Direct Pitch Bend 必须先在 14-bit 标量上变换再编码，预览/提示/提交一致。Enum 继续只支持精确设值、不支持相对值 Delta。
+- Catalog 的 Banks/Programs/Scan 列表每标准轮刻度一项、高精度余量按控件隔离；展开 ComboBox 禁止纯悬停引起的边缘自滚，保留显式导航和滚动。三类对象列表默认宽度 400 DIP，值列按事件类型格式化，不丢目标身份。
+- New Project 主操作统一为 `Create`，Browse/布局不得裁字；SoundFont 状态入口直达程序设置 SoundFonts 页并服从既有播放/任务锁。只同步本切片，不提前改变乐器变化点、Lane Tabs、后续手势、软件版本或 Project/presentation 格式。实施证据与待人工清单见 [A1 报告](../Midora-A1-Common-UI-and-Editing-Implementation-2026-09-14.md)。
 
 ## 2026-09-10 修订摘要
 

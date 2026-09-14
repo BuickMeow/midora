@@ -7,7 +7,7 @@ public sealed class TimelineObjectListState : ObservableObject
 {
     private bool _isVisible;
     private bool _isActive;
-    private double _width = 350;
+    private double _width = 400;
     private int _firstRow;
     private Func<TimelineObjectListSource?>? _factory;
     private TimelineObjectListSource? _source;

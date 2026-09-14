@@ -2317,6 +2317,22 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         }
     }
 
+    internal bool ActivateCreatedSubVoiceEventLane(
+        InstrumentWorkspaceViewModel workspace, MidoraId subVoiceId, MidiValueTarget target)
+    {
+        if (!ReferenceEquals(ActiveWorkspace, workspace) || !Workspaces.Contains(workspace)
+            || workspace.IsDisposed || workspace.IsPresentationSuspended
+            || workspace.ActiveSubVoiceId != subVoiceId
+            || Project?.EventInstruments.FirstOrDefault(value => value.Id == workspace.ObjectId)?
+                .SubVoices.FirstOrDefault(value => value.Id == subVoiceId) is not SubVoice voice
+            || !voice.EventMappings.Any(value => value.Target == TemplateEventMidiTargets.ToMappingTarget(target)))
+            return false;
+
+        workspace.PreferEventLaneOnNextRebuild(target);
+        RefreshWorkspace(workspace);
+        return workspace.TryActivateEventLane(target);
+    }
+
     public void RefreshProjectRuntimeInformation()
     {
         ProjectContext? context = _context;

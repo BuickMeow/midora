@@ -1,10 +1,10 @@
 # 多实例、跨项目剪贴板与工作区恢复
 
-覆盖R01、R06、R07（均P2）以及文件打开R04（P3）。这两个大型专题应分别分阶段，不与几处UI小修合并成不可验收的大提交。本文是候选设计，不表示多实例、跨TPQN或新持久化协议已经获批实施。
+覆盖R01、R06、R07（均P2）以及文件打开R04（P3）。这两个大型专题应分别分阶段，不与几处UI小修合并成不可验收的大提交。本文区分 Q1 已决定的产品方向、Q2 待确认边界和仍待验证的实现设计；产品实施及 SRS 同步尚未开始。
 
 共同入口：[需求总表](00-Overview-and-Delivery-Plan.md)、[决策与问答主文档](04-Decisions-and-Preparation.md)。源码行号基于 `0bb9670`。
 
-2026-09-11 文档问答整理：`04` 统一承载待确认问题、推荐、用户回答与追问；本文只保留审计、范围解释和候选架构，不维护第二套回答。首个实现切片与本批最终目标已经分开列明，但下述推荐仍全部待用户确认；写入文档不是批准多实例、跨TPQN或持久化变更。
+2026-09-14 Q1 答复归并：用户已经逐项填写 Q1，并明确“同意”表示同意对应推荐；原回答保留在 `04`，本文不改写、不另建第二套回答。Q1 已决定范围与 Q2 新问题分别标注；方向获批不等于协议/schema 已冻结、SRS 已更新、代码已实施或测试已通过。本轮已先提交推送原答快照`3619dee`；其后的文档归并不再次提交／推送，不运行发布。
 
 ## 1. 多实例：现状不是“只有一个 Mutex”
 
@@ -20,17 +20,19 @@ SRS §3.3/3.18.1/21.2、INV-019限制单实例；§16.17.2明确普通源文件�
 
 因此移除启动互斥就会引入同文件覆盖、共享偏好丢更新、一个实例回收另一个工作目录等风险。原子Replace只能防半文件，不能防两个用户会话互相覆盖。
 
-### 1.1 推荐的多实例基线（D-MI01/02）
+### 1.1 Q1 已决定的多实例基线（D-MI01/02）
 
 - 每个进程仍单Project；不顺带实现一个进程多个音乐Project Workspace。
 - 每实例独立canonical、Selection/Undo、音频Worker、进程树与会话临时目录；不共享native handle。
-- 同一Project文件建议只允许一个可写Midora会话，第二次打开定位已有实例或清楚拒绝 / 另存副本；须定义路径别名、文件identity、首次Save、原路径Save、Save Copy、旧格式升级和外部修改，不新增传统Save As。独立ownership lease / 协调器不一定长期锁原.midora；只有长期锁源文件的方案才改变现行“不长锁”条款。普通Save是否检查外部identity变化是另一独立决定，不能假装现有保存已防冲突。
+- 同一Project文件只允许一个可写Midora会话，第二次打开定位已有实例；独立编辑应先 Save Copy，再打开副本，不新增第二窗口只读或传统 Save As。须覆盖路径别名、文件identity、首次Save、原路径Save、Save Copy和旧格式升级。独立ownership lease / 协调器不一定长期锁原.midora；只有长期锁源文件的方案才改变现行“不长锁”条款。普通Save检测外部identity变化；冲突时可取消、Save Copy，或明确确认后先备份磁盘当前版本再覆盖，不能把现有保存描述为已防冲突。
 - 程序级Preferences/Catalog/Presets用短写锁+版本比较或明确的冲突处理，不以最后写入者静默获胜。Recent可在锁内按既定去重顺序合并；配置与用户draft不要无提示合并数值冲突。
-- 一实例更新音频配置时，其他实例正在运行的任务仍用已冻结配置；何时接收新配置 / 重建Worker需批准，建议对方Stopped/Idle后应用并提示，不中途拆活动Worker。
-- 清理只针对可验证owned目录和已释放lease；进程PID不是唯一存活 / 身份凭据，必须防PID复用和清理竞态。缓存quota要明确是整个ProgramRoot还是每实例；建议共享总上限，不能实例数乘以16GiB导致预算失真。
+- 一实例更新音频配置时，其他实例正在运行的任务仍用已冻结配置；对方Stopped/Idle后接收并按需重建Worker，不中途拆活动Worker。已打开的设置draft不静默覆盖，保存前提示冲突。
+- 同ProgramRoot的reusable cache共用总quota，不能按实例数乘以16GiB。临时文件、Clipboard和后台任务也须有预算与释放机制；具体数值由实验冻结。清理只针对可验证owned目录且满足对应用途的回收条件；进程PID不是唯一存活 / 身份凭据，必须防PID复用和清理竞态。持久Clipboard不沿用“进程已退出即回收”的会话目录规则。
 - 仍只在ProgramRoot授权的Data/.tmp树内存储，不fallback LocalAppData/TEMP；新增传输目录应作为明确路径白名单变更。
 
-D-MI01.a～d / D-MI02.a～d 已将上述分歧及补充边界列全：推荐外部文件identity改变时可取消/Save Copy，或明确确认后备份磁盘当前版本再覆盖；无参exe开新空窗口、窗口内New/Open替换本窗口；多实例可同时播放/试听互不停止。不同ProgramRoot的配置/缓存独立，但兼容剪贴板可在同用户同Windows登录会话跨安装目录传输。并发发声时各实例Limiter不等于Windows混音后全局峰值保证；内存/CPU按实例累加。这些均非现有已实现行为。
+D-MI01.a～d / D-MI02.a～c 已决定：无参exe开新空窗口，并提供 New Window；窗口内New/Open仍替换本窗口；多实例可同时播放/试听，互不停止。同ProgramRoot共享Preferences、SoundFonts、Catalog、Presets和Recent；配置竞争须明确处理，Recent合并。D-MI02.d 的用户修正限定音乐Clipboard只在同一ProgramRoot、同一Windows用户的多实例之间通过专用目录文件共享；不同ProgramRoot的配置、缓存和音乐Clipboard完全隔离，不提供跨目录、跨exe、跨用户或远程传输。
+
+目录隔离不等于允许两个安装副本覆盖同一Project文件，文件写入所有权仍须处理同文件与别名。并发发声时各实例Limiter不等于Windows混音后的全局峰值保证；内存/CPU按实例累加。这些是已决定目标，不是现有已实现行为。
 
 ## 2. 跨项目 / 跨实例剪贴板
 
@@ -49,59 +51,67 @@ D-MI01.a～d / D-MI02.a～d 已将上述分歧及补充边界列全：推荐外�
 
 允许另一进程看到内存对象、复制source session token、或把完整百万对象JSON塞进OS Clipboard都不是合适方案。应复用有界分页事务理念，但为传输设计明确版本、租约和安全边界。
 
-### 2.2 传输候选架构
+### 2.2 文件型共享边界与候选架构
+
+**已决定：** 音乐payload通过同ProgramRoot专用文件目录共享，不将完整内容塞入内存或Windows Clipboard，不依赖源进程持续存活。允许有明确上限的分块I/O缓冲，不把“文件型”误解为禁止必要的有限内存。新存储位置必须对用户可见、可说明，不写程序目录之外，也不借用音频缓存或Project session backing的生命周期。
+
+以下是满足已决定方向的工程流程，持久槽、目录及清理政策仍受 D-MI06.a 的 Q2 答复约束：
 
 ```text
 冻结源Selection / revision
 → 有界准备不可变传输快照（独立于源可变Project）
-→ OS Clipboard小型版本化描述符 + 可读文本摘要
-→ 接收方验证协议 / 预算，分块取得数据并持有lease
+→ 在专用目录原子发布完整文件快照
+→ 同ProgramRoot、同用户接收方验证协议 / 预算，分块读取并保护在用快照
 → 目标detached准备：新ID、闭包、时间、碰撞、损失确认
 → 验证目标revision后一次发布 → 本地Undo/Redo
 ```
 
-可用受限同用户IPC传输块，或专门拥有的传输backing。不要把接收方打开Clipboard中的任意本地文件路径当安全协议，不使用反射对象反序列化，不复用1MiB启动参数通道承载音乐内容。
+旧的“OS Clipboard短描述符／登录会话rendezvous／跨目录IPC音乐传输”候选已被用户修正取代，不能继续作为当前实现方案。Windows文本剪贴板与音乐Clipboard的关系在 D-MI06.a 单独待确认；不能用某个外部文本或任意本地路径冒充可信音乐快照，不使用反射对象反序列化，不复用1MiB启动参数通道承载音乐内容。
 
-至少约束：版本/feature协商、长度/记录数/嵌套/依赖数量、总字节、分块完整性、压缩解码预算、背压、取消、超时、名称/表达式验证、错误码和旧版本可见提示。旧自由C# Mapping内容不能因剪贴板交换重新获得执行权。
+**Q2 待确认（D-MI06.a）：** 单个持久音乐槽、外部文字Copy是否影响该槽、显式清空和替换后的清理语义，以及候选 `<ProgramRoot>\Data\SharedClipboard` 持久根与 `<ProgramRoot>\.tmp\SharedClipboard` 临时准备根。候选方案通过在用lease保护已开始的Paste，只有非当前且无使用者的旧快照才可回收；这些是待答政策，不因本文写出而获批。两个新目录均不在当前SRS路径白名单内，实施前须按定案同步，不能复用普通session清理器误删需跨重启保留的内容。
+
+文件协议至少约束：版本/feature标识、长度/记录数/嵌套/依赖数量、总字节、分块完整性、压缩解码预算、取消、名称/表达式验证、路径与用户scope校验及错误提示。版本标识和严格验证是工程责任，不表示批准跨exe互通；同目录原地升级后的旧文件处理政策见 D-MI06.b。旧自由C# Mapping内容不能因剪贴板交换重新获得执行权。
 
 ### 2.3 对象范围不能由“共享剪贴板”一词推定（D-MI03）
 
-推荐先把用户最核心的Note Art跑通，再扩展闭包；**D-MI03.a 的本批最终推荐目标是现有全部可复制对象类型，而不是把“首轮音符/事件”误写成最终完成范围。** 用户也可明确收窄，当前尚未回答：
+D-MI03.a 已批准先把Note Art基础对象跑通，再扩展依赖闭包；**本批最终覆盖现有全部可复制对象类型，不能把首轮音符/事件误写成最终完成范围。** 不凭“全部”新增原先不存在的Copy入口；对象矩阵按现有能力与已批准新增编辑对象逐项落实：
 
-| 类型 | 首轮建议 | 额外合同 |
+| 类型 | 阶段安排 / 边界 | 额外合同 |
 |---|---|---|
 | 三类Note | 同TPQN基础支持，复用共同字段转换 / Direct NoteOff velocity规则 | 目标分配新ID、精确碰撞、未保留字段确认、合法owner范围 |
 | 数值MIDI Event | 同正式target可表达时支持 | CC/压力/PB值、目标lane存在性、SubVoice禁入目标、同Tick覆盖 |
 | Logical Parameter Point | 不能直接把源Parameter ID当目标ID | 显式选择目标参数或复制已批准定义闭包；禁止按名称猜绑定 |
 | Segment | 后续闭包阶段 | crop/hidden内容、位置/长度、事件owner、跨类型损失确认 |
 | Track / Root / Usage | 后续闭包阶段 | 所复制子集共享关系、Fixed Port.Channel冲突、新Root生命周期、Track顺序 |
-| Definition/SubVoice/Mapping/Curve | 后续闭包阶段，现有可复制类型纳入本批最终推荐范围 | 稳定ID闭包重映射、受限表达式ABI、名称冲突、外部引用、空owner；不凭“全部”新增原来不存在的Copy入口 |
+| Definition/SubVoice/Mapping/Curve | 后续闭包阶段，现有可复制类型纳入本批最终范围 | 稳定ID闭包重映射、受限表达式ABI、名称冲突、外部引用、空owner；不凭“全部”新增原来不存在的Copy入口 |
 
 支持范围逐项对Copy/Cut/Paste菜单给出可用性或精确错误，不静默只复制一部分。名称不是身份，不同项目相同数字ID没有关联；所有新对象使用目标allocator，闭包内部引用重映射，不保留源进程的活引用。
 
-D-MI03.b～f 推荐同时冻结以下合同，待 `04` 回答：完整对象携带必要依赖，一次payload内共用依赖只clone一次、不同次Paste默认独立，不按名称自动覆盖/绑定；粘贴进既有Track/Segment不偷偷换其Usage/Root/Instrument，参数须显式映射。复制Track/Root到另一项目时保留所复制子集内部共享关系和Channel Mode，但新Root默认Auto，不自动合入目标同Port.Channel；这不顺带修改现有同项目Paste的Fixed复用行为。不复制SoundFonts或整个源Project环境，因此不同目标默认状态/绑定/音色库下不承诺相同听感。
+D-MI03.b～f 已批准：完整对象携带必要依赖，一次payload内共用依赖只clone一次、不同次Paste默认独立，不按名称自动覆盖/绑定；粘贴进既有Track/Segment不偷偷换其Usage/Root/Instrument，参数须显式映射。复制Track/Root到另一项目时保留所复制子集内部共享关系和Channel Mode，但新Root默认Auto，不自动合入目标同Port.Channel；这不顺带修改现有同项目Paste的Fixed复用行为。不复制SoundFonts或整个源Project环境，因此不同目标默认状态/绑定/音色库下不承诺相同听感。
 
-跨实例“Cut”建议仍是源端安全复制快照后删除源，目标Paste是目标独立command；不要制造跨进程共同Undo栈或声称两次操作是一个分布式原子移动。源Cut取消/失败不删内容，目标Paste失败时仍保留可再次粘贴的快照。
+跨实例Cut先可靠发布文件快照，再以源端一条Undo命令删除源；目标Paste是另一条独立command，不做跨进程共同Undo或分布式原子移动。源Cut取消/失败不删内容，目标Paste失败不自动撤销源Cut，但仍可重试完整快照。
 
 ### 2.4 TPQN（D-MI04）
 
 同TPQN仍需检查owner起点/合法范围与精确碰撞。不同TPQN不能只缩放NoteStart：还有Gate、Segmentcrop/hidden、TemplateLength、PreRoll、Loop、Envelope、Curve、Mapping的时间Context。
 
-表达式可能含用户写死的Tick常量，自动改源代码不存在通用保真算法。D-MI04.a～c 已把本批范围拆清：推荐首个切片仅同TPQN，但**本批最终支持基础Note/可表达Event及不含复杂逻辑依赖的Pure MIDI Segment/Track跨TPQN粘贴** 。默认保节拍比例，可明确选保原Tick；节拍换算不保证相同秒数，因为Tempo可能不同。采用精确有理数、起止边界单次 `AwayFromZero` 取整，Gate由边界得出并执行既有最小长度、溢出和精确碰撞规则，不重复取整。
+表达式可能含用户写死的Tick常量，自动改源代码不存在通用保真算法。D-MI04.a～c 已批准首个切片仅同TPQN，但**本批最终支持基础Note/可表达Event及不含复杂逻辑依赖的Pure MIDI Segment/Track跨TPQN粘贴** 。默认保节拍比例，可明确选保原Tick；节拍换算不保证相同秒数，因为Tempo可能不同。采用精确有理数、起止边界单次 `AwayFromZero` 取整，Gate由边界得出并执行既有最小长度、溢出和精确碰撞规则，不重复取整。
 
-携带Instrument/SubVoice/Loop/PreRoll/Envelope/Mapping闭包的复杂对象，推荐本批仍同TPQN；裸逻辑音符不因此受限。若用户希望复杂依赖也跨TPQN，需要在 `04` 明确追加转换语义，而不是仅对显式Tick字段乘比例却声称保持表达式含义。以上是待批最终方案，不表示跨TPQN代码已经存在。
+携带Instrument/SubVoice/Loop/PreRoll/Envelope/Mapping闭包的复杂对象，本批仍限同TPQN；裸逻辑音符不因此受限。复杂依赖跨TPQN不在本次已批准范围，不能仅对显式Tick字段乘比例却声称保持表达式含义。以上是已决定范围，不表示跨TPQN代码已经存在。
 
-### 2.5 生命周期（D-MI05）
+### 2.5 已决定的持久生命周期与剩余问题（D-MI05/06）
 
-应分别规定：源Project关闭、源实例正常退出/崩溃、Clipboard被替换、接收已开始、接收未开始、目标取消。
+应分别验证：源Project关闭、源实例正常退出/崩溃、音乐Clipboard被替换、接收已开始、接收未开始、目标取消、Windows注销及重启。
 
-推荐完整快照发布后，在用户未替换Clipboard且backing仍有效时，即使源Project关闭、源实例正常退出或崩溃，也能在当前Windows登录会话新发起Paste；需要独立owned backing和延迟回收，不能再依赖源窗口私有字段。已开始接收者持有lease，Clipboard被替换不破坏它；最后lease释放且不再作为当前Clipboard后才回收。手动删除backing或磁盘损坏不在有效性保证内。
+D-MI05.a/b 结合 D-MI02.d 的用户修正：完整文件快照发布后，不依赖来源Project或实例继续打开；只要所需文件完整有效，Windows注销、重启也不应自动使音乐Clipboard失效。不能沿用“仅当前登录会话有效”的旧推荐，也不能把“目录还在”误写成文件丢失、损坏或协议不兼容时仍可恢复内容。
 
-这是便利性较好的候选，但比“源退出即失效”多出清理和跨版本预算成本。D-MI05.a～c 推荐不承诺Windows重启、剪贴板历史/云同步旧条目仍有效，失效明确报错；它不是永久素材库。按显式协议版本互通，不要求exe版本完全相同，也不承诺任意新旧版本互通。若选择较窄版本，必须在UI清楚说源退出后不可粘贴，不能表面成功Copy却静默丢内容。不能为此恢复任意长期崩溃快照机制。
+替换后已开始的Paste不得依赖仍为“当前槽”或源进程仍在；不可变快照和在用保护必须使读取与替换隔离。当前槽数量、外部文本Clipboard关系、显式清空、旧快照回收及目录名仍由 D-MI06.a 确认，不据跨重启要求推导出历史库、云同步或永久素材库。持久Clipboard也不是恢复整个Project的自动保存／崩溃快照系统。
+
+**Q2 待确认（D-MI06.b）：** 用户在 D-MI05.c 排除跨目录／跨exe互通，但同目录原地升级或回退仍可能遇到旧文件快照。文件协议必须有版本与严格校验；兼容旧文件是否继续可用、不兼容时如何提示／重新复制，属于该项待答范围，不能写成“不需要协议版本”或自动承诺任意版本互通。
 
 ### 2.6 多实例验证门
 
-真实2 / 4实例并发启动、同文件同路径 / 别名打开和保存、配置冲突、Recent合并、关闭一个实例不杀另一个Worker / 删除另一个临时目录；源退出/崩溃/传输中断/Clipboard替换/目标取消；恶意描述符/版本不兼容/超限长度/路径注入；百万Note Copy/Cut/Paste与Undo、各种Root/Usage闭包、同TPQN/获批的基础跨TPQN换算/复杂依赖拒绝差异、源/目标revision race。按切片实际能力报告，不把首切片拒绝跨TPQN等同于最终范围完成。
+真实2 / 4实例并发启动、同文件同路径 / 别名打开和保存、配置冲突、Recent合并、关闭一个实例不杀另一个Worker / 删除另一个临时目录；源退出/崩溃/文件发布中断/Clipboard替换/目标取消；注销重启后有效文件继续粘贴、不同ProgramRoot及不同用户拒绝互通；恶意文件头/版本不兼容/超限长度/路径注入；百万Note Copy/Cut/Paste与Undo、各种Root/Usage闭包、同TPQN/获批的基础跨TPQN换算/复杂依赖拒绝差异、源/目标revision race。D-MI06定案后覆盖槽替换、清空、lease、预算及原地升级矩阵。按切片实际能力报告，不把首切片拒绝跨TPQN等同于最终范围完成。
 
 同时播放和设备丢失须真实测试，不能从WASAPI Shared Mode推定所有隔离成立。记录全进程树资源而不是只主进程；全局quota必须对并发实例仍成立。
 
@@ -116,22 +126,24 @@ D-MI03.b～f 推荐同时冻结以下合同，待 `04` 回答：完整对象携�
 
 R06明确替代“普通UI和Mute/Solo不保存”的旧规定，但保留以下用户确认：只随显式Save保存，不进Undo/Redo，不标记音乐Modified。**Mute/Solo会改变运行期监听，不能写成完全不影响播放；它不改变源音乐、canonical、SMF/WAV成品。**
 
-### 3.2 “完整”的逐字段候选白名单（D-STATE01）
+### 3.2 Q1 已批准的轻量状态白名单（D-STATE01）
 
-| 分类 | 建议保存 | 不默认包含 |
+用户已批准 `04` 附表 A/B；本表是对应归并，不重新开放全部类别。字段细化服从批准的所有权和资源边界；当前工具的同Track共享归属仅在 D-STATE03.e 追加待确认，Onion删除来源引用仅在 D-STATE03.d 追加待确认。
+
+| 分类 | 已批准保存 | 不包含 |
 |---|---|---|
 | Workspace集合 | 打开的已提交对象Tab、顺序、活动Tab；已关闭对象视图的轻量状态也保留；Arrangement唯一且固定 | 模态窗口、未提交draft、任务窗口、上下文菜单 |
 | Piano / Arrangement / Conductor | 缩放、独立滚动、Grid/Snap、工具模式、显示面板与尺寸、活动子页；具体字段以owner表为准 | Selection全部ID、拖动候选、鼠标位置、预览音符 |
 | Instrument Workspace | 当前子页/SubVoice、左栏宽度、滚动/折叠、预览键盘的可恢复显示设置 | 正在按住的键、音频任务、草稿表达式 |
 | Lane Tabs | 已显示target及顺序、活动target、每lane纵轴、lane区高度；存在性仍受正式数据控制 | 数据索引 / bitmap / 后台source leases |
 | 对象List / Tracks面板 | 开关、宽度、合法列宽/排序或筛选等明确获批字段 | 百万行对象VM、全量选区、过期ordinal |
-| Diagnostics / Settings Workspace | 可恢复筛选 / 子页 / 布局（若确认纳入） | 一份复制诊断报告、模态Properties草稿 |
-| 导航指针 | 推荐保存Edit/Playback Cursor静止位置，恢复时Clamp到有效范围 | Playing/Buffering/Preview继续运行、任务续跑 |
-| 监听过滤 | Track Mute/Solo；建议一并保存独立Usage/Root组状态 | 改写成员状态、改变canonical / 导出选择 |
+| Diagnostics / Settings Workspace | Diagnostics筛选、Project Settings当前页等轻量导航 | 一份复制诊断报告、模态Properties草稿 |
+| 导航指针 | Edit/Playback Cursor静止位置，恢复时Clamp到有效范围 | Playing/Buffering/Preview继续运行、任务续跑 |
+| 监听过滤 | Track和独立Usage/Root组的Mute/Solo，两级分别保存 | 改写成员状态、改变canonical / 导出选择 |
 
 这不是允许序列化整个ViewModel。字段应有类型、合法范围、默认值、owner身份和未知/损坏恢复策略；不保存内部ID到可见UI，但序列化引用仍使用Stable ID。
 
-B1进入编码前还须通过资源实验冻结可执行的数值预算：presentation总字节、Tab/profile/lane条目数、单文本长度、恢复在途任务数和后台缓存上限。不能仅以“轻量/几十个Tab”替代输入上限。超过恢复预算时隔离对应presentation区并说明，不影响音乐加载；保存端不得静默截断用户视图。D-STATE02.c 已列推荐处理：明确提示并允许保存音乐及可用视图部分，或取消；待批准后写入schema/工作流。预算数值由实验固定，不要求用户猜字节数。
+B1进入编码前还须通过资源实验冻结可执行的数值预算：presentation总字节、Tab/profile/lane条目数、单文本长度、恢复在途任务数和后台缓存上限。不能仅以“轻量/几十个Tab”替代输入上限。超过恢复预算时隔离对应presentation区并说明，不影响音乐加载；保存端不得静默截断用户视图。D-STATE02.c 已批准明确提示后允许保存音乐及可用视图部分，或取消；对应处理应落实到schema/工作流。预算数值由实验固定，不要求用户猜字节数。
 
 ### 3.3 保存与恢复合同
 
@@ -140,9 +152,9 @@ B1进入编码前还须通过资源实验冻结可执行的数值预算：presen
 3. 只保存已提交的视图描述，不自动写磁盘每次Pan/Zoom；内存profile轻量即时更新。
 4. 恢复后Stopped，不自动开始音乐/试听；监听过滤在首个播放计划前生效。底层canonical仍包含未过滤音乐。
 5. 恢复Tabs先轻量描述符，活动Tab按需加载；不把几十个后台workspace一口气同步解码或构建百万索引。
-6. 已删owner/失效target过滤或dormant处理；Arrangement固定第一且唯一。对象Undo恢复是否自动重开Tab由明确导航策略决定，不能伪装成Undo视图状态。
-7. presentation损坏/未知版本继续不阻碍音乐加载；D-STATE02.b 推荐尽可能独立section回退，而非任意一个字段使全部布局丢失，但维持严格JSON/版本检查和可理解警告。
-8. 新presentation schema不原地修改v1/v2，保留reader/golden。D-STATE02.d 已列是否接受旧软件重写后丢失未知新视图字段，推荐接受这一限制但不损坏音乐；不能承诺旧软件也完整恢复新字段。
+6. 删除owner时立即释放其自身视图状态，不短期保留供Undo恢复，也不因Undo自动重开Tab；普通关闭Tab但owner仍存活时继续保留轻量状态。Arrangement固定第一且唯一。存活owner指向已删Onion来源的dormant ID是否保留由 D-STATE03.d 单独待确认，不能混同于已决定删除的owner profile。
+7. presentation损坏/未知版本继续不阻碍音乐加载；D-STATE02.b 已批准尽可能独立section回退，而非任意一个字段使全部布局丢失，同时维持严格JSON/版本检查和可理解Warning。
+8. 新presentation schema不原地修改v1/v2，保留reader/golden。D-STATE02.d 已接受旧软件重写后可能丢失未知新视图字段，但不能损坏音乐；不承诺旧软件也完整恢复新字段。
 
 只扩presentation通常可继续用外层Format3的独立schema分派；若音乐source同时增加不可表达内容，另评估Project Format。保留旧Format1/2 detached migration与确认后备份再原路径保存规则。
 
@@ -152,23 +164,27 @@ B1进入编码前还须通过资源实验冻结可执行的数值预算：presen
 
 `DesktopSessionController.cs:349/2187` 当前所有Segment主Piano共享一个controller级 `PianoRollEditorSettings`；`PresentationModels.cs:815` 包含Grid/Snap/默认音长力度。其他zoom、scroll、下部面板多在每Workspace，`:1055/1153` 的LaneEditorSettings也独立；关闭Tab（`DesktopSessionController.cs:2251`）销毁VM。
 
-所以新要求不仅是“多记几个值”，还会将部分**跨所有Track共享** 缩为**同Track共享** 。应在D-STATE03明确批准，避免某些设置仍全局串改。
+所以新要求不仅是“多记几个值”，还会将部分**跨所有Track共享** 缩为**同Track共享** 。D-STATE03.a 已批准这一所有权变化，实施时应避免某些设置仍全局串改。
 
-### 4.2 推荐所有权
+### 4.2 Q1 已批准的所有权与局部待确认字段
 
-| Owner | 字段建议 | 同步 / 生命周期 |
+| Owner | 已批准字段 | 同步 / 生命周期 |
 |---|---|---|
-| Project presentation registry | Tab顺序、活动Workspace、全局布局 / 指针（获批时） | 小型typed registry，独立revision |
+| Project presentation registry | Tab顺序、活动Workspace、已批准的项目视图布局 / 静止指针 | 小型typed registry，独立revision |
 | Track profile | 水平/垂直缩放、Grid；主Piano Snap与底部Event Snap两套独立配置及各自Snap值；默认Note长度/Velocity、Lanes/List/Tracks开关与通用面板尺寸 | 同Track即时同步；不同Track独立；与Usage/Root共享状态无关；不因新Tab工具栏合并而把Piano/Event Snap合并 |
-| Segment view state | 各自horizontal start、vertical origin、活动lane、该owner实际Tab显隐/顺序与局部布局 | 关闭保留轻量字段，不保留VM/source缓存 |
-| Segment + lane target state | 每target纵轴、显隐/顺序、实际局部状态 | 推荐Segment独立而非Track默认联动；不在其他Segment创建正式Lane / Mapping |
+| Segment view state | 各自horizontal start、vertical origin、活动lane、该owner实际Tab显隐/顺序与局部布局 | 关闭Tab保留轻量字段；删除owner即释放；不保留VM/source缓存 |
+| Segment + lane target state | 每target纵轴、显隐/顺序、实际局部状态 | Segment独立而非Track默认联动；不在其他Segment创建正式Lane / Mapping |
 | SubVoice view state | 自己的编辑profile、lane状态与局部viewport | 独立于Logical Track共享profile；不因绑定或Usage改变而串改 |
 
 用户调zoom时写一份Track profile，当前可见Tab即时更新、隐藏Tab在激活时读取同一revision；不互相广播复制VM属性制造反馈环。共享缩放不共享鼠标锚点或滚动起点，另一Tab保留自己的世界坐标观察位置。每次写入应与受影响Tab数成比例，不与音符数成比例。
 
-关闭Tab不删除profile，关闭Project释放整个会话registry。Track删除 / Undo、Duplicate、Segment跨Track移动 / 转换、加入共享Usage/Root的政策已列 D-STATE03.a～c 待回答：推荐profile归Track ID；新Duplicate复制轻量偏好、之后独立；迁入Segment使用目标Track通用profile但保留/校准自己合法滚动位置；删除owner可保留轻量dormant状态供音乐Undo恢复，但不自动重开Tab。
+关闭Tab不删除仍存活owner的profile，关闭Project释放整个会话registry。D-STATE03.a～c 已决定：profile归Track ID；Duplicate Track复制轻量偏好、之后独立；迁入Segment使用目标Track通用profile但保留/校准自己合法滚动位置；加入共享Usage/Root不合并各Track profile。用户在 D-STATE03.c 明确修正：删除owner即释放其自身视图状态，不保留短期dormant profile，Undo也不自动重开Tab。
 
-现有从Arrangement显式打开Segment会在编辑指针位于Segment时将其置中（`DesktopSessionController.cs:2201`、SRS §18.2）。建议优先级为：显式“定位/打开到编辑指针”导航覆盖一次局部位置；普通切Tab / 项目恢复遵守已记忆viewport。用户是否要改变此习惯见D-STATE03。
+**Q2 待确认（D-STATE03.d）：** 存活Track A的Onion配置引用已删Track B时，是否继续保留仅有稳定ID的dormant来源引用，还是立即从A的配置中移除。现行SRS §18.11.3允许删除引用dormant及Undo恢复；本题与“删除B自己的profile”不同，不以 D-STATE03.c 自动批准扩大清理范围，也不持有B的VM、source lease或缓存。
+
+**Q2 待确认（D-STATE03.e）：** 附表A已批准保存当前工具，但附表B未明确该字段的所有权；候选为同Track共享适用的左键工具及Free/Line/Horizontal Pen选择。该同步政策尚未获批，不顺带改变各lane纵轴、顺序或SubVoice的独立所有权。
+
+现有从Arrangement显式打开Segment会在编辑指针位于Segment时将其置中（`DesktopSessionController.cs:2201`、SRS §18.2）。D-STATE03.b 已批准保留这一优先级：从Arrangement显式打开且编辑指针在Segment内时定位到编辑指针；普通切Tab / 项目恢复遵守已记忆viewport。
 
 ### 4.3 状态专题验收
 
@@ -182,12 +198,12 @@ B1进入编码前还须通过资源实验冻结可执行的数值预算：presen
 
 建议先抽统一“请求打开一个外部文件”协调器，让菜单、命令行、转发和拖入共同使用：扩展名/路径→停止与未保存确认→detached打开/导入→一次会话提交→报告/Recent/预热。DragOver只判断可接受类型，不读取MIDI或构建项目。
 
-一次多文件、扩展名、忙碌/模态、窗口选择、同文件重入已列 D-OPEN01.a～d 待本次集中回答：推荐每次一个，`.mid/.midi`复用现有导入范围，多文件明确提示而非偷偷只取第一个；拖入/窗口内Open替换当前并守未保存确认，多实例完成后系统Open With/命令行带文件开新窗口、同文件已有可写实例则定位它。模态/前台长任务期间明确拒绝，不暗排迟到打开队列。
+D-OPEN01.a～d 已批准：接受 `.midora/.mid/.midi`，每次一个文件，MIDI复用现有导入范围；多文件明确拒绝，不偷偷只取第一个，也不为每个文件分别开实例。拖入/窗口内Open替换当前并守未保存确认；多实例完成后系统Open With/命令行带文件开新窗口，同文件已有可写实例则定位它。模态/前台长任务期间明确拒绝，不暗排迟到打开队列。
 
-Open With可以先保证用户手工选Midora.exe时能正确处理带空格/Unicode路径；不因此自动注册默认程序或修改用户注册表。安装/portable发布的显式关联入口如需增加单独批准。
+Open With应支持用户手工选Midora.exe时正确处理带空格/Unicode路径；不自动注册默认关联、不修改默认应用，保持最小系统侵入。安装/portable发布的显式关联入口不在本次范围。ENV-WIN10 已说明用户可提供Win10虚拟机、不能提供实机；可以安排虚拟机验证，报告须如实区分虚拟机与实机，不把尚未执行的验证写成已通过。
 
 测试：干净/Modified/从未保存项目、确认取消、打开失败保留旧项目、非法扩展、文件夹/多文件、冷启动/已有进程、忙碌/模态、MIDI Port复审、导入Warning完整报告、预热失败保留已打开项目。多实例上线后相同入口不能发生双重打开或覆盖。
 
 ## 6. 后续实现分阶段建议
 
-见[总计划B/C](00-Overview-and-Delivery-Plan.md)。两专题不是“做完一个功能才想状态”：C先管共享写入/租约，B先管字段所有权；协议/schema在各自进入实现前冻结。各轮仍需详细自动测试+小型人工清单，不要求用户手工验证所有多进程竞争或损坏文件组合。
+见[总计划B/C](00-Overview-and-Delivery-Plan.md)。两专题不是“做完一个功能才想状态”：C先管共享写入及文件型Clipboard安全，B依已批准白名单和所有权推进；D-MI06.a/b及D-STATE03.d/e仅阻塞各自未定边界，不重新开放全部Q1。协议/schema在各自进入实现前冻结并正式同步SRS。各轮仍需详细自动测试+小型人工清单，不要求用户手工验证所有多进程竞争或损坏文件组合。

@@ -300,7 +300,7 @@ public partial class MainWindow
             else
             {
                 instrument.IsLowerEditorVisible = true;
-                instrument.ActiveLowerEditorIndex = 1;
+                instrument.ActiveLowerEditorIndex = 2;
                 instrument.ActiveRenderLaneIndex = instrument.RenderLanes.ToList().FindIndex(lane =>
                     lane.EventMappingTarget == row.MidiTarget);
                 instrument.PreferCurrentRenderLaneOnNextRebuild();

@@ -134,6 +134,6 @@ Midora 产品版本使用 `MAJOR.MINOR.PATCH[-prerelease]`。首个产品版本�
 
 新 1.x 软件必须持续读取本产品线此前正式发布的 Project Format；旧软件不承诺读取未来格式。Project Format 是否提升只由持久化表示和语义变化决定，不由产品 MAJOR/MINOR/PATCH 机械决定。用户填写的 Project Version 只属于作品 metadata，不参与任何兼容判断。
 
-当前 writer 为 Project Format 3。Format 1 是首个冻结兼容基线，Format 2 冻结 Event Instrument Pre-Roll 表示，Format 3 新增独立 Project presentation entry；三个 reader/schema/golden 必须并存。Format 1/2 通过 detached migration 打开，普通 Save 只在用户确认、精确旧字节永久副本已安全存在后才可原路径升级；Save Copy 只写 Format 3 且不改变迁移状态。产品仍处于 `1.0.0-dev` 不构成破坏既有冻结格式的许可。
+当前 writer 为 Project Format 4。Format 1 是首个冻结兼容基线，Format 2 冻结 Event Instrument Pre-Roll 表示，Format 3 新增独立 Project presentation entry，Format 4 新增严格的 Instrument Change 编辑关联 source component（§16.35）；四个 reader/schema/golden 必须并存。Format 1/2/3 通过 detached migration 打开，普通 Save 只在用户确认、精确旧字节永久副本已安全存在后才可原路径升级；Save Copy 只写 Format 4 且不改变迁移状态。产品仍处于 `1.0.0-dev` 不构成破坏既有冻结格式的许可。
 
 Midora 的程序级持久化采用 ProgramRoot portable layout；这属于部署/数据归属契约，不与产品 SemVer 或 Project Format 共用版本号。不同 ProgramRoot 必须互相隔离，且不得用隐式用户目录 fallback 掩盖不可写安装位置。

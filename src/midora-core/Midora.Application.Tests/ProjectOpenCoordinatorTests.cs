@@ -117,7 +117,7 @@ public sealed class ProjectOpenCoordinatorTests
         DowngradeToFormatTwo(legacyPath);
         byte[] originalBytes = await File.ReadAllBytesAsync(legacyPath);
         string occupiedBackupPath = temporary.PathFor(
-            "Legacy-Format-2 - Original Format 2 before Format 3.midora");
+            "Legacy-Format-2 - Original Format 2 before Format 4.midora");
         await File.WriteAllBytesAsync(occupiedBackupPath, [9, 8, 7]);
         await using ProjectOpenCandidate candidate = await new ProjectOpenCoordinator(packages)
             .OpenAsync(legacyPath);
@@ -159,12 +159,12 @@ public sealed class ProjectOpenCoordinatorTests
         Assert.False(document.NeedsSaveBeforeClose);
         Assert.NotNull(result.PermanentLegacyBackupPath);
         Assert.EndsWith(
-            "Legacy-Format-2 - Original Format 2 before Format 3 (2).midora",
+            "Legacy-Format-2 - Original Format 2 before Format 4 (2).midora",
             result.PermanentLegacyBackupPath,
             StringComparison.Ordinal);
         Assert.Equal(originalBytes, await File.ReadAllBytesAsync(result.PermanentLegacyBackupPath!));
         await using MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(legacyPath);
-        Assert.Equal(3, reopened.SourceFileFormatVersion);
+        Assert.Equal(4, reopened.SourceFileFormatVersion);
         Assert.False(reopened.RequiresFormatUpgrade);
         Assert.Equal("Legacy", reopened.Project.Metadata.ProjectName);
         CanonicalCompiledResult reopenedCanonical = new MidoraCompiler().CompileFull(reopened.Project);
@@ -207,7 +207,7 @@ public sealed class ProjectOpenCoordinatorTests
         MidoraLegacyProjectUpgradePlanV3 replacementPlan =
             await persistence.PrepareLegacyProjectUpgradeAsync();
         Assert.EndsWith(
-            "Backup-Path-Race - Original Format 2 before Format 3 (2).midora",
+            "Backup-Path-Race - Original Format 2 before Format 4 (2).midora",
             replacementPlan.PermanentBackupPath,
             StringComparison.Ordinal);
     }
@@ -386,6 +386,8 @@ public sealed class ProjectOpenCoordinatorTests
                 "settings/project-presentation.json",
                 StringComparison.Ordinal))!;
         files.Remove(presentation);
+        files.Remove(files.Single(value => value?["path"]?.GetValue<string>() == "settings/instrument-changes.pb"));
+        archive.GetEntry("settings/instrument-changes.pb")?.Delete();
         manifestEntry.Delete();
         archive.GetEntry("settings/project-presentation.json")?.Delete();
         using Stream output = archive.CreateEntry("manifest.json").Open();

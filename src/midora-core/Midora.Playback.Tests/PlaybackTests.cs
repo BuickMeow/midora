@@ -8,6 +8,52 @@ namespace Midora.Playback.Tests;
 public sealed class PlaybackTests
 {
     [Fact]
+    public void PresetWithoutSoundFontReleasesEditLockAndDoesNotMoveMainCursor()
+    {
+        using var project = CreateProject();
+        using var session = new ProjectCompilationSession(project);
+        using var controller = new PlaybackController(session, new FakeBackend());
+        controller.Seek(240);
+        Guid owner = Guid.NewGuid();
+        Assert.ThrowsAny<Exception>(() => controller.StartInstrumentPresetPreview(owner, new(0, 0, 0), false));
+        controller.StopInstrumentPresetPreview(owner);
+        Assert.False(session.EditsLocked); Assert.Equal(240, controller.CurrentTick);
+        Assert.NotEqual(PlaybackState.Playing, controller.State);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PresetPreviewUsesExplicitOwnershipAndKeepsMainCursor(bool held)
+    {
+        string soundFont = CreateTemporarySoundFont();
+        try
+        {
+            using var project = CreateProject();
+            using var session = new ProjectCompilationSession(project, soundFont);
+            var backend = new FakeBackend();
+            using var controller = new PlaybackController(session, backend);
+            Guid owner = Guid.NewGuid(); controller.Seek(240);
+            controller.StartInstrumentPresetPreview(owner, new(0, 0, 7), held);
+            Assert.Equal(PlaybackTaskKind.InstrumentPresetPreview, controller.ActiveTaskKind);
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(240, controller.CurrentTick); Assert.True(session.EditsLocked);
+            controller.StopInstrumentPresetPreview(Guid.NewGuid());
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            if (held)
+            {
+                controller.ReleaseInstrumentPresetPreviewKey(owner);
+                Assert.False(controller.IsHeldPreviewGateOpen);
+            }
+            controller.StopInstrumentPresetPreview(owner);
+            Assert.False(session.EditsLocked); Assert.Equal(240, controller.CurrentTick);
+            controller.Start();
+            controller.StopInstrumentPresetPreview(owner);
+            Assert.Equal(PlaybackTaskKind.MainTimeline, controller.ActiveTaskKind);
+        }
+        finally { File.Delete(soundFont); }
+    }
+
+    [Fact]
     public void EffectiveSoundFontSetIdentityChangesWhenFileMetadataChangesAtTheSamePath()
     {
         string soundFont = CreateTemporarySoundFont();

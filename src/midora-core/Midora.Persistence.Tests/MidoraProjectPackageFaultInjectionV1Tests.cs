@@ -112,7 +112,7 @@ public sealed class MidoraProjectPackageFaultInjectionV1Tests
 
         Assert.Equal(failure.BackupPath, retried.PermanentLegacyBackupPath);
         await using MidoraProjectOpenResultV1 reopened = await CreateService().OpenAsync(sourcePath);
-        Assert.Equal(3, reopened.SourceFileFormatVersion);
+        Assert.Equal(4, reopened.SourceFileFormatVersion);
         Assert.False(reopened.RequiresFormatUpgrade);
     }
 
@@ -164,7 +164,7 @@ public sealed class MidoraProjectPackageFaultInjectionV1Tests
     private static void DowngradeToFormatTwo(string path)
     {
         using ZipArchive archive = ZipFile.Open(path, ZipArchiveMode.Update);
-        ManifestJsonV3 current = ManifestCodecV3.Parse(ReadEntry(archive, "manifest.json"));
+        ManifestJsonV4 current = ManifestCodecV4.Parse(ReadEntry(archive, "manifest.json"));
         ManifestJsonV2 legacy = new()
         {
             Magic = current.Magic,
@@ -174,10 +174,11 @@ public sealed class MidoraProjectPackageFaultInjectionV1Tests
             CreatedWithSoftwareVersion = current.CreatedWithSoftwareVersion,
             LastSavedWithSoftwareVersion = current.LastSavedWithSoftwareVersion,
             Files = current.Files
-                .Where(value => value.Path != MidoraPackagePathsV1.ProjectPresentation)
+                .Where(value => value.Path != MidoraPackagePathsV1.ProjectPresentation && value.Path != PersistenceContractV4.InstrumentChangesPath)
                 .ToArray()
         };
         archive.GetEntry(MidoraPackagePathsV1.ProjectPresentation)!.Delete();
+        archive.GetEntry(PersistenceContractV4.InstrumentChangesPath)!.Delete();
         archive.GetEntry(MidoraPackagePathsV1.Manifest)!.Delete();
         using Stream output = archive.CreateEntry(MidoraPackagePathsV1.Manifest).Open();
         output.Write(ManifestCodecV2.Serialize(legacy));

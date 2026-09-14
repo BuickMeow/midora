@@ -61,7 +61,7 @@ public sealed class TimelineObjectListTests(ITestOutputHelper output)
         Assert.Equal(new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.PitchBend, 0), rows[2].DirectMidiTarget);
         Assert.True(rows[3].IsOpaque);
         Assert.Equal(3, rows[3].PayloadLength);
-        Assert.Equal("Program 5", TimelineObjectListSource.GetValueLabel(rows[0]));
+        Assert.Equal("Program 4", TimelineObjectListSource.GetValueLabel(rows[0]));
         Assert.DoesNotContain("Id", TimelineObjectListSource.GetValueLabel(rows[3]), StringComparison.Ordinal);
     }
 

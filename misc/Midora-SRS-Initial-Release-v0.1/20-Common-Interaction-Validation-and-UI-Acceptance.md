@@ -1534,7 +1534,7 @@ MIDI Note 60 -> C4
 Black keys   -> sharps
 Port         -> 1-16
 Channel      -> 1-16
-Program      -> 1-128
+Program      -> 0-127
 ```
 用户侧 Track 和 SubVoice 显示顺序编号使用 1-based。
 ### 20.13.5 Enum

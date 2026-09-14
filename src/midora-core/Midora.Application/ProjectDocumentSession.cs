@@ -777,7 +777,7 @@ public sealed class ProjectDocumentSession : IDisposable
             prepared.Changes.PresentationEventInstrumentIds);
         changes.TimelineOwnerChanges.AddRange(prepared.Changes.TimelineOwnerChanges);
         return new(
-            ExactTimelineCollisionPolicy.Wrap(project, prepared),
+            InstrumentChangeMaintenance.Wrap(project, ExactTimelineCollisionPolicy.Wrap(project, prepared)),
             changes);
     }
 

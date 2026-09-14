@@ -145,6 +145,27 @@ public sealed class InstrumentCatalogResolver
             InstrumentCatalogResolutionSource.NumericFallback);
     }
 
+    /// <summary>
+    /// Fixed 16K address bitmap: union known banks without enumerating the
+    /// 2-million Bank/Program product or building a second catalog graph.
+    /// Numeric fields remain able to select addresses absent from this list.
+    /// </summary>
+    public IReadOnlyList<InstrumentBankAddress> GetKnownBanks()
+    {
+        System.Collections.BitArray present = new(128 * 128);
+        if (_generalMidiEnabled) present[0] = true;
+        foreach (var value in _overrides)
+            present[value.Address.BankMsb * 128 + value.Address.BankLsb] = true;
+        foreach (var profiles in new[] { _importedProfiles, _userProfiles, _builtInProfiles })
+            foreach (var profile in profiles)
+                foreach (var bank in profile.Banks)
+                    present[bank.BankMsb * 128 + bank.BankLsb] = true;
+        List<InstrumentBankAddress> result = [];
+        for (int index = 0; index < present.Length; index++)
+            if (present[index]) result.Add(new((byte)(index / 128), (byte)(index % 128)));
+        return result;
+    }
+
     public ResolvedInstrumentCatalogName ResolveBank(InstrumentBankAddress address)
     {
         address.Validate();

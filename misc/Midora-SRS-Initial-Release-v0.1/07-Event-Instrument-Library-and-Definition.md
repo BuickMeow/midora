@@ -285,8 +285,8 @@ Event Instrument Library 不管理 SF2。
 Event Instrument 不绑定独立 SF2。
 系统级规则：
 ```text
-一个 Project 最多选择一个 SF2
-所有 Event Instrument 使用同一个 Project 级 SF2 进行播放、预览和音频渲染
+SoundFont 仅由第 6 章规定的程序级有序 Enabled SF2/SFZ 列表及目标映射管理，Project 不保存 SoundFont
+所有 Event Instrument 使用任务冻结的同一程序级 SoundFont 配置进行播放、预览和音频渲染
 Event Instrument 内部 Program Change / Bank Select 是 MIDI 事件语义
 替换 SF2 不自动修改 Event Instrument 内容
 不根据当前 SF2 校验 Event Instrument 中的 Bank / Program 是否存在
@@ -294,13 +294,13 @@ Event Instrument 内部 Program Change / Bank Select 是 MIDI 事件语义
 无 SF2 不影响 MIDI 编译
 无 SF2 不影响 MIDI 导出
 ```
-Event Instrument Library 不显示 SF2 preset / instrument 名称。
+Event Instrument Library 不直接读取 SF2；统一音色选择器可使用程序级 Instrument Catalog 中已存在的名称，不隐式 Scan Presets。
 Program 显示编号规则由 第 6 章《SoundFont 与声音资源》 与后续事件编辑章节共同遵守：
 ```text
-UI 显示 Program 1–128
+UI 显示 Program 0–127
 MIDI 内部 Program Change value 使用 0–127
-初版不显示 GM 名称
-初版不显示 SF2 内部 preset / instrument 名称
+名称使用程序级 Catalog resolver；无名称时保留合法数值回退
+只有显式 Scan Presets 可以读取 SF2 preset 元数据；音色选择器本身不读取 sample 或扫描文件
 ```
 ---
 ## 7.15 Event Instrument Library 与 Port / Channel 资源系统的关系
@@ -1207,8 +1207,8 @@ Event Instrument 定义内容发生变化
 Event Instrument 不绑定独立 SF2。
 系统级规则：
 ```text
-一个 Project 最多选择一个 SF2。
-所有 Event Instrument 在播放、预览和音频渲染时使用同一个 Project 级 SF2。
+SoundFont 仅属于第 6 章规定的程序级有序 Enabled SF2/SFZ 列表及目标映射，Project 不保存 SoundFont。
+所有 Event Instrument 在播放、预览和音频渲染时使用任务冻结的同一程序级 SoundFont 配置。
 Event Instrument 内部 Program Change / Bank Select 是 MIDI 事件语义。
 替换 SF2 不自动修改 Event Instrument 定义。
 Event Instrument 定义不根据当前 SF2 校验 Program / Bank 是否存在。

@@ -57,9 +57,13 @@ public static partial class ProjectDomainEditCommands
     private static void CopyBoundedSubVoiceTimeline(MidoraProject project, SubVoice source, SubVoice target)
     {
         using var scope = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default, project: project);
+        long firstEventId = project.NextStableId;
         var events = FreezeClipboardSource(FirstTemplateClipboardValues(source.Events.CreateQuerySnapshot().EnumerateAll()
             .Select(value => value with { Id = project.AllocateStableId() })), static value => value.Id);
         target.Events.AdoptSource(project, events, scope.Token);
+        target.InstrumentChanges = InstrumentChangeCopies.Restore(project,
+            InstrumentChangeCopies.Capture(source.InstrumentChanges, source.Events.CreateQuerySnapshot()), firstEventId, false,
+            group => InstrumentChangeResolver.TryRead(target, group, out _));
         foreach (ValueCurve value in source.Curves)
         {
             scope.Token.ThrowIfCancellationRequested();

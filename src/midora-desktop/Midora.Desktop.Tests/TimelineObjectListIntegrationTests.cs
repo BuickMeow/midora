@@ -235,7 +235,7 @@ public static class TimelineObjectListIntegrationTests
         workspace.TimelineStartTick = 37;
         workspace.TimelineTickSpan = 1000;
         workspace.IsLowerEditorVisible = true;
-        foreach (int lowerTab in new[] { 0, 1 })
+        foreach (int lowerTab in new[] { 0, 2 })
         {
             workspace.ActiveLowerEditorIndex = lowerTab;
             Layout(content);

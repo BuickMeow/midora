@@ -151,6 +151,13 @@ public sealed class SelectionUiFailureReproductionTests
                     itemSource: source);
                 noteSurface = CreateBoundSurface(workspace, snapshot);
                 laneSurface = CreateBoundSurface(workspace, snapshot);
+                // This case specifies an unmodified Replace gesture. Do not read
+                // the operator's live Ctrl/Shift key state during the test run.
+                FieldInfo modifiers = typeof(TimelineSurface).GetField(
+                    "_replayingConductorModifiers",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!;
+                modifiers.SetValue(noteSurface, System.Windows.Input.ModifierKeys.None);
+                modifiers.SetValue(laneSurface, System.Windows.Input.ModifierKeys.None);
                 noteSurface.SelectionReplacementStarted += (_, args) =>
                     args.BaseSelection = session.BeginWorkspaceSelectionReplacement(workspace);
                 noteSurface.MarqueeCompleted += (_, args) =>

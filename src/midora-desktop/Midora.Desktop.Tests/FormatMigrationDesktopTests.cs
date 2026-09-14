@@ -40,7 +40,7 @@ public sealed class FormatMigrationDesktopTests
         Assert.Equal(Path.GetFullPath(legacyPath), persistence.CurrentProjectPath);
         Assert.False(persistence.RequiresFormatUpgrade);
         await using MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(legacyPath);
-        Assert.Equal(3, reopened.SourceFileFormatVersion);
+        Assert.Equal(4, reopened.SourceFileFormatVersion);
     }
 
     private static void DowngradeStructureOnlyPackageToFormatOne(string path)

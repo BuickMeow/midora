@@ -1141,8 +1141,12 @@ public static partial class ProjectDomainEditCommands
         progress ??= new(DirectContentRecordCount(source));
         AdoptBoundedDirectMidiNotes(project, result, progress.Read(notes)
             .Select(value => value with { Id = project.AllocateStableId() }));
+        long firstEventId = project.NextStableId;
         AdoptBoundedDirectMidiEvents(project, result, progress.Read(events)
             .Select(value => value with { Id = project.AllocateStableId() }));
+        result.InstrumentChanges = InstrumentChangeCopies.Restore(project,
+            InstrumentChangeCopies.Capture(source.InstrumentChanges, events), firstEventId, true,
+            group => InstrumentChangeResolver.TryRead(result, group, out _));
         AdoptBoundedOpaqueMidiEvents(project, result, progress.Read(opaque)
             .Select(value => value with { Id = project.AllocateStableId() }));
         return result;

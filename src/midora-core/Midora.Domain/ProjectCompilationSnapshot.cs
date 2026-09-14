@@ -436,6 +436,7 @@ internal static partial class ProjectCompilationSnapshot
             result.EventMappings.Add(mappingCopy);
         }
         result.Events.AdoptSnapshot(project, source.Events.CreateQuerySnapshot());
+        result.InstrumentChanges = source.InstrumentChanges;
         foreach (ValueCurve curve in source.Curves)
         {
             cancellationToken.ThrowIfCancellationRequested();

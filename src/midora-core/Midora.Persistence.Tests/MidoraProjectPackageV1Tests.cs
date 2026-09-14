@@ -350,9 +350,9 @@ public sealed class MidoraProjectPackageV1Tests
     }
 
     [Theory]
-    [InlineData("fileFormatVersion", 4)]
-    [InlineData("minimumReadableVersion", 4)]
-    [InlineData("manifestSchemaVersion", 4)]
+    [InlineData("fileFormatVersion", 5)]
+    [InlineData("minimumReadableVersion", 5)]
+    [InlineData("manifestSchemaVersion", 5)]
     public async Task FutureManifestVersionIsRejectedDuringVersionPreflight(
         string propertyName,
         int futureVersion)
@@ -369,11 +369,11 @@ public sealed class MidoraProjectPackageV1Tests
 
         Assert.Equal(MidoraPackageStageV1.VersionPreflight, failure.Stage);
         Assert.Equal("manifest.json", failure.PackagePath);
-        Assert.Equal(3, failure.SupportedFileFormatVersion);
-        Assert.Equal(3, failure.SupportedManifestSchemaVersion);
-        Assert.Equal(propertyName == "fileFormatVersion" ? 4 : 3, failure.FileFormatVersion);
-        Assert.Equal(propertyName == "minimumReadableVersion" ? 4 : 3, failure.MinimumReadableVersion);
-        Assert.Equal(propertyName == "manifestSchemaVersion" ? 4 : 3, failure.ManifestSchemaVersion);
+        Assert.Equal(4, failure.SupportedFileFormatVersion);
+        Assert.Equal(4, failure.SupportedManifestSchemaVersion);
+        Assert.Equal(propertyName == "fileFormatVersion" ? 5 : 4, failure.FileFormatVersion);
+        Assert.Equal(propertyName == "minimumReadableVersion" ? 5 : 4, failure.MinimumReadableVersion);
+        Assert.Equal(propertyName == "manifestSchemaVersion" ? 5 : 4, failure.ManifestSchemaVersion);
     }
 
     [Fact]
@@ -454,7 +454,8 @@ public sealed class MidoraProjectPackageV1Tests
             "settings/project-settings.json",
             "settings/global-reset-defaults.json",
             "settings/global-event-scope-defaults.json",
-            "settings/project-presentation.json"
+            "settings/project-presentation.json",
+            "settings/instrument-changes.pb"
         ];
         using ZipArchive archive = ZipFile.OpenRead(packagePath);
         Assert.Equal(expected, archive.Entries.Select(entry => entry.FullName));
@@ -465,9 +466,9 @@ public sealed class MidoraProjectPackageV1Tests
         using Stream manifestStream = manifestEntry.Open();
         using MemoryStream buffer = new();
         manifestStream.CopyTo(buffer);
-        ManifestJsonV3 manifest = ManifestCodecV3.Parse(buffer.ToArray());
-        Assert.Equal(PersistenceContractV3.FileFormatVersion, manifest.FileFormatVersion);
-        Assert.Equal(PersistenceContractV3.ManifestSchemaVersion, manifest.ManifestSchemaVersion);
+        ManifestJsonV4 manifest = ManifestCodecV4.Parse(buffer.ToArray());
+        Assert.Equal(PersistenceContractV4.FileFormatVersion, manifest.FileFormatVersion);
+        Assert.Equal(PersistenceContractV4.ManifestSchemaVersion, manifest.ManifestSchemaVersion);
         Assert.Equal(
             expected.Skip(1).OrderBy(path => path, StringComparer.Ordinal),
             manifest.Files.Select(item => item.Path));
@@ -510,7 +511,7 @@ public sealed class MidoraProjectPackageV1Tests
             json = reader.ReadToEnd();
         }
         original.Delete();
-        string current = $"\"{propertyName}\": {PersistenceContractV3.FileFormatVersion}";
+        string current = $"\"{propertyName}\": {PersistenceContractV4.FileFormatVersion}";
         string replacement = $"\"{propertyName}\": {value}";
         Assert.Contains(current, json, StringComparison.Ordinal);
         ZipArchiveEntry updated = archive.CreateEntry("manifest.json", CompressionLevel.Optimal);

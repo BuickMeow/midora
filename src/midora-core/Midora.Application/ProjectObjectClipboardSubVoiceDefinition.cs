@@ -68,7 +68,11 @@ public static partial class ProjectObjectClipboard
             instrument.MappingFunctions
                 .Where(value => functionIds.Contains(value.Id))
                 .Select(SnapshotMappingFunction)
-                .ToArray());
+                .ToArray())
+        {
+            InstrumentChanges = ClipboardCaptureScope.Capture(InstrumentChangeCopies.Capture(
+                voice.InstrumentChanges, voice.Events.CreateQuerySnapshot()), voice.InstrumentChanges.Count)
+        };
         string name = string.IsNullOrWhiteSpace(voice.Name) ? "SubVoice" : voice.Name;
         return new(
             document.ClipboardSessionIdentity,
@@ -178,7 +182,10 @@ internal sealed record SubVoiceClipboardSnapshot(
     ValueCurveClipboardSnapshot[] Curves,
     LogicalParameterClipboardSnapshot[] LogicalParameters,
     InstrumentEnvelopeClipboardSnapshot[] Envelopes,
-    MappingFunctionClipboardSnapshot[] MappingFunctions);
+    MappingFunctionClipboardSnapshot[] MappingFunctions)
+{
+    public IReadOnlyList<InstrumentChangeClipboardRecord> InstrumentChanges { get; init; } = [];
+}
 
 internal sealed record SubVoiceEventMappingClipboardSnapshot(
     TemplateEventMappingTarget Target,
@@ -348,6 +355,7 @@ public static partial class ProjectDomainEditCommands
             result.EventMappings.Add(mapping);
         }
         using var scope = BulkEditPreparationContext.Enter(BulkEditPreparationContext.Current?.Token ?? default, project: project);
+        long firstEventId = project.NextStableId;
         var events = FreezeClipboardSource(FirstTemplateClipboardValues(snapshot.Events.Select(value =>
         {
             _ = PrepareTemplateEventClipboardValue(value, editCursorTick: 0);
@@ -356,6 +364,8 @@ public static partial class ProjectDomainEditCommands
                 value.HasBankMsb, value.HasBankLsb, value.FollowPitchDelta);
         })), static value => value.Id);
         result.Events.AdoptSource(project, events, scope.Token);
+        result.InstrumentChanges = InstrumentChangeCopies.Restore(project, snapshot.InstrumentChanges, firstEventId, false,
+            group => InstrumentChangeResolver.TryRead(result, group, out _));
         foreach (ValueCurveClipboardSnapshot value in snapshot.Curves)
         {
             scope.Token.ThrowIfCancellationRequested();

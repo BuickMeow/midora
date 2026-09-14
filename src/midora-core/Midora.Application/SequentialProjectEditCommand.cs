@@ -90,6 +90,8 @@ public sealed class SequentialProjectEditCommand : IProgressReportingProjectEdit
                 prepared.Clear();
                 prepared.Add(resolved);
             }
+            InstrumentChangeMaintenance.Reconcile(draft,
+                InstrumentChangeMaintenance.Capture(project, changes), cancellationToken);
             IPreparedProjectEdit result = DetachedProjectRootPreparedEdit.Create(project, draft,
                 prepared.Any(static edit => edit.HasChanges), changes, prepared, metadataBudget,
                 normalizeSelection: _factories.Count > 1);

@@ -1059,6 +1059,13 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
 
     public void UpdatePlayback()
     {
+        if (!Monitor.TryEnter(_presetPreviewTransitions)) return;
+        try { UpdatePlaybackCore(); }
+        finally { Monitor.Exit(_presetPreviewTransitions); }
+    }
+
+    private void UpdatePlaybackCore()
+    {
         if (_context?.Playback is null) return;
         _context.Playback.Update();
         bool tickChanged = CapturePlaybackTick();
@@ -1234,6 +1241,17 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         }
         return result;
     }
+
+    internal void StartInstrumentPresetPreview(Guid owner, InstrumentPresetPreviewRequest request, bool held) =>
+        (_context?.Tasks ?? throw new InvalidOperationException(PlaybackUnavailableReason ?? "Realtime Preview is unavailable."))
+            .StartInstrumentPresetPreview(owner, request, held);
+
+    internal void StopInstrumentPresetPreview(Guid owner) => _context?.Tasks?.StopInstrumentPresetPreview(owner);
+    internal void ReleaseInstrumentPresetPreviewKey(Guid owner) => _context?.Tasks?.ReleaseInstrumentPresetPreviewKey(owner);
+
+    private readonly object _presetPreviewTransitions = new();
+    internal void BeginPresetPreviewTransition() => Monitor.Enter(_presetPreviewTransitions);
+    internal void EndPresetPreviewTransition() => Monitor.Exit(_presetPreviewTransitions);
 
     public StagedProjectEdit PrepareProjectEdit(
         IProjectEditCommand command,

@@ -13,6 +13,9 @@
     <Protobuf Include="Schemas\Proto\midora-common-v1.proto"
               GrpcServices="None"
               AdditionalProtocArguments="--csharp_opt=internal_access" />
+    <Protobuf Include="Schemas\Proto\midora-instrument-changes-v1.proto"
+              GrpcServices="None"
+              AdditionalProtocArguments="--csharp_opt=internal_access" />
     <Protobuf Include="Schemas\Proto\midora-event-instrument-v1.proto"
               GrpcServices="None"
               AdditionalProtocArguments="--csharp_opt=internal_access" />

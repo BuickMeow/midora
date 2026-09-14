@@ -120,6 +120,7 @@ public sealed class MidiSegment
     public DirectMidiNoteCollection Notes => _notes;
     public DirectMidiChannelEventCollection ChannelEvents => _channelEvents;
     public OpaqueMidiEventCollection OpaqueEvents => _opaqueEvents;
+    public InstrumentChangeSet InstrumentChanges { get; set; } = InstrumentChangeSet.Empty;
 
     public TickRange ProjectRange => new(ProjectStartTick, checked(ProjectStartTick + LengthTicks));
     public long ContentEndTick => checked(ContentOffsetTick + LengthTicks);
@@ -181,6 +182,7 @@ public sealed class MidiSegment
         _notes.CloneTo(target._notes, cancellationToken);
         _channelEvents.CloneTo(target._channelEvents, cancellationToken);
         _opaqueEvents.CloneTo(target._opaqueEvents, cancellationToken);
+        target.InstrumentChanges = InstrumentChanges;
     }
 }
 

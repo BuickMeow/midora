@@ -335,8 +335,8 @@ Initial State
 - CC 和 Pitch Bend 使用连续点或曲线；
 - Program、Bank、RPN、NRPN 和 Pitch Bend Range 使用离散高级事件；
 - 不展开 RPN / NRPN 底层 CC 序列；
-- 不显示 GM Program 名称或 SF2 preset 名称；
-- Program 只显示用户侧 1～128 编号。
+- Bank/Program 使用程序级 Catalog 名称与数值回退；不得隐式扫描 SoundFont；
+- Program 统一显示 0～127，与正式 MIDI 值一致。
 
 SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll Grid / Snap、默认 Note 长度和默认 velocity。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
 
@@ -346,6 +346,10 @@ SubVoice `Add Event` 成功后必须按稳定 MIDI target 显示并激活新 Lan
 SubVoice Note piano roll 复用第 18.2.3～18.2.4 节的 Pitch Ruler 琴键与 C 音名规则、Draw / Select 直接编辑边界、拖动预览和第 20 章的工具互斥、指针及快捷键规则。
 SubVoice 不提供 Time Range 选择：主 piano ruler、Velocity ruler 与 Event Lane ruler 均不得开始时间范围拖选，右键菜单的 Time Range 命令禁用；对象框选、列表范围选择和直接编辑不受影响。
 ### 18.4.3 Initial State
+Event Instrument 全局和 SubVoice Initial State 提供统一一行音色选择入口及高级 raw Bank/Program override 区。选择器在 draft 中联动 Bank/Program 名称列表与三个独立 0～127 数值框，保留独立继承；OK 原子提交，Cancel/关闭零音乐变更。无 SoundFont 仍可合法编辑。
+
+MIDI Segment 和 SubVoice 的底部基础 Tab 常驻为 `Vel.`、`Inst.`，Logical Segment 只有 `Vel.`。Inst. 采用固定 y 的时间点与有限数量边框标签；Draw 单点创建、双击/Properties 复用上述选择器，不提供沿线连续创建。使用正式关联命中；目录/排序/分页读取放到有界、可取消后台任务，隐藏/关闭释放索引且迟到结果不得复活。完整包装批量编辑与列表合并由后续 A2b 交付，不因此破坏既有 raw 编辑维护。
+
 Initial State 与 tick 0 普通事件严格分离：
 ```text
 Initial State has no tick.

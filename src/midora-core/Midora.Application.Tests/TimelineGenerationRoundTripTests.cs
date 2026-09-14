@@ -63,7 +63,7 @@ public sealed class TimelineGenerationRoundTripTests
             string path = Path.Combine(directory, "generated.midora");
             await packages.SaveCopyAsync(project, path);
             await using MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(path);
-            Assert.Equal(3, reopened.SourceFileFormatVersion);
+            Assert.Equal(4, reopened.SourceFileFormatVersion);
             Assert.Empty(reopened.Diagnostics);
             Assert.Equal(expected, ReadSource(reopened.Project, kind));
             using MidoraCompiler restoredCompiler = new();

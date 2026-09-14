@@ -8,6 +8,25 @@ namespace Midora.Application.Tests;
 public sealed class ApplicationPreferencesStoreTests
 {
     [Fact]
+    public void InstrumentAuditionRoundTripsIndependentlyAndOldPreferencesUseDefaults()
+    {
+        using TemporaryDirectory directory = new();
+        string path = Path.Combine(directory.Path, "preferences.json");
+        var store = new ApplicationPreferencesStore(path);
+        var expected = ApplicationPreferences.Default with { InstrumentAudition = new(false, 127, 1, 900) };
+        Assert.True(store.Save(expected).Succeeded);
+        var loaded = store.Load();
+        Assert.Null(loaded.Notice); Assert.Equal(expected.InstrumentAudition, loaded.Preferences.InstrumentAudition);
+        Assert.Equal(expected.RealtimeAudio, loaded.Preferences.RealtimeAudio);
+        var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        Assert.True(json.Remove("instrumentAudition"));
+        File.WriteAllText(path, json.ToJsonString());
+        loaded = store.Load(); Assert.Null(loaded.Notice);
+        Assert.Equal(new InstrumentAuditionPreferences(true, 60, 100, 500), loaded.Preferences.InstrumentAudition);
+        Assert.Throws<ArgumentOutOfRangeException>(() => store.Save(expected with { InstrumentAudition = new(true, 128, 100, 500) }));
+    }
+
+    [Fact]
     public void MissingFileUsesSpecifiedDefaultsWithoutNotice()
     {
         using TemporaryDirectory directory = new();

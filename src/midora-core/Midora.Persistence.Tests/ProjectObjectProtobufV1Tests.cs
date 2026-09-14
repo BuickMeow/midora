@@ -209,6 +209,7 @@ public sealed class ProjectObjectProtobufV1Tests
                 "settings/global-reset-defaults.json",
                 "settings/global-event-scope-defaults.json",
                 "settings/project-presentation.json",
+                "settings/instrument-changes.pb",
                 $"event-instrument-usages/eiu_{usage.Id}.pb",
                 $"event-instruments/ei_{instrument.Id}.pb",
                 $"logical-tracks/lt_{track.Id}.pb"
@@ -799,12 +800,12 @@ public sealed class ProjectObjectProtobufV1Tests
         byte[] replacementBytes)
     {
         using ZipArchive archive = ZipFile.Open(packagePath, ZipArchiveMode.Update);
-        ManifestJsonV3 manifest;
+        ManifestJsonV4 manifest;
         using (Stream manifestInput = archive.GetEntry("manifest.json")!.Open())
         using (MemoryStream buffer = new())
         {
             manifestInput.CopyTo(buffer);
-            manifest = ManifestCodecV3.Parse(buffer.ToArray());
+            manifest = ManifestCodecV4.Parse(buffer.ToArray());
         }
         ManifestFileEntryJsonV1[] files = manifest.Files.Select(item => new ManifestFileEntryJsonV1
         {
@@ -815,7 +816,7 @@ public sealed class ProjectObjectProtobufV1Tests
                 ? Convert.ToHexStringLower(SHA256.HashData(replacementBytes))
                 : item.Sha256
         }).ToArray();
-        ManifestJsonV3 updated = new()
+        ManifestJsonV4 updated = new()
         {
             Magic = manifest.Magic,
             FileFormatVersion = manifest.FileFormatVersion,
@@ -830,7 +831,7 @@ public sealed class ProjectObjectProtobufV1Tests
         archive.GetEntry("manifest.json")!.Delete();
         using (Stream output = archive.CreateEntry("manifest.json").Open())
         {
-            output.Write(ManifestCodecV3.Serialize(updated));
+            output.Write(ManifestCodecV4.Serialize(updated));
         }
     }
 
@@ -841,14 +842,14 @@ public sealed class ProjectObjectProtobufV1Tests
         byte[] bytes)
     {
         using ZipArchive archive = ZipFile.Open(packagePath, ZipArchiveMode.Update);
-        ManifestJsonV3 manifest;
+        ManifestJsonV4 manifest;
         using (Stream manifestInput = archive.GetEntry("manifest.json")!.Open())
         using (MemoryStream buffer = new())
         {
             manifestInput.CopyTo(buffer);
-            manifest = ManifestCodecV3.Parse(buffer.ToArray());
+            manifest = ManifestCodecV4.Parse(buffer.ToArray());
         }
-        ManifestJsonV3 updated = new()
+        ManifestJsonV4 updated = new()
         {
             Magic = manifest.Magic,
             FileFormatVersion = manifest.FileFormatVersion,
@@ -874,7 +875,7 @@ public sealed class ProjectObjectProtobufV1Tests
         archive.GetEntry("manifest.json")!.Delete();
         using (Stream output = archive.CreateEntry("manifest.json").Open())
         {
-            output.Write(ManifestCodecV3.Serialize(updated));
+            output.Write(ManifestCodecV4.Serialize(updated));
         }
     }
 

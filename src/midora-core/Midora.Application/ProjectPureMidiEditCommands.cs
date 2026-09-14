@@ -916,6 +916,13 @@ public static partial class ProjectDomainEditCommands
         AdoptBoundedOpaqueMidiEvents(project, right, progress.Read(opaque)
             .Where(value => value.Tick >= splitContentTick));
 
+        foreach (var group in source.InstrumentChanges.Values)
+        {
+            BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
+            if (InstrumentChangeResolver.TryRead(left, group, out _)) left.InstrumentChanges = left.InstrumentChanges.Add(group, true);
+            else if (InstrumentChangeResolver.TryRead(right, group, out _)) right.InstrumentChanges = right.InstrumentChanges.Add(group, true);
+        }
+
         return new(left, right);
     }
 

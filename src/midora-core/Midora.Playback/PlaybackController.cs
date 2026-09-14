@@ -22,7 +22,8 @@ public enum PlaybackTaskKind
     MainTimeline,
     SegmentPreview,
     EventInstrumentPreview,
-    SubVoicePreview
+    SubVoicePreview,
+    InstrumentPresetPreview
 }
 
 public interface IRealtimePlaybackBackend : IDisposable
@@ -331,6 +332,50 @@ public sealed class PlaybackController : IDisposable
                 : PlaybackTaskKind.EventInstrumentPreview);
     }
 
+    private Guid? _instrumentPresetPreviewOwner;
+
+    public void StartInstrumentPresetPreview(Guid owner, InstrumentPresetPreviewRequest request, bool held)
+    {
+        if (owner == Guid.Empty) throw new ArgumentException("A preview owner is required.", nameof(owner));
+        request.Validate();
+        EnsureCanStartTask();
+        _instrumentPresetPreviewOwner = owner;
+        try
+        {
+        if (held)
+            StartHeldPreviewCore(window => InstrumentPresetPreviewCompiler.Compile(request, heldWindowEndTick: window),
+                (_, effective) => InstrumentPresetPreviewCompiler.Compile(request, effectiveGateEndTick: effective),
+                InstrumentPresetPreviewCompiler.Tempo, PlaybackTaskKind.InstrumentPresetPreview, false,
+                InstrumentPresetPreviewCompiler.TicksPerQuarterNote);
+        else StartPreview(() => InstrumentPresetPreviewCompiler.Compile(request), PlaybackTaskKind.InstrumentPresetPreview);
+        }
+        catch (Exception exception)
+        {
+            // Only this newly acquired preview can have touched the backend.
+            // A failed Start must not leave a partially started native task.
+            FailHeldPreview(exception);
+            _instrumentPresetPreviewOwner = null;
+            throw;
+        }
+    }
+
+    public void StopInstrumentPresetPreview(Guid owner)
+    {
+        if (_instrumentPresetPreviewOwner != owner) return;
+        try
+        {
+            if (ActiveTaskKind == PlaybackTaskKind.InstrumentPresetPreview)
+                StopCore(applyCursorBehavior: false, releaseEditLock: true);
+        }
+        finally { _instrumentPresetPreviewOwner = null; }
+    }
+
+    public void ReleaseInstrumentPresetPreviewKey(Guid owner)
+    {
+        if (_instrumentPresetPreviewOwner == owner && ActiveTaskKind == PlaybackTaskKind.InstrumentPresetPreview
+            && IsHeldPreviewGateOpen) EndHeldPreviewGate();
+    }
+
     public void BeginPitchAudition(int pitch, int velocity)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -448,7 +493,8 @@ public sealed class PlaybackController : IDisposable
         Func<long, long, CanonicalCompiledResult> compileEnd,
         decimal previewTempo,
         PlaybackTaskKind taskKind,
-        bool releaseEditLockAtGateEnd)
+        bool releaseEditLockAtGateEnd,
+        int? ticksPerQuarterNote = null)
     {
         ArgumentNullException.ThrowIfNull(compileOpen);
         ArgumentNullException.ThrowIfNull(compileEnd);
@@ -467,7 +513,7 @@ public sealed class PlaybackController : IDisposable
             SetState(PlaybackState.Preparing);
             string soundFont = RequireEffectiveSoundFont("Held Preview");
             long initialWindowEndTick = CalculateHeldPreviewWindowTicks(
-                _session.Project.TicksPerQuarterNote,
+                ticksPerQuarterNote ?? _session.Project.TicksPerQuarterNote,
                 previewTempo,
                 HeldPreviewWindowSeconds);
             CanonicalCompiledResult compiled = compileOpen(initialWindowEndTick);
@@ -1154,7 +1200,7 @@ public sealed class PlaybackController : IDisposable
             long producerFrontier = heldBackend.PauseHeldPreviewAtProducerFrontier(
                 HeldPreviewBackendTimeout);
             long extensionTicks = CalculateHeldPreviewWindowTicks(
-                _session.Project.TicksPerQuarterNote,
+                _activeResult?.TicksPerQuarterNote ?? _session.Project.TicksPerQuarterNote,
                 _heldPreviewTempo,
                 HeldPreviewWindowSeconds);
             long replacementWindowEndTick = _heldPreviewWindowEndTick >= long.MaxValue - extensionTicks

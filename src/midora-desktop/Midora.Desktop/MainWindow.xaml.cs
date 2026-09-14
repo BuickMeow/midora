@@ -306,7 +306,7 @@ public partial class MainWindow : Window
                 return false;
             }
             MessageBoxResult decision = MessageDialog.Show(
-                $"This Project was opened from Format {sourceFormat}. Saving will create a permanent exact-byte backup beside the original file, then replace the original path with Format {PersistenceContractV3.FileFormatVersion}.\n\nSource:\n{sourcePath}\n\nOriginal-byte backup:\n{upgradePlan.PermanentBackupPath}\n\nContinue?",
+                $"This Project was opened from Format {sourceFormat}. Saving will create a permanent exact-byte backup beside the original file, then replace the original path with Format {PersistenceContractV4.FileFormatVersion}.\n\nSource:\n{sourcePath}\n\nOriginal-byte backup:\n{upgradePlan.PermanentBackupPath}\n\nContinue?",
                 "Upgrade Project Format",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
@@ -324,7 +324,7 @@ public partial class MainWindow : Window
                     RecentDirectoryPurpose.SaveAndSaveCopy,
                     Path.GetDirectoryName(sourcePath));
                 RecordRecentProject(sourcePath);
-                _session.Notice = $"Project upgraded to Format {PersistenceContractV3.FileFormatVersion}. Original bytes preserved at: {backupPath}";
+                _session.Notice = $"Project upgraded to Format {PersistenceContractV4.FileFormatVersion}. Original bytes preserved at: {backupPath}";
             }
             return upgraded;
         }
@@ -9346,6 +9346,7 @@ public partial class MainWindow : Window
         object sender,
         SelectionChangedEventArgs e)
     {
+        OnInstrumentLaneTabSelected(sender, e);
         if (!ReferenceEquals(e.OriginalSource, sender)
             || sender is not TabControl { SelectedItem: TabItem { Header: "Parameter Lane" } }
             || _session.ActiveWorkspace is not TimelineWorkspaceViewModel
@@ -9373,6 +9374,7 @@ public partial class MainWindow : Window
         object sender,
         SelectionChangedEventArgs e)
     {
+        OnInstrumentLaneTabSelected(sender, e);
         if (!ReferenceEquals(e.OriginalSource, sender)
             || sender is not TabControl { SelectedItem: TabItem { Header: "Event Lane" } }
             || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace)
@@ -9808,6 +9810,8 @@ public partial class MainWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (!_session.IsMainWindowTaskLocked && FindVisualAncestor<InstrumentChangeLane>(Keyboard.FocusedElement as DependencyObject) is { } instrumentLane
+            && instrumentLane.HandleShortcut(e)) return;
         if (IsAltF4(e))
         {
             _pendingTimelineAltReleaseFocus = null;

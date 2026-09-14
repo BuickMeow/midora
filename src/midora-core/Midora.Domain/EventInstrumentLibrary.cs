@@ -141,6 +141,7 @@ public static class EventInstrumentLibrary
             if (copyTimeline is not null) copyTimeline(project, voice, copy);
             else
             {
+                Dictionary<MidoraId, MidoraId> instrumentMembers = [];
                 foreach (TemplateEvent value in voice.Events)
                 {
                     TemplateEvent eventCopy = new(project)
@@ -156,7 +157,12 @@ public static class EventInstrumentLibrary
                         FollowPitchDelta = value.FollowPitchDelta
                     };
                     copy.Events.Add(eventCopy);
+                    if (voice.InstrumentChanges.TryGetByMember(value.Id, out _))
+                        instrumentMembers.Add(value.Id, eventCopy.Id);
                 }
+                foreach (var group in voice.InstrumentChanges.Values)
+                    copy.InstrumentChanges = copy.InstrumentChanges.Add(new(project.AllocateStableId(),
+                        instrumentMembers[group.BankEventId], null, instrumentMembers[group.ProgramEventId]), false);
                 foreach (ValueCurve curve in voice.Curves)
                 {
                     ValueCurve curveCopy = new(project) { Target = curve.Target };

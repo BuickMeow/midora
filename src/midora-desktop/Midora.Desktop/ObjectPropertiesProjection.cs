@@ -895,7 +895,7 @@ internal static partial class ObjectPropertiesProjection
             {
                 "midiEvent.key" or "midiEvent.controller" =>
                     IntRange(value, key == "midiEvent.key" ? "Key Number" : "Controller", 0, 127),
-                "midiEvent.program" => checked(IntRange(value, "Program", 1, 128) - 1),
+                "midiEvent.program" => IntRange(value, "Program", 0, 127),
                 "midiEvent.channelPressure" => IntRange(value, "Channel Pressure", 0, 127),
                 "midiEvent.pitchBend" => IntRange(value, "Pitch Bend", 0, 16_383) & 0x7f,
                 _ => null
@@ -1087,7 +1087,7 @@ internal static partial class ObjectPropertiesProjection
                     "batch.midiEvent.program" => ProjectDomainEditCommands.SetDirectMidiEventValues(
                         midiLocation.Segment.Id,
                         ids,
-                        data1: checked(IntRange(value, "Program", 1, 128) - 1)),
+                        data1: IntRange(value, "Program", 0, 127)),
                     "batch.midiEvent.channelPressure" =>
                         ProjectDomainEditCommands.SetDirectMidiEventValues(
                             midiLocation.Segment.Id,
@@ -1206,7 +1206,7 @@ internal static partial class ObjectPropertiesProjection
                 fields.Add(Field("midiEvent.value", "VALUE", item.Data2));
                 break;
             case DirectMidiChannelEventKind.ProgramChange:
-                fields.Add(Field("midiEvent.program", "PROGRAM (1–128)", item.Data1 + 1));
+                fields.Add(Field("midiEvent.program", "PROGRAM (0–127)", item.Data1));
                 break;
             case DirectMidiChannelEventKind.ChannelPressure:
                 fields.Add(Field("midiEvent.channelPressure", "PRESSURE", item.Data1));
@@ -1261,7 +1261,7 @@ internal static partial class ObjectPropertiesProjection
         }
         else if (TryValue("program", out string programText))
         {
-            data1 = checked(IntRange(programText, "Program", 1, 128) - 1);
+            data1 = IntRange(programText, "Program", 0, 127);
         }
         else if (TryValue("channelPressure", out string channelPressureText))
         {
@@ -1802,8 +1802,8 @@ internal static partial class ObjectPropertiesProjection
                 {
                     fields.Add(Field(
                         "template.value",
-                        template.Kind == TemplateEventKind.Program ? "PROGRAM (1–128)" : "VALUE",
-                        template.Kind == TemplateEventKind.Program ? template.Value + 1 : template.Value));
+                        template.Kind == TemplateEventKind.Program ? "PROGRAM (0–127)" : "VALUE",
+                        template.Value));
                 }
                 if (template.Kind is TemplateEventKind.Bank or TemplateEventKind.PitchBendRange)
                 {
@@ -2238,7 +2238,7 @@ internal static partial class ObjectPropertiesProjection
             : item.Number;
         int eventValue = TryValue("template.value", out string valueText)
             ? item.Kind == TemplateEventKind.Program
-                ? checked(Int(valueText, "Program") - 1)
+                ? IntRange(valueText, "Program", 0, 127)
                 : Int(valueText, "Value")
             : item.Value;
         int secondary = TryValue("template.secondary", out string secondaryText)

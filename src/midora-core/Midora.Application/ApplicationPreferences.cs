@@ -276,6 +276,16 @@ public sealed record DesktopUiPreferences(
     }
 }
 
+public sealed record InstrumentAuditionPreferences(bool Automatic, int Key, int Velocity, int DurationMilliseconds)
+{
+    public static InstrumentAuditionPreferences Default { get; } = new(true, 60, 100, 500);
+    public void Validate()
+    {
+        if (Key is < 0 or > 127 || Velocity is < 1 or > 127 || DurationMilliseconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(InstrumentAuditionPreferences));
+    }
+}
+
 public sealed record ApplicationPreferences(
     RealtimeAudioPreferences RealtimeAudio,
     AudioCachePreferences AudioCache,
@@ -286,6 +296,7 @@ public sealed record ApplicationPreferences(
         Array.Empty<ApplicationSoundFontPreference>();
     public PlaybackPreferences Playback { get; init; } = PlaybackPreferences.Default;
     public AppearancePreferences Appearance { get; init; } = AppearancePreferences.Default;
+    public InstrumentAuditionPreferences InstrumentAudition { get; init; } = InstrumentAuditionPreferences.Default;
 
     public static ApplicationPreferences Default { get; } =
         new(
@@ -306,6 +317,8 @@ public sealed record ApplicationPreferences(
         DesktopUi.Validate();
         Playback.Validate();
         Appearance.Validate();
+        ArgumentNullException.ThrowIfNull(InstrumentAudition);
+        InstrumentAudition.Validate();
         ValidateDirectory(RecentDirectories.OpenProject);
         ValidateDirectory(RecentDirectories.SaveAndSaveCopy);
         ValidateDirectory(RecentDirectories.SoundFont);

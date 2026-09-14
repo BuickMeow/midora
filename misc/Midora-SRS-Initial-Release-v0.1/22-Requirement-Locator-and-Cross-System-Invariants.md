@@ -98,8 +98,8 @@
 | INV-087 | Pure MIDI opaque SysEx 的唯一音频特权是可识别且校验有效的 Roland GS DT1 Part Mode 与 Yamaha XG Part Mode。导入必须按 payload target Channel 归属派生 Track；Compiler 保留原 opaque/SMF 数据并额外产生有类型、带来源和正式顺序的 canonical audio event，范围中途起播恢复 Root 当前活动连通区间内最近状态；音频投影重定向到 1-channel Unit channel 0 并以完整规范化 SysEx 发送，随后在同一顺序点显式建立 BASSMIDI Unit 的等价 Melodic/Percussion mode。任意其他 SysEx/Meta、Reset、无效校验和及 continuation 仍不进入音频后端。 |
 | INV-088 | Midora 产品 SemVer、Project file format、component schema、Mapping ABI、IPC/cache generation 与用户 Project Version 是独立版本轴。产品版本只有一个构建源。自 `1.0.0-dev` 冻结点起，后续新 1.x 软件必须持续读取有效 Format 1；Format 1 的 JSON/protobuf/content-pack wire 与字段语义不得原地改变，不能表示的新持久化语义必须进入新格式、独立 reader 和 detached migration。 |
 | INV-089 | Event Instrument Definition 的 `Pre-Roll Ticks` 固定为 `0..Template Length`、默认 0。仅 Logical Segment Instance 使用：对 Logical Note anchor `A`、偏移 `O`，Instance/template origin=`A-O`，Logical Gate Start/End 仍为 `A`/`A+effective Gate Length`，Mapping `gateLength` 不含 `O`。Initial State、实际 tick 参数、Overlap、Usage 连通区间和 Unit 占用从 origin 起算；origin 早于所属 Segment 有效起点或发生 tick 溢出必须 Error，不得 Clamp、丢弃前缀、自动扩展或跨 Segment。standalone Instrument/SubVoice Preview 与 Pitch Ruler audition 按 `O=0`；中途冷启动不补发范围前 NoteOn，也不做音频预滚。全部正式消费者只消费已应用该语义的 canonical。 |
-| INV-090 | Event Instrument Pre-Roll 是 Format 1 无法表达的新语义，冻结 Project Format 2 使用 manifest schema v2 与 Event Instrument protobuf v2 wrapper，其中 `pre_roll_ticks` 为必填 field 4。冻结 V1 reader/descriptor/golden 不变；V1 打开必须 detached 迁移并为每个 Definition 显式设置 0。当前 Format 3 writer 复用该 protobuf v2 语义，不得修改 Format 1/2 wire。 |
-| INV-091 | 当前 `.midora` writer 固定为 Project Format 3、manifest schema v3，并要求唯一 `settings/project-presentation.json` / `project-presentation-json` schema v2；已存在的 presentation v1 继续读取并显式采用 custom 来源模式，见 INV-116。该文件只承载版本化 Onion/All-Tracks presentation，不属于 Project Source Data，不参与编译、canonical fingerprint、音频缓存、Project Modified 或 Undo/Redo；损坏只恢复默认 presentation 并独立 Warning。Format 1/2 reader/schema/descriptor/golden 必须持续保留。 |
+| INV-090 | Event Instrument Pre-Roll 是 Format 1 无法表达的新语义，冻结 Project Format 2 使用 manifest schema v2 与 Event Instrument protobuf v2 wrapper，其中 `pre_roll_ticks` 为必填 field 4。冻结 V1 reader/descriptor/golden 不变；V1 打开必须 detached 迁移并为每个 Definition 显式设置 0。Format 3/4 writer 复用该 protobuf v2 语义，不得修改 Format 1/2 wire。 |
+| INV-091 | Format 3/4 均要求唯一 `settings/project-presentation.json` / `project-presentation-json` schema v2；当前 Format 4 writer 及新的 source 关联见 INV-119，冻结 Format 3 manifest v3 保持不变。已存在的 presentation v1 继续读取并显式采用 custom 来源模式，见 INV-116。该文件只承载版本化 Onion/All-Tracks presentation，不属于 Project Source Data，不参与编译、canonical fingerprint、音频缓存、Project Modified 或 Undo/Redo；损坏只恢复默认 presentation 并独立 Warning。Format 1/2/3 reader/schema/descriptor/golden 必须持续保留。 |
 | INV-092 | Format 1/2 打开使用 detached migration，打开阶段绝不写来源。迁移会话普通 Save 必须先向用户显示并冻结来源/目标 Format、来源 identity 与可见永久原字节副本路径；只有严格重开验证的 Format 3 临时包及逐字节一致副本均安全后才可原子替换原路径。取消、identity 改变、确认路径被不同内容抢占或任意前置失败均不得改变来源；Save Copy 写 Format 3 但不清除 migration-dirty。 |
 | INV-093 | Midora 自建正式数据只写 `<ProgramRoot>\Data\{Preferences,Recent,Catalogs,Presets,Diagnostics}`，可重建工作数据只写 `<ProgramRoot>\.tmp\{AudioCache,SessionContent,CompilerRuns,AudioWorkerExchange}`。ProgramRoot 是 executable base directory，必须是本机 ready fixed drive 上的普通非 reparse-point 可写目录，并在主窗口创建前通过 create/write/flush/atomic-replace/exclusive-lock/delete 能力探测；失败时 fail closed，不得 fallback 或探测/迁移旧 `%LOCALAPPDATA%\Midora`。 |
 | INV-094 | ProgramRoot portable 副本以 `current user + normalized ProgramRoot` 形成独立单实例 scope。`.tmp` 不设置 Hidden；只删除具有当前版本 owner manifest、root 直接子项、非 reparse point 且活动 lock 已释放的目录。未知或无法证明所有权的内容必须保留。Project/MIDI/SoundFont/导出文件仍是用户显式选择的外部路径，不复制进 portable data tree。 |
@@ -128,18 +128,21 @@
 | INV-117 | 完整诊断逻辑序列、ordinal 与严重程度统计使用非负 Int64，保持顺序、重复、来源与失败策略；计数超限明确失败，不发布不完整新结果。WPF 仅对超过 Int32.MaxValue 的筛选结果使用 4096 行分页，筛选和状态统计仍针对全源。MIDI README 仅输出前 1000 条 Warning/Info 文本及精确总数/省略数，不截断正式诊断，不改变音乐语义、Warning-as-error 或 Project 持久化。 |
 | INV-118 | SMF 超长 delta 仅在导出编码时用零长度 Text Meta `FF 01 00` 分段，保持原事件 Tick、顺序和 Track/EOT，不进入 Project/canonical/编译诊断、统计或增量检查。每个 MTrk 数据区硬上限为 `0xFFFFFFFF` 字节（不含 8 字节 chunk 头），不因大小拆分，超限只使本次 MIDI 导出原子失败，编译不感知该字节限制。填充成本和字节计数须安全预检、有界流式写入且可取消；其他 MIDI 值域、单条 payload 和 ntrks 硬限制不放宽。成功填充只输出导出级汇总 Info/README 摘要，不逐条列占位。 |
 
+| INV-119 | Instrument Change 是显式创建的持久编辑关联，不是新的音乐事件；MIDI Segment 关联同 Tick CC0/CC32/PC，SubVoice 关联完整 Bank/Program，只保存自身及成员 Stable ID。值改保留、结构破坏按完整事务最终态解组，剩余 raw 保留，Undo 恢复；导入不自动发现包装。新组 Bank→PC 位于本 Track 同 Tick NoteOn 前，不改变较早其他 Track 顺序。Format 4 独立严格关联组件不得以 presentation 回退丢弃；旧 1/2/3 reader/golden 冻结。统一选择器 Program 0～127，Initial State 三字段独立继承，preset audition 经干净 canonical/现有 Master→Limiter，仅停止自身 owner，不抢停普通播放。 |
+
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
 | 软件定位、技术边界 | 第 1 章 |
 | 术语、编号、身份、确定性 | 第 2 章 |
 | Project、保存入口、修改状态 | 第 3 章 |
-| Project Format 1/2/3、presentation、旧格式原路径升级、ProgramRoot portable storage | 第 3、16、17、19～21 章 |
+| Project Format 1/2/3/4、presentation、旧格式原路径升级、ProgramRoot portable storage | 第 3、16、17、19～21 章；关联组件见 §16.35 |
 | tick、TPQ、Tempo、拍号、Marker | 第 4 章 |
 | Port、Channel Unit、资源不足 | 第 5 章 |
 | 程序级多 SF2/SFZ 列表、目标 Bank/Program 映射、Instrument Catalog、显式 SF2 preset scan、无 Enabled SoundFont、BASS 直接读取与缓存身份 | 第 6、13、15、17、20 章；INV-101 |
 | Event Instrument 定义、Pre-Roll Ticks 与内部索引 | 第 7、9～13、16、18、24 章 |
 | SubVoice、Note/CC/RPN 等事件 | 第 8 章 |
+| A2a：显式音色变更关联、统一选择器、Initial State 与独立 preset audition | §8.55、§13.31、§16.35、§18.4；INV-119 |
 | Logical Parameter、映射、快捷 Event Binding 和受限 Mapping Function | 第 9、18、20 章；INV-102 |
 | Release、Loop、Envelope、Overlap | 第 10 章；Loop 进入条件见 §10.9.5、INV-114 |
 | Logical Track、Logical Segment、裁剪与 Logical Note | 第 11 章 |

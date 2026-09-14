@@ -1474,7 +1474,7 @@ manifest lastSavedWithSoftwareVersion 写为当前软件版本。
 副本使用当前格式。
 不改变原路径。
 ```
-Save Copy 始终写当前 Format 3；它不建立或切换 CurrentProjectPath，不清除 migration-dirty，也不替代第 16.24.2 节要求的旧来源原字节永久副本。目标若等于受保护旧来源路径，必须拒绝并要求使用普通 Save 的专用原路径升级流程。
+Save Copy 始终写当前 Format 4；它不建立或切换 CurrentProjectPath，不清除 migration-dirty，也不替代第 16.24.2 节要求的旧来源原字节永久副本。目标若等于受保护旧来源路径，必须拒绝并要求使用普通 Save 的专用原路径升级流程。
 ---
 ## 16.24 版本迁移
 ### 16.24.1 打开旧版本项目
@@ -1492,21 +1492,21 @@ Format 1 冻结前的开发格式曾破坏性删除 Playback、Export defaults�
 
 自第 16.31 节的 Format 1 冻结点起，上述开发期例外终止。未来任何不能由冻结 Format 1 表示的持久化变化必须提升 `fileFormatVersion`，发布独立 JSON schema / protobuf descriptor / content-pack contract，并建立显式旧格式 reader 与 detached migration；不得根据缺失字段猜测默认模型或修改 V1 codec 伪装成兼容升级。
 ### 16.24.2 保存旧版本项目
-用户点击普通保存时，必须进入专用 `Upgrade Project In Place` 确认，而不是普通首次保存路径选择器。确认框在任何文件写入前冻结并显示来源绝对路径、来源 Format、目标 Format 3 与永久原字节副本最终路径。
+用户点击普通保存时，必须进入专用 `Upgrade Project In Place` 确认，而不是普通首次保存路径选择器。确认框在任何文件写入前冻结并显示来源绝对路径、来源 Format、目标 Format 4 与永久原字节副本最终路径。
 
 确认后的固定事务顺序为：
 
 ```text
 1. 复核打开时冻结的来源 identity（绝对路径、Format、长度、mtime、完整 SHA-256）并取得排他 source lease；
-2. 从当前内存 Project + presentation snapshot 构建 Format 3 临时 package；
+2. 从当前内存 Project + presentation snapshot 构建当前 Format 4 临时 package；
 3. 使用正式 reader 严格重开、自校验并比较确定内容；
 4. 在来源同目录创建或复用来源逐字节一致的可见永久副本；
 5. 再确认预先显示的副本路径仍可用；
-6. 以同卷原子替换把已验证 Format 3 package 发布到来源原路径；
+6. 以同卷原子替换把已验证当前 Format 4 package 发布到来源原路径；
 7. 成功后才把原路径设为 CurrentProjectPath，清除迁移保护与 migration-dirty。
 ```
 
-永久副本推荐名称为 `<ProjectStem> - Original Format <old> before Format 3.midora`，遵守 Windows 255 UTF-16 code-unit 文件名预算并按 text element 截断。撞名按稳定 `(2)`、`(3)` 后缀；候选内容与来源 identity 完全一致时可复用，不一致时绝不覆盖。确认后候选被不同内容抢占必须中止并要求重新确认，不得静默换成另一路径。
+永久副本推荐名称为 `<ProjectStem> - Original Format <old> before Format 4.midora`，遵守 Windows 255 UTF-16 code-unit 文件名预算并按 text element 截断。撞名按稳定 `(2)`、`(3)` 后缀；候选内容与来源 identity 完全一致时可复用，不一致时绝不覆盖。确认后候选被不同内容抢占必须中止并要求重新确认，不得静默换成另一路径。
 
 如果用户取消确认：
 ```text
@@ -1879,7 +1879,7 @@ minimumReadableVersion = fileFormatVersion = 1
 
 ### 16.32.1 提升原因与版本字段
 
-Event Instrument Definition 的 `Pre-Roll Ticks` 是 Format 1 无法表达的新持久化语义，因此 Format 2 writer 在该版本冻结时必须采用以下版本字段；当前 writer 已由第 16.33 节提升为 Format 3，但 Format 2 reader/schema/descriptor/golden 不得改变：
+Event Instrument Definition 的 `Pre-Roll Ticks` 是 Format 1 无法表达的新持久化语义，因此 Format 2 writer 在该版本冻结时必须采用以下版本字段；当前 writer 已由第 16.35 节提升为 Format 4，但 Format 2 reader/schema/descriptor/golden 不得改变：
 
 ```text
 fileFormatVersion = 2
@@ -1924,7 +1924,7 @@ V2 reader 必须要求字段存在并执行严格有符号 Int64、范围和 unk
 5. 对完整候选执行当前 Domain 与 Format 2 语义验证；全部成功后才一次提交为活动 Project。
 ```
 
-迁移不得覆盖、重写或在原 Format 1 包中追加字段。迁移成功后 Project 处于“已迁移未保存”状态；当前软件的普通 Save 与 Save Copy 写 Format 3，Format 2 是该迁移链中的冻结中间契约而非当前输出。迁移失败必须保留当前 Project 与源文件不变，不得提交部分 Definition 或把缺失字段解释为损坏 V2。
+迁移不得覆盖、重写或在原 Format 1 包中追加字段。迁移成功后 Project 处于“已迁移未保存”状态；当前软件的普通 Save 与 Save Copy 写 Format 4，Format 2 是该迁移链中的冻结中间契约而非当前输出。迁移失败必须保留当前 Project 与源文件不变，不得提交部分 Definition 或把缺失字段解释为损坏 V2。
 
 ### 16.32.4 当前格式测试门
 
@@ -1947,7 +1947,7 @@ Format 2 Pre-Roll 非零 round-trip、Save Copy、损坏隔离与事务故障注
 
 ### 16.33.1 提升原因与版本字段
 
-跨会话 Onion/All-Tracks presentation 无法由冻结 Format 2 表达，又不得混入 Project Source Data，因此当前 writer 提升为：
+跨会话 Onion/All-Tracks presentation 无法由冻结 Format 2 表达，又不得混入 Project Source Data，因此在 Format 3 冻结时 writer 提升为以下值（当前 Format 4 见 §16.35）：
 
 ```text
 fileFormatVersion = 3
@@ -1959,7 +1959,7 @@ Format 3 新增一个 `project-presentation-json` file kind，且必须在 canon
 
 ### 16.33.2 Reader、writer 与损坏边界
 
-当前 writer 只写 Format 3。Reader 按 manifest version 明确分派 Format 1、2、3，不以 entry 缺失或未知字段猜测版本。Format 3 manifest 和 presentation JSON 服从 Draft 2020-12、source-generated DTO、strict duplicate/unknown-field 拒绝、canonical UTF-8/LF、确定排序与 SHA-256 索引。
+本节固定 Format 3 的读取契约，当前 writer 见 §16.35。Reader 按 manifest version 明确分派 Format 1、2、3、4，不以 entry 缺失或未知字段猜测版本。Format 3 manifest 和 presentation JSON 服从 Draft 2020-12、source-generated DTO、strict duplicate/unknown-field 拒绝、canonical UTF-8/LF、确定排序与 SHA-256 索引。
 
 音乐 source entry 的损坏规则继续按本章既有规则执行；presentation entry 单独按第 16.7.5 节隔离，禁止创建 Damaged Project Object 或让 `MidoraProjectOpenResult.IsModified` 成立。presentation recovery dirty 只表示下次普通 Save 应重写该 entry。
 
@@ -1967,7 +1967,7 @@ Format 3 新增一个 `project-presentation-json` file kind，且必须在 canon
 
 Format 1 先按第 16.32.3 节显式补 `Pre-Roll Ticks=0`；Format 2 保留其完整 source 语义。两者随后都附加默认空 presentation，验证完整当前 Domain 后一次提交。打开阶段不得写来源、创建永久副本或改变 Recent entry。
 
-迁移后的普通 Save 使用第 16.24.2 节的专用原路径升级事务并写 Format 3；Save Copy 写 Format 3 但不改变来源保护。Format 1/2 reader/schema/descriptor/golden 必须持续通过，不得被 Format 3 codec 替代。
+迁移后的普通 Save 使用第 16.24.2 节的专用原路径升级事务并写当前 Format 4；Save Copy 写 Format 4 但不改变来源保护。Format 1/2 reader/schema/descriptor/golden 必须持续通过，不得被 Format 3 codec 替代。
 
 ### 16.33.4 自动测试门
 
@@ -2020,3 +2020,15 @@ Format 3 Save/Save Copy/reopen and canonical equivalence
 每个可回收工作目录必须是其固定 root 的直接子项，带当前版本 owner manifest 与由进程持续持有的独占 active lock。正常释放先关闭使用者，再释放 lock 并 best-effort 删除。启动及新 lease 前只允许删除：路径仍是直接子项、非 reparse point、manifest magic/name/purpose 全部匹配且 active lock 已可排他取得的目录。
 
 manifest 缺失/损坏、裸 GUID、未知文件、活动锁、越界或 reparse point 一律保留。逐项回收失败不得阻止其他合法 session，但 root 能力探测本身失败必须阻止启动。CompilerRuns 与 AudioWorkerExchange 使用同一通用 lease；AudioCache 与 SessionContent 可保留其专用内容协议，但必须满足同等 owner/lock/path 边界。
+
+## 16.35 Format 4：Instrument Change 编辑关联
+
+依据 2026-09-14 已确认 R27。当前 writer 固定 `fileFormatVersion=minimumReadableVersion=manifestSchemaVersion=4`；旧 1/2/3 独立 reader、schema、descriptor、golden 均冻结并持续可读。新 writer 不更改其音乐字段布局，复用 EI protobuf v2、其他 source v1、Pure MIDI content pack 和 presentation v2。
+
+新增必需 `settings/instrument-changes.pb`，manifest kind 为 `instrument-changes-pb`、schemaVersion=1。它是正式 source，不走 presentation 损坏回退：缺失、hash 不符、未知/重复字段、坏身份/owner/成员/target/Tick/重复占用必须拒绝该新 source 的加载，不默默降成无包装。文件使用 protobuf Edition 2024 显式 presence；根字段为版本 `1` 与 repeated 关联 `2`，关联字段依次为包装 ID `1`、owner ID `2`、directMidi `3`、Bank成员 `4`、可选Direct LSB成员 `5`、Program成员 `6`；其余字段号保留。
+
+只保存身份及关联，不重复保存 Tick、MSB/LSB/Program、名称、音频状态。关联 ID 与其他 Project ID 共用唯一正 int64 分配，NextStableId 必须严格超过全部 ID。Direct owner 先、SubVoice 后，owner ID/包装 ID 确定序列化；该文件排序不是音乐排序。读取按 owner 复用分页快照、仅解析关联的成员，不发现未关联 raw 组合。
+
+Format 1/2 按既有迁移补默认 Pre-Roll/presentation；Format 3 保留 presentation；三者新增空关联，不把导入/旧文件的 raw Bank-PC 自动分组。打开只 detached 迁移，原来源不写。旧格式普通 Save 仍需确认，先创建或复用来源逐字节一致的可见永久副本，之后以 Format 4 临时包自检和原子替换；名称中的 `before Format` 使用当前目标 4。Save Copy 写 4，不清除来源保护。软件 SemVer、Mapping ABI、Worker ABI、presentation schema 不因这个文件格式版本一并升级。
+
+验证须覆盖两种 owner 的确定性重开、旧 Format 3 package byte golden、坏关联严格拒绝、旧格式安全备份/冲突/来源身份变化、取消和 staging/publish 故障，以及关联存在/不存在时音乐 canonical 等价。

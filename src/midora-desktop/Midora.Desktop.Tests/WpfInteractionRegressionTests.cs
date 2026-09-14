@@ -503,6 +503,7 @@ public sealed partial class WpfInteractionRegressionTests
             {
                 Style combo = Assert.IsType<Style>(controls[typeof(ComboBox)]);
                 AssertA1DialogLayoutsAndInitialSettingsPage();
+                AssertInstrumentSelectionDialogBamlAndDraft();
                 Style comboItem = Assert.IsType<Style>(controls[typeof(ComboBoxItem)]);
                 Style scrollBar = Assert.IsType<Style>(controls[typeof(ScrollBar)]);
                 Style menuSeparator = Assert.IsType<Style>(

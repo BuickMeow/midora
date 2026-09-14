@@ -123,7 +123,7 @@ public sealed class PersistenceContractV2Tests
     }
 
     [Fact]
-    public async Task CurrentSaveWritesV3AndRoundTripsPreRoll()
+    public async Task CurrentSaveWritesV4AndRoundTripsPreRoll()
     {
         using TemporaryDirectory temporary = new();
         string path = temporary.PathFor("current.midora");
@@ -137,17 +137,17 @@ public sealed class PersistenceContractV2Tests
         byte[] packageBytes = await File.ReadAllBytesAsync(path);
         Assert.Equal(packageBytes, await File.ReadAllBytesAsync(equivalentPath));
         string packageHash = Convert.ToHexStringLower(SHA256.HashData(packageBytes));
-        Assert.True(packageHash == "44eef7db01bab5d1ad57a94916a2ff362b4c8486ec56726606adaa8d72405e99",
-            $"Actual Format 3 / presentation schema 2 package hash: {packageHash}");
+        Assert.True(packageHash == "629cda088ea5c3ee8113e5d26a7b3ff4801482708ea3aa87a9088f6851b8e8d4",
+            $"Actual Format 4 / presentation schema 2 package hash: {packageHash}");
 
         using (ZipArchive archive = ZipFile.OpenRead(path))
         {
             byte[] manifestBytes = ReadEntry(archive, "manifest.json");
             Assert.Throws<InvalidDataException>(() => ManifestCodecV1.Parse(manifestBytes));
-            ManifestJsonV3 manifest = ManifestCodecV3.Parse(manifestBytes);
-            Assert.Equal(3, manifest.FileFormatVersion);
-            Assert.Equal(3, manifest.MinimumReadableVersion);
-            Assert.Equal(3, manifest.ManifestSchemaVersion);
+            ManifestJsonV4 manifest = ManifestCodecV4.Parse(manifestBytes);
+            Assert.Equal(4, manifest.FileFormatVersion);
+            Assert.Equal(4, manifest.MinimumReadableVersion);
+            Assert.Equal(4, manifest.ManifestSchemaVersion);
             ManifestFileEntryJsonV1 presentationEntry = Assert.Single(
                 manifest.Files,
                 item => item.Kind == "project-presentation-json");
@@ -168,6 +168,31 @@ public sealed class PersistenceContractV2Tests
         Assert.False(opened.RequiresFormatUpgrade);
         Assert.Empty(opened.Diagnostics);
         Assert.Equal(sourceInstrument.PreRollTicks, Assert.Single(opened.Project.EventInstruments).PreRollTicks);
+
+        // Keep the old Format 3 byte baseline, not merely its schema constants.
+        // The legacy fixture is reconstructed with the frozen V3 codec; no V4
+        // association data is permitted to leak into that contract.
+        string legacyPath = temporary.PathFor("frozen-format-3.midora");
+        using (var current = ZipFile.OpenRead(path))
+        using (var legacy = ZipFile.Open(legacyPath, ZipArchiveMode.Create))
+        {
+            var v4 = ManifestCodecV4.Parse(ReadEntry(current, "manifest.json"));
+            var v3 = new ManifestJsonV3 { Magic = v4.Magic, FileFormatVersion = 3, MinimumReadableVersion = 3,
+                ManifestSchemaVersion = 3, CreatedWithSoftwareVersion = v4.CreatedWithSoftwareVersion,
+                LastSavedWithSoftwareVersion = v4.LastSavedWithSoftwareVersion,
+                Files = v4.Files.Where(file => file.Kind != "instrument-changes-pb").ToArray() };
+            foreach (var entry in current.Entries.Where(entry => entry.FullName != PersistenceContractV4.InstrumentChangesPath))
+            {
+                var copy = legacy.CreateEntry(entry.FullName, CompressionLevel.Optimal); copy.LastWriteTime = entry.LastWriteTime;
+                using var output = copy.Open();
+                output.Write(entry.FullName == "manifest.json" ? ManifestCodecV3.Serialize(v3) : ReadEntry(current, entry.FullName));
+            }
+        }
+        Assert.Equal("44eef7db01bab5d1ad57a94916a2ff362b4c8486ec56726606adaa8d72405e99",
+            Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(legacyPath))));
+        await using var legacyOpened = await packages.OpenAsync(legacyPath);
+        Assert.Equal(3, legacyOpened.SourceFileFormatVersion); Assert.True(legacyOpened.RequiresFormatUpgrade);
+        Assert.Empty(legacyOpened.Project.EventInstruments.SelectMany(i => i.SubVoices).SelectMany(v => v.InstrumentChanges.Values));
     }
 
     [Fact]
@@ -402,7 +427,7 @@ public sealed class PersistenceContractV2Tests
     private static void DowngradeFixtureToFrozenV1(string path, EventInstrument instrument)
     {
         using ZipArchive archive = ZipFile.Open(path, ZipArchiveMode.Update);
-        ManifestJsonV3 current = ManifestCodecV3.Parse(ReadEntry(archive, "manifest.json"));
+        ManifestJsonV4 current = ManifestCodecV4.Parse(ReadEntry(archive, "manifest.json"));
         ManifestFileEntryJsonV1 currentInstrument = Assert.Single(
             current.Files,
             item => item.Kind == "event-instrument-pb");
@@ -423,7 +448,7 @@ public sealed class PersistenceContractV2Tests
             CreatedWithSoftwareVersion = current.CreatedWithSoftwareVersion,
             LastSavedWithSoftwareVersion = current.LastSavedWithSoftwareVersion,
             Files = current.Files
-                .Where(item => item.Kind != "project-presentation-json")
+                .Where(item => item.Kind is not ("project-presentation-json" or "instrument-changes-pb"))
                 .Select(item => new ManifestFileEntryJsonV1
             {
                 Path = item.Path,
@@ -435,6 +460,7 @@ public sealed class PersistenceContractV2Tests
             }).ToArray()
         };
         archive.GetEntry(MidoraPackagePathsV1.ProjectPresentation)!.Delete();
+        archive.GetEntry(PersistenceContractV4.InstrumentChangesPath)!.Delete();
         archive.GetEntry("manifest.json")!.Delete();
         using Stream manifestOutput = archive.CreateEntry("manifest.json").Open();
         manifestOutput.Write(ManifestCodecV1.Serialize(v1));

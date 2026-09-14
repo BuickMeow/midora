@@ -91,6 +91,7 @@ internal static class ProjectTimelineOwnerRootClone
 
         cancellationToken.ThrowIfCancellationRequested();
         result.Events.AdoptSnapshot(project, source.Events.CreateQuerySnapshot());
+        result.InstrumentChanges = source.InstrumentChanges;
         for (int index = 0; index < source.Curves.Count; index++)
         {
             CheckCancellation(index, cancellationToken);

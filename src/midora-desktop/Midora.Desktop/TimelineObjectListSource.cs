@@ -383,6 +383,6 @@ public sealed class TimelineObjectListSource : IDisposable
             ? $"{row.Value} semitones · {row.SecondaryValue} cents"
         : row.Kind == TimelineItemKind.TemplateEvent && row.TemplateKind == TemplateEventKind.Program
             || row.Kind == TimelineItemKind.DirectMidiEvent && row.DirectKind == DirectMidiChannelEventKind.ProgramChange
-            ? $"Program {row.Value + 1}"
+            ? $"Program {row.Value}"
         : row.Value.ToString("G", CultureInfo.InvariantCulture);
 }

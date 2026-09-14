@@ -106,8 +106,8 @@ public sealed class InstrumentCatalogPropertiesProjectionTests
         Assert.DoesNotContain(properties.Fields, field =>
             field.Key.Contains("catalog", StringComparison.OrdinalIgnoreCase));
         PropertyField value = Field(properties, "template.value");
-        Assert.Equal("PROGRAM (1–128)", value.Label);
-        Assert.Equal("1", value.Value);
+        Assert.Equal("PROGRAM (0–127)", value.Label);
+        Assert.Equal("0", value.Value);
     }
 
     private static async Task<DesktopSessionController> CreateInstrumentSessionAsync()

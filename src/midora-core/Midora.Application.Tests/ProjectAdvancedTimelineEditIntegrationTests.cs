@@ -310,7 +310,7 @@ public sealed class ProjectAdvancedTimelineEditIntegrationTests
 
             await using MidoraProjectOpenResultV1 opened =
                 await new MidoraProjectPackageV1("1.0.0-dev").OpenAsync(path);
-            Assert.Equal(3, opened.SourceFileFormatVersion);
+            Assert.Equal(4, opened.SourceFileFormatVersion);
             Segment reopenedSegment = Assert.Single(Assert.Single(opened.Project.Tracks).Segments);
             Assert.Equal(expectedNotes, Snapshot(reopenedSegment));
             using MidoraCompiler compiler = new();
@@ -415,7 +415,7 @@ public sealed class ProjectAdvancedTimelineEditIntegrationTests
                 .SaveProjectAsync(project, path);
             await using MidoraProjectOpenResultV1 opened =
                 await new MidoraProjectPackageV1("1.0.0-dev").OpenAsync(path);
-            Assert.Equal(3, opened.SourceFileFormatVersion);
+            Assert.Equal(4, opened.SourceFileFormatVersion);
             PureMidiTrack reopenedTrack = Assert.Single(opened.Project.PureMidiTracks);
             MidiSegment reopenedSegment = Assert.Single(reopenedTrack.Segments);
             Assert.Equal(

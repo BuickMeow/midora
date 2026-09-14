@@ -117,7 +117,7 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             laneOrCurveId: null,
             previous.Events.Generation,
             current.Events.Generation,
-            candidateIds,
+            ReconcileTemplateInstrumentChanges(previous, current, candidateIds),
             ids => ResolveTemplateEvents(previous.Events, ids),
             ids => ResolveTemplateEvents(current.Events, ids));
 
@@ -150,9 +150,51 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             laneOrCurveId: null,
             previous.ChannelEvents.Generation,
             current.ChannelEvents.Generation,
-            candidateIds,
+            ReconcileDirectInstrumentChanges(previous, current, candidateIds),
             ids => ResolveDirectEvents(previous.ChannelEvents, ids),
             ids => ResolveDirectEvents(current.ChannelEvents, ids));
+
+    private static IEnumerable<MidoraId> ReconcileDirectInstrumentChanges(MidiSegment previous,
+        MidiSegment current, IEnumerable<MidoraId> affected)
+    {
+        current.InstrumentChanges = previous.InstrumentChanges;
+        if (previous.InstrumentChanges.Count == 0)
+        {
+            foreach (var id in affected) yield return id;
+            current.InstrumentChanges = current.InstrumentChanges.ValidatedAt(current.ChannelEvents.Generation);
+            yield break;
+        }
+        var source = current.ChannelEvents.CreateQuerySnapshot();
+        foreach (var id in affected)
+        {
+            if (current.InstrumentChanges.TryGetByMember(id, out var group)
+                && !InstrumentChangeResolver.TryRead(source, group, out _))
+                current.InstrumentChanges = current.InstrumentChanges.DeferRemoval(group.Id);
+            yield return id;
+        }
+        current.InstrumentChanges = current.InstrumentChanges.ValidatedAt(current.ChannelEvents.Generation);
+    }
+
+    private static IEnumerable<MidoraId> ReconcileTemplateInstrumentChanges(SubVoice previous,
+        SubVoice current, IEnumerable<MidoraId> affected)
+    {
+        current.InstrumentChanges = previous.InstrumentChanges;
+        if (previous.InstrumentChanges.Count == 0)
+        {
+            foreach (var id in affected) yield return id;
+            current.InstrumentChanges = current.InstrumentChanges.ValidatedAt(current.Events.Generation);
+            yield break;
+        }
+        var source = current.Events.CreateQuerySnapshot();
+        foreach (var id in affected)
+        {
+            if (current.InstrumentChanges.TryGetByMember(id, out var group)
+                && !InstrumentChangeResolver.TryRead(source, group, out _))
+                current.InstrumentChanges = current.InstrumentChanges.DeferRemoval(group.Id);
+            yield return id;
+        }
+        current.InstrumentChanges = current.InstrumentChanges.ValidatedAt(current.Events.Generation);
+    }
 
     private static IReadOnlyList<ResolvedValue<LogicalNoteSnapshotValue>> ResolveLogicalNotes(
         LogicalNoteCollection source,

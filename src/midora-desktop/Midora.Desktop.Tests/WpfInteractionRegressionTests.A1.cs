@@ -108,6 +108,7 @@ public sealed partial class WpfInteractionRegressionTests
                 var eventSurface = new TimelineSurface { DataContext = workspace, SurfaceMode = TimelineSurfaceMode.EventLanes };
                 var lowerTabs = new TabControl { DataContext = workspace };
                 lowerTabs.Items.Add(new TabItem { Content = new Border() });
+                lowerTabs.Items.Add(new TabItem { Content = new Border() }); // Inst.
                 lowerTabs.Items.Add(new TabItem { Content = eventSurface });
                 lowerTabs.SetBinding(System.Windows.Controls.Primitives.Selector.SelectedIndexProperty,
                     new Binding(nameof(workspace.ActiveLowerEditorIndex)) { Mode = BindingMode.TwoWay });
@@ -120,10 +121,10 @@ public sealed partial class WpfInteractionRegressionTests
                 DrainDispatcher();
                 Assert.Equal(target, workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)!.Target);
                 Assert.Equal(target, ((InstrumentRenderLane)laneCombo.SelectedItem).Target);
-                Assert.Equal(1, lowerTabs.SelectedIndex);
+                Assert.Equal(2, lowerTabs.SelectedIndex);
                 lowerTabs.UpdateLayout(); Assert.True(eventSurface.IsVisible);
                 Assert.Equal(old.Id, workspace.Selection.Primary);
-                Assert.True(workspace.IsLowerEditorVisible); Assert.Equal(1, workspace.ActiveLowerEditorIndex);
+                Assert.True(workspace.IsLowerEditorVisible); Assert.Equal(2, workspace.ActiveLowerEditorIndex);
                 // The active projection must already be CC7, not the old selected CC11 point.
                 List<TimelineRenderItem> points = [];
                 workspace.SubVoiceEventSnapshot!.QueryInto(0, 480, 0, 1, points);
@@ -385,6 +386,7 @@ public sealed partial class WpfInteractionRegressionTests
             Assert.True(combo.IsDropDownOpen, "Popup state"); Assert.True(item.IsMouseOver, "Synthetic hover state");
             Assert.Same(combo, ItemsControl.ItemsControlFromItemContainer(item));
             bool? handledAtItem = null;
+            bool leftPressedAtItem = false;
             string? bringIntoViewState = null;
             var explicitNavigationProperty = (DependencyProperty)typeof(ComboBoxWheelSelectionGuard)
                 .GetField("ExplicitNavigationProperty", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
@@ -393,11 +395,16 @@ public sealed partial class WpfInteractionRegressionTests
                 {
                     if (handledAtItem is not null) return;
                     handledAtItem = e.Handled;
+                    leftPressedAtItem = Mouse.LeftButton == MouseButtonState.Pressed;
                     bringIntoViewState = $"Open={combo.IsDropDownOpen}; Hover={item.IsMouseOver}; "
                         + $"LeftButton={Mouse.LeftButton}; Explicit={owner.GetValue(explicitNavigationProperty)}";
                 }), true);
             item.BringIntoView(); DrainDispatcher();
-            Assert.True(handledAtItem, bringIntoViewState); Assert.Equal(0, viewer.VerticalOffset);
+            // The hidden test host shares physical button state with the user.
+            // A real held-left gesture is intentionally exempt from hover-only
+            // suppression; do not make this test depend on the user releasing it.
+            Assert.True(handledAtItem == !leftPressedAtItem, bringIntoViewState);
+            if (!leftPressedAtItem) Assert.Equal(0, viewer.VerticalOffset);
 
             // Navigation requests must continue through to the real ScrollViewer.
             typeof(ComboBoxWheelSelectionGuard).GetMethod("AllowExplicitNavigation", BindingFlags.NonPublic | BindingFlags.Static)!
@@ -521,7 +528,7 @@ public sealed partial class WpfInteractionRegressionTests
             edit.Apply(project); workspace.Rebuild(project, 2);
             Assert.True(workspace.TryActivateEventLane(target)); workspace.Rebuild(project, 2);
             Assert.Equal(target, workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)!.Target);
-            Assert.Equal(1, workspace.ActiveLowerEditorIndex); Assert.True(workspace.IsLowerEditorVisible);
+            Assert.Equal(2, workspace.ActiveLowerEditorIndex); Assert.True(workspace.IsLowerEditorVisible);
             Assert.False(workspace.TryActivateEventLane(new(MidiValueKind.ControlChange, 123)));
             Assert.Equal(target, workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)!.Target);
             edit.Undo(project); workspace.Rebuild(project, 3);

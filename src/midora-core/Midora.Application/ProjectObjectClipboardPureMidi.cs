@@ -293,7 +293,11 @@ public static partial class ProjectObjectClipboard
                 PreserveOrders: true)), segment.Notes.Count),
             ClipboardCaptureScope.Capture(EnumerateClipboardSource(segment.ChannelEvents.CreateObjectSource()).Select(value => new DirectMidiEventClipboardSnapshot(
                 value.Tick, value.Kind, value.Data1, value.Data2, value.Order)), segment.ChannelEvents.Count),
-            OpaqueClipboardList.Capture(EnumerateClipboardSource(segment.OpaqueEvents.CreateObjectSource())));
+            OpaqueClipboardList.Capture(EnumerateClipboardSource(segment.OpaqueEvents.CreateObjectSource())))
+            {
+                InstrumentChanges = ClipboardCaptureScope.Capture(InstrumentChangeCopies.Capture(
+                    segment.InstrumentChanges, segment.ChannelEvents.CreateObjectSource()), segment.InstrumentChanges.Count)
+            };
 
     private static MidiRouteClipboardSnapshot SnapshotMidiRoute(MidiChannelRoot root) => new(
         root.Name,
@@ -345,7 +349,10 @@ internal sealed record MidiSegmentClipboardSnapshot(
     long ContentOffsetTick,
     IReadOnlyList<DirectMidiNoteClipboardSnapshot> Notes,
     IReadOnlyList<DirectMidiEventClipboardSnapshot> Events,
-    IReadOnlyList<OpaqueMidiEventClipboardSnapshot> OpaqueEvents);
+    IReadOnlyList<OpaqueMidiEventClipboardSnapshot> OpaqueEvents)
+{
+    public IReadOnlyList<InstrumentChangeClipboardRecord> InstrumentChanges { get; init; } = [];
+}
 internal sealed record DirectMidiNoteClipboardData(IReadOnlyList<DirectMidiNoteClipboardSnapshot> Notes) : ProjectObjectClipboardData;
 internal sealed record DirectMidiEventClipboardData(IReadOnlyList<DirectMidiEventClipboardSnapshot> Events) : ProjectObjectClipboardData;
 internal sealed record OpaqueMidiEventClipboardData(IReadOnlyList<OpaqueMidiEventClipboardSnapshot> Events) : ProjectObjectClipboardData;
@@ -636,8 +643,11 @@ public static partial class ProjectDomainEditCommands
             return new DirectMidiNoteValue(id, note.StartOffset, note.LengthTicks, note.Key,
                 note.NoteOnVelocity, note.NoteOffVelocity, onOrder, offOrder);
         }));
+        long firstEventId = project.NextStableId;
         AdoptBoundedDirectMidiEvents(project, segment, snapshot.Events.Select(value =>
             new DirectMidiChannelEventValue(project.AllocateStableId(), value.Tick, value.Kind, value.Data1, value.Data2, value.Order)));
+        segment.InstrumentChanges = InstrumentChangeCopies.Restore(project, snapshot.InstrumentChanges, firstEventId, true,
+            group => InstrumentChangeResolver.TryRead(segment, group, out _));
         AdoptBoundedOpaqueMidiEvents(project, segment, snapshot.OpaqueEvents.Select(value =>
             new Midora.Domain.OpaqueMidiEventValue(project.AllocateStableId(), value.Tick,
                 value.Kind, value.MetaType, value.Payload, value.Order)));

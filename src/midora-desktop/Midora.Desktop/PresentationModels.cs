@@ -1154,6 +1154,8 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
     public TimelineEditorSettings EditorSettings { get; }
     public TimelineEditorSettings LaneEditorSettings { get; } = new();
     public bool IsSegment => Mode == TimelineWorkspaceMode.Segment;
+    private bool _hasInstrumentChangesLane;
+    public bool HasInstrumentChangesLane { get => _hasInstrumentChangesLane; private set => Set(ref _hasInstrumentChangesLane, value); }
     public bool IsConductor => Mode == TimelineWorkspaceMode.Conductor;
     public bool IsArrangement => Mode == TimelineWorkspaceMode.Arrangement;
     public bool IsLowerEditorVisible
@@ -1665,6 +1667,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
             : 0;
         EditorSettings.ConfigureProject(project, StartTick);
         LaneEditorSettings.ConfigureProject(project, StartTick);
+        HasInstrumentChangesLane = IsSegment && FindMidiSegment(project, ObjectId) is not null;
         if (!_viewportInitialized)
         {
             TickSpan = Math.Max(TickSpan, checked((long)project.TicksPerQuarterNote * 16));
@@ -3176,7 +3179,7 @@ public sealed class InstrumentWorkspaceViewModel(
     public int ActiveLowerEditorIndex
     {
         get => _activeLowerEditorIndex;
-        set => Set(ref _activeLowerEditorIndex, Math.Clamp(value, 0, 1));
+        set => Set(ref _activeLowerEditorIndex, Math.Clamp(value, 0, 2));
     }
 
     public double VelocityValueScrollOffset
@@ -3256,7 +3259,7 @@ public sealed class InstrumentWorkspaceViewModel(
         ActiveRenderLaneIndex = index;
         PreferCurrentRenderLaneOnNextRebuild();
         IsLowerEditorVisible = true;
-        ActiveLowerEditorIndex = 1;
+        ActiveLowerEditorIndex = 2;
         return true;
     }
     public double ActiveValueMinimum
@@ -3374,6 +3377,14 @@ public sealed class InstrumentWorkspaceViewModel(
     public ObservableCollection<InitialStateListItem> InitialStateEntries { get; } = [];
     public ObservableCollection<PropertyField> ActiveSubVoiceInitialStateFields { get; } = [];
     public ObservableCollection<PropertyField> InstrumentInitialStateFields { get; } = [];
+    public IEnumerable<PropertyField> InstrumentInitialInstrumentFields => InstrumentInitialStateFields.Take(3);
+    public IEnumerable<PropertyField> ActiveSubVoiceInitialInstrumentFields => ActiveSubVoiceInitialStateFields.Take(3);
+    public IEnumerable<PropertyField> InstrumentOtherInitialStateFields => InstrumentInitialStateFields.Skip(3);
+    public IEnumerable<PropertyField> ActiveSubVoiceOtherInitialStateFields => ActiveSubVoiceInitialStateFields.Skip(3);
+    public string InstrumentPresetSummary => PresetSummary(InstrumentInitialInstrumentFields);
+    public string ActiveSubVoicePresetSummary => PresetSummary(ActiveSubVoiceInitialInstrumentFields);
+    private static string PresetSummary(IEnumerable<PropertyField> fields) => "Instrument · " +
+        string.Join(" / ", fields.Select(field => string.IsNullOrWhiteSpace(field.Value) ? "Inherit" : field.Value)) + " …";
     public ObservableCollection<InstrumentRenderLane> RenderLanes { get; } = [];
 
     public override void RefreshSelectionPresentation()
@@ -3441,6 +3452,8 @@ public sealed class InstrumentWorkspaceViewModel(
         InstrumentPreRollTicksText = instrument.PreRollTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         PreRollTicks = instrument.PreRollTicks;
         AddInstrumentInitialStateFields(instrument.InitialState);
+        Raise(nameof(InstrumentPresetSummary)); Raise(nameof(InstrumentInitialInstrumentFields));
+        Raise(nameof(InstrumentOtherInitialStateFields));
         Summary = $"Root {MidiNoteName(instrument.RootNote)} · Template {instrument.TemplateLengthTicks} ticks · Pre-Roll {instrument.PreRollTicks} ticks · {instrument.SubVoices.Count} SubVoices";
         RequiresChannelIsolation = instrument.RequiresChannelIsolation;
         ShortLifecycle = instrument.ShortLifecycle;
@@ -3624,6 +3637,8 @@ public sealed class InstrumentWorkspaceViewModel(
 
             AddInitialStateEntries(activeVoice.InitialState);
             AddActiveSubVoiceInitialStateFields(activeVoice.InitialState);
+            Raise(nameof(ActiveSubVoicePresetSummary)); Raise(nameof(ActiveSubVoiceInitialInstrumentFields));
+            Raise(nameof(ActiveSubVoiceOtherInitialStateFields));
         }
 
         foreach (InstrumentRenderLane lane in lanes) RenderLanes.Add(lane);
@@ -3751,7 +3766,7 @@ public sealed class InstrumentWorkspaceViewModel(
         {
             Add("Bank MSB", state.BankMsb);
             Add("Bank LSB", state.BankLsb);
-            Add("Program", state.Program is int program ? program + 1 : null);
+            Add("Program", state.Program);
             Add("Pitch Bend", state.PitchBend);
             Add("Pitch Bend Range Semitones", state.PitchBendRangeSemitones);
             Add("Pitch Bend Range Cents", state.PitchBendRangeCents);

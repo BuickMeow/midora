@@ -162,8 +162,8 @@ internal static partial class ObjectPropertiesProjection
                             fields.Add(Rename(data1.Field(), "batch.midiEvent.controller", "CONTROLLER"));
                             fields.Add(Rename(data2.Field(), "batch.midiEvent.value", "VALUE")); break;
                         case DirectMidiChannelEventKind.ProgramChange:
-                            fields.Add(Rename(data1.Field(), "batch.midiEvent.program", "PROGRAM (1–128)",
-                                data1.Same ? (data1.First + 1).ToString(CultureInfo.InvariantCulture) : "Mixed")); break;
+                            fields.Add(Rename(data1.Field(), "batch.midiEvent.program", "PROGRAM (0–127)",
+                                data1.Same ? data1.First.ToString(CultureInfo.InvariantCulture) : "Mixed")); break;
                         case DirectMidiChannelEventKind.ChannelPressure:
                             fields.Add(Rename(data1.Field(), "batch.midiEvent.channelPressure", "PRESSURE")); break;
                         case DirectMidiChannelEventKind.PitchBend: fields.Add(bend.Field()); break;

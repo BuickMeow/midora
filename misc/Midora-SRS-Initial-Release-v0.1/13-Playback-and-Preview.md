@@ -1619,4 +1619,12 @@ Reader 只能在第一次读到偶数序列时复制完整字段，并在第二�
 供应商 current-package URL 只允许在显式确认后生成 `releaseBaseline=false` 的本地开发候选。正式基线升级必须作为独立变更提交：固定新版本码与 SHA-256，重跑 Native interop、音频语义、逐采样确定性、实时/离线、性能和发布测试；不得自动跟随最新版。
 
 进程内后端或“子进程合成、主进程 WASAPI”的混合链只允许作为开发期对照测试，不是正式消费者，不得由产品运行时回退或切换进入。
+
+## 13.31 统一音色选择器试听
+
+音色选择器试听使用独立干净 Project/受控编译上下文，生成正式 canonical 后进入已有 Preview→Master→Limiter 链。Bank/Program、目标模式和音符只取当前 draft；不套当前编曲的 Expression、Pitch Bend、Mapping 或共享通道状态，不改变项目、Root mode、主播放指针或当前音乐。
+
+自动试听首次默认启用、Key=60、Velocity=100、Gate=500ms；这些字段保存为程序偏好。有限 Gate 通过正式 tick/sample 时序结束，不能由 UI Timer/Thread.Sleep 发 NoteOff。手按键使用 held-gate 预览窗口，松键结束 Gate。模式仅供本次试听，初值取可知目标模式；名称不保证该 preset 一定存在或发声。
+
+每个弹窗具有显式试听 owner；最新选择取代旧请求，至多一个执行请求和一个可替换待处理请求。编辑提交、确认、取消和关闭先等待停止自有试听，禁止迟到结果重启。不能为了试听抢停普通 Project 播放。无 Enabled SoundFont、设备/加载错误只报告试听不可用，合法 draft 仍可提交；清理失败必须明确报告，不把未完成的 Stop 当作成功。
 ---

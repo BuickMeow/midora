@@ -513,6 +513,7 @@ public sealed class SubVoice
     public int? RootNoteOverride { get; set; }
     public MidiInitialState InitialState { get; } = new();
     public TemplateEventCollection Events { get; }
+    public InstrumentChangeSet InstrumentChanges { get; set; } = InstrumentChangeSet.Empty;
     public List<SubVoiceEventMapping> EventMappings { get; } = [];
     public List<ValueCurve> Curves { get; } = [];
 

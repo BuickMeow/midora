@@ -52,6 +52,8 @@
 
 ## 2026-09-14 修订摘要
 
+- A2a 按已确认 R27 承接 §8.55/§13.31/§18.4：显式 Instrument Change 关联、Catalog 数值/名称选择器、Program 0～127、Initial State 独立继承和 owner 隔离试听。§16.35 采用 Format 4 保存关联 source，保持旧 1/2/3 读取及旧字节基线。完整包装批量 UI/List 仍为 A2b，不把本次切片当作 R27 完成。
+
 - A1 验收返修：明确 Scan Presets 的源 SF2 选择与 bank 结果均为单项滚动；Add Event 不得在旧绑定列表中查询新 Lane 而跳过导航，`A` 属于新活动事件视图。按本轮明确要求统一 Direct/SubVoice PB 标尺为 −8192～8191、中性刻度 0，仅改变显示，不改变正式 scalar。
 - 按已确认的下一批需求 A1 同步第 17～20、22 章：SubVoice 模板外创建点自动扩展同 Definition 模板并同事务撤销；现有 Add Event 成功后按稳定 target 导航并恢复 Surface 焦点。
 - 明确三类数值事件批移采用整组选区共同 scalar delta 饱和；Direct Pitch Bend 必须先在 14-bit 标量上变换再编码，预览/提示/提交一致。Enum 继续只支持精确设值、不支持相对值 Delta。

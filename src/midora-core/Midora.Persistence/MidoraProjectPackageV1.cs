@@ -68,7 +68,7 @@ public sealed record MidoraProjectOpenResultV1(
     bool IsModified,
     IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics,
     bool RequiresFormatUpgrade = false,
-    int SourceFileFormatVersion = PersistenceContractV3.FileFormatVersion,
+    int SourceFileFormatVersion = PersistenceContractV4.FileFormatVersion,
     ProjectPresentationStateV3? PresentationState = null,
     bool IsPresentationModified = false,
     MidoraLegacyProjectSourceIdentityV3? LegacySourceIdentity = null) : IDisposable, IAsyncDisposable
@@ -136,8 +136,8 @@ public sealed class MidoraPackageVersionCompatibilityExceptionV1 : MidoraPackage
     public int FileFormatVersion { get; }
     public int MinimumReadableVersion { get; }
     public int ManifestSchemaVersion { get; }
-    public int SupportedFileFormatVersion => PersistenceContractV3.FileFormatVersion;
-    public int SupportedManifestSchemaVersion => PersistenceContractV3.ManifestSchemaVersion;
+    public int SupportedFileFormatVersion => PersistenceContractV4.FileFormatVersion;
+    public int SupportedManifestSchemaVersion => PersistenceContractV4.ManifestSchemaVersion;
 }
 
 public sealed class MidoraProjectPackageV1
@@ -316,7 +316,7 @@ public sealed class MidoraProjectPackageV1
             cancellationToken).ConfigureAwait(false);
         return new(
             sourceIdentity,
-            PersistenceContractV3.FileFormatVersion,
+            PersistenceContractV4.FileFormatVersion,
             backupPath);
     }
 
@@ -706,9 +706,9 @@ public sealed class MidoraProjectPackageV1
                 MidoraPackagePathsV1.Manifest,
                 innerException: exception);
         }
-        if (versionHeader.FileFormatVersion > PersistenceContractV3.FileFormatVersion
-            || versionHeader.MinimumReadableVersion > PersistenceContractV3.FileFormatVersion
-            || versionHeader.ManifestSchemaVersion > PersistenceContractV3.ManifestSchemaVersion)
+        if (versionHeader.FileFormatVersion > PersistenceContractV4.FileFormatVersion
+            || versionHeader.MinimumReadableVersion > PersistenceContractV4.FileFormatVersion
+            || versionHeader.ManifestSchemaVersion > PersistenceContractV4.ManifestSchemaVersion)
         {
             throw new MidoraPackageVersionCompatibilityExceptionV1(path, versionHeader);
         }
@@ -724,6 +724,8 @@ public sealed class MidoraProjectPackageV1
                     ManifestCodecV2.Parse(manifestBytes)),
                 PersistenceContractV3.FileFormatVersion => PackageManifestView.FromV3(
                     ManifestCodecV3.Parse(manifestBytes)),
+                PersistenceContractV4.FileFormatVersion => PackageManifestView.FromV4(
+                    ManifestCodecV4.Parse(manifestBytes)),
                 _ => throw new InvalidDataException(
                     $"Unsupported Midora file-format version {versionHeader.FileFormatVersion}.")
             };
@@ -739,7 +741,7 @@ public sealed class MidoraProjectPackageV1
                 innerException: exception);
         }
 
-        bool requiresFormatUpgrade = manifest.FileFormatVersion < PersistenceContractV3.FileFormatVersion;
+        bool requiresFormatUpgrade = manifest.FileFormatVersion < PersistenceContractV4.FileFormatVersion;
         Dictionary<string, ManifestFileEntryJsonV1> index = ValidateManifestIndex(manifest.Files, path);
         List<MidoraPackageDiagnosticV1> diagnostics = CollectExtraEntryDiagnostics(entries, index);
         if (requiresFormatUpgrade)
@@ -748,7 +750,7 @@ public sealed class MidoraProjectPackageV1
                 MidoraPackageDiagnosticSeverityV1.Information,
                 MidoraPackageDiagnosticCategoryV1.VersionCompatibility,
                 "MIDORA-PERSIST-FORMAT-MIGRATED",
-                $"The Format {manifest.FileFormatVersion} Project was migrated in memory. Saving will write Format 3.",
+                $"The Format {manifest.FileFormatVersion} Project was migrated in memory. Saving will write Format 4.",
                 MidoraPackagePathsV1.Manifest));
         }
 
@@ -838,6 +840,15 @@ public sealed class MidoraProjectPackageV1
                 isModified = true;
             }
 
+            if (manifest.FileFormatVersion >= PersistenceContractV4.FileFormatVersion)
+            {
+                var associationEntry = await TryReadValidatedEntryAsync(PersistenceContractV4.InstrumentChangesPath,
+                    "instrument-changes-pb", entries, index, path, cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidDataException("The Instrument Changes component is missing.");
+                using var associationInput = associationEntry.Open();
+                InstrumentChangesProtobufCodecV1.Restore(project, associationInput, cancellationToken);
+            }
+
             ValidateLoadedStableIds(
                 projectIndex,
                 project,
@@ -901,7 +912,7 @@ public sealed class MidoraProjectPackageV1
 
             ProjectPresentationStateV3 presentation = ProjectPresentationStateV3.Empty;
             bool presentationModified = requiresFormatUpgrade;
-            if (manifest.FileFormatVersion == PersistenceContractV3.FileFormatVersion)
+            if (manifest.FileFormatVersion >= PersistenceContractV3.FileFormatVersion)
             {
                 try
                 {
@@ -978,6 +989,8 @@ public sealed class MidoraProjectPackageV1
         AddBytes(MidoraPackagePathsV1.GlobalEventScopeDefaults, GlobalEventScopeDefaultsCodecV1.Serialize);
         AddBytes(MidoraPackagePathsV1.ProjectPresentation,
             () => ProjectPresentationCodecV3.Serialize(presentation, project));
+        Add(PersistenceContractV4.InstrumentChangesPath,
+            stream => InstrumentChangesProtobufCodecV1.Serialize(project, stream, cancellationToken));
         foreach (EventInstrument instrument in project.EventInstruments)
         {
             Add(
@@ -1042,17 +1055,17 @@ public sealed class MidoraProjectPackageV1
         })
             .Concat(pureMidiPackEntries)
             .ToArray();
-        ManifestJsonV3 manifest = new()
+        ManifestJsonV4 manifest = new()
         {
             Magic = "midora-project",
-            FileFormatVersion = PersistenceContractV3.FileFormatVersion,
-            MinimumReadableVersion = PersistenceContractV3.FileFormatVersion,
-            ManifestSchemaVersion = PersistenceContractV3.ManifestSchemaVersion,
+            FileFormatVersion = PersistenceContractV4.FileFormatVersion,
+            MinimumReadableVersion = PersistenceContractV4.FileFormatVersion,
+            ManifestSchemaVersion = PersistenceContractV4.ManifestSchemaVersion,
             CreatedWithSoftwareVersion = fileInformation.CreatedWithSoftwareVersion,
             LastSavedWithSoftwareVersion = fileInformation.LastSavedWithSoftwareVersion,
             Files = manifestFiles
         };
-        AddBytes(MidoraPackagePathsV1.Manifest, () => ManifestCodecV3.Serialize(manifest));
+        AddBytes(MidoraPackagePathsV1.Manifest, () => ManifestCodecV4.Serialize(manifest));
         return new(content, pureMidiPackEntries);
 
         void AddBytes(string path, Func<byte[]> serialize) => Add(path, stream => stream.Write(serialize()));
@@ -1583,7 +1596,7 @@ public sealed class MidoraProjectPackageV1
                         RestoreFormat1EventInstrument(project, input, cancellationToken),
                     PersistenceContractV2.FileFormatVersion =>
                         EventInstrumentProtobufCodecV2.Restore(project, input, cancellationToken),
-                    PersistenceContractV3.FileFormatVersion =>
+                    PersistenceContractV3.FileFormatVersion or PersistenceContractV4.FileFormatVersion =>
                         EventInstrumentProtobufCodecV2.Restore(project, input, cancellationToken),
                     _ => throw new InvalidDataException(
                         $"Unsupported Event Instrument file-format version {fileFormatVersion}.")
@@ -2242,7 +2255,7 @@ public sealed class MidoraProjectPackageV1
             : string.Create(CultureInfo.InvariantCulture, $" ({suffix})");
         string fixedTail = string.Create(
             CultureInfo.InvariantCulture,
-            $" - Original Format {sourceFormat} before Format {PersistenceContractV3.FileFormatVersion}{collisionSuffix}.midora");
+            $" - Original Format {sourceFormat} before Format {PersistenceContractV4.FileFormatVersion}{collisionSuffix}.midora");
         int prefixBudget = 255 - fixedTail.Length;
         if (prefixBudget <= 0)
         {
@@ -2283,7 +2296,7 @@ public sealed class MidoraProjectPackageV1
         ArgumentNullException.ThrowIfNull(identity);
         if (!Path.IsPathFullyQualified(identity.SourcePath)
             || identity.SourceFileFormatVersion is < PersistenceContractV1.FileFormatVersion
-                or >= PersistenceContractV3.FileFormatVersion
+                or >= PersistenceContractV4.FileFormatVersion
             || identity.Length < 0
             || identity.Sha256.Length != 64
             || identity.Sha256.Any(value => value is not (>= '0' and <= '9')
@@ -2298,7 +2311,7 @@ public sealed class MidoraProjectPackageV1
     private static void ValidateLegacyUpgradePlan(MidoraLegacyProjectUpgradePlanV3 plan)
     {
         ValidateLegacySourceIdentity(plan.SourceIdentity);
-        if (plan.TargetFileFormatVersion != PersistenceContractV3.FileFormatVersion
+        if (plan.TargetFileFormatVersion != PersistenceContractV4.FileFormatVersion
             || !Path.IsPathFullyQualified(plan.PermanentBackupPath))
         {
             throw new ArgumentException(
@@ -2339,7 +2352,8 @@ public sealed class MidoraProjectPackageV1
             MidoraPackagePathsV1.ProjectSettings,
             MidoraPackagePathsV1.GlobalResetDefaults,
             MidoraPackagePathsV1.GlobalEventScopeDefaults,
-            MidoraPackagePathsV1.ProjectPresentation
+            MidoraPackagePathsV1.ProjectPresentation,
+            PersistenceContractV4.InstrumentChangesPath
         ];
         foreach (string path in fixedOrder)
         {
@@ -2350,6 +2364,7 @@ public sealed class MidoraProjectPackageV1
 
     private static string GetExpectedKind(string path) => path switch
     {
+        PersistenceContractV4.InstrumentChangesPath => "instrument-changes-pb",
         MidoraPackagePathsV1.ProjectPresentation => "project-presentation-json",
         MidoraPackagePathsV1.Project or MidoraPackagePathsV1.Metadata => "core-json",
         MidoraPackagePathsV1.ConductorTrack => "conductor-json",
@@ -2384,7 +2399,7 @@ public sealed class MidoraProjectPackageV1
     }
 
     private static bool IsKnownKind(string kind) => kind is
-        "core-json" or "settings-json" or "conductor-json" or
+        "core-json" or "settings-json" or "conductor-json" or "instrument-changes-pb" or
         "project-presentation-json" or
         "event-instrument-pb" or "event-instrument-usage-pb" or "logical-track-pb" or
         "midi-channel-root-pb" or "pure-midi-track-pb" or "pure-midi-content-pack";
@@ -2516,6 +2531,7 @@ public sealed class MidoraProjectPackageV1
         foreach (SubVoice voice in instrument.SubVoices)
         {
             yield return voice.Id;
+            foreach (var change in voice.InstrumentChanges.Values) yield return change.Id;
             foreach (SubVoiceEventMapping mapping in voice.EventMappings)
             {
                 foreach (MidoraId id in EnumerateMappingChainIds(mapping.Steps)) yield return id;
@@ -2575,6 +2591,7 @@ public sealed class MidoraProjectPackageV1
                 yield return directEvent.Id;
             }
             foreach (OpaqueMidiEventValue opaque in segment.OpaqueEvents.EnumerateValues(cancellationToken)) yield return opaque.Id;
+            foreach (var change in segment.InstrumentChanges.Values) yield return change.Id;
         }
     }
 
@@ -2720,6 +2737,9 @@ public sealed class MidoraProjectPackageV1
             value.CreatedWithSoftwareVersion,
             value.LastSavedWithSoftwareVersion,
             value.Files);
+
+        public static PackageManifestView FromV4(ManifestJsonV4 value) => new(
+            value.FileFormatVersion, value.CreatedWithSoftwareVersion, value.LastSavedWithSoftwareVersion, value.Files);
     }
 
     private static bool PathsEqual(string left, string right) =>

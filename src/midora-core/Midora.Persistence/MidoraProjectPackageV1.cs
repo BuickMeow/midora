@@ -148,10 +148,13 @@ public sealed class MidoraProjectPackageV1
     private readonly string _softwareVersion;
     private readonly TimeProvider _timeProvider;
     private readonly IMidoraPackageFaultInjectorV1 _faultInjector;
+    private readonly IInstrumentChangeStorageLoader? _instrumentChangeStorage;
 
-    public MidoraProjectPackageV1(string softwareVersion, TimeProvider? timeProvider = null)
+    public MidoraProjectPackageV1(string softwareVersion, TimeProvider? timeProvider = null,
+        IInstrumentChangeStorageLoader? instrumentChangeStorage = null)
         : this(softwareVersion, timeProvider, NoOpMidoraPackageFaultInjectorV1.Instance)
     {
+        _instrumentChangeStorage = instrumentChangeStorage;
     }
 
     internal MidoraProjectPackageV1(
@@ -846,7 +849,7 @@ public sealed class MidoraProjectPackageV1
                     "instrument-changes-pb", entries, index, path, cancellationToken).ConfigureAwait(false)
                     ?? throw new InvalidDataException("The Instrument Changes component is missing.");
                 using var associationInput = associationEntry.Open();
-                InstrumentChangesProtobufCodecV1.Restore(project, associationInput, cancellationToken);
+                InstrumentChangesProtobufCodecV1.Restore(project, associationInput, cancellationToken, _instrumentChangeStorage);
             }
 
             ValidateLoadedStableIds(
@@ -967,7 +970,7 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
-    private static PackageContentV1 BuildContent(
+    private PackageContentV1 BuildContent(
         MidoraProject project,
         ProjectPresentationStateV3 presentation,
         ProjectMetadataSnapshot metadata,
@@ -990,7 +993,7 @@ public sealed class MidoraProjectPackageV1
         AddBytes(MidoraPackagePathsV1.ProjectPresentation,
             () => ProjectPresentationCodecV3.Serialize(presentation, project));
         Add(PersistenceContractV4.InstrumentChangesPath,
-            stream => InstrumentChangesProtobufCodecV1.Serialize(project, stream, cancellationToken));
+            stream => InstrumentChangesProtobufCodecV1.Serialize(project, stream, cancellationToken, _instrumentChangeStorage));
         foreach (EventInstrument instrument in project.EventInstruments)
         {
             Add(

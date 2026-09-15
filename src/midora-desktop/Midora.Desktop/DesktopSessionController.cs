@@ -102,7 +102,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
     private long _compilerErrorCount;
     private long _compilerWarningCount;
     private readonly MidoraProjectPackageV1 _packages =
-        new(MidoraSoftwareVersion.InformationalVersion);
+        new(MidoraSoftwareVersion.InformationalVersion, instrumentChangeStorage: BoundedInstrumentChangeStorageLoader.Instance);
     private readonly ProjectCreationCoordinator _creation;
     private readonly ProjectOpenCoordinator _opening;
     private ApplicationPreferences _applicationPreferences =

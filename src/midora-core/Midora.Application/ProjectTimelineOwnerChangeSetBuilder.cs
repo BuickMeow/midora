@@ -165,13 +165,20 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             yield break;
         }
         var source = current.ChannelEvents.CreateQuerySnapshot();
+        using var recentBudget = BulkEditPreparationContext.Current!.Resources.ReserveWorking(131072);
+        var recent = new HashSet<MidoraId>(4096);
+        using var invalid = new BoundedEditRecordStore<MidoraId>(BulkEditPreparationContext.Current!.Resources);
         foreach (var id in affected)
         {
-            if (current.InstrumentChanges.TryGetByMember(id, out var group)
-                && !InstrumentChangeResolver.TryRead(source, group, out _))
-                current.InstrumentChanges = current.InstrumentChanges.DeferRemoval(group.Id);
+            if (current.InstrumentChanges.TryGetByMember(id, out var group) && recent.Add(group.Id))
+            {
+                if (!InstrumentChangeResolver.TryRead(source, group, out _)) invalid.Add(group.Id, BulkEditPreparationContext.Current.Token);
+                if (recent.Count == 4096) recent.Clear();
+            }
             yield return id;
         }
+        invalid.Seal();
+        if (invalid.Count != 0) current.InstrumentChanges = BoundedInstrumentChangeStorage.RemoveAffected(current.InstrumentChanges, invalid);
         current.InstrumentChanges = current.InstrumentChanges.ValidatedAt(current.ChannelEvents.Generation);
     }
 
@@ -186,13 +193,21 @@ internal static class ProjectTimelineOwnerChangeSetBuilder
             yield break;
         }
         var source = current.Events.CreateQuerySnapshot();
+        InstrumentChangeSelectionQuery.PrepareSource(source);
+        using var recentBudget = BulkEditPreparationContext.Current!.Resources.ReserveWorking(131072);
+        var recent = new HashSet<MidoraId>(4096);
+        using var invalid = new BoundedEditRecordStore<MidoraId>(BulkEditPreparationContext.Current!.Resources);
         foreach (var id in affected)
         {
-            if (current.InstrumentChanges.TryGetByMember(id, out var group)
-                && !InstrumentChangeResolver.TryRead(source, group, out _))
-                current.InstrumentChanges = current.InstrumentChanges.DeferRemoval(group.Id);
+            if (current.InstrumentChanges.TryGetByMember(id, out var group) && recent.Add(group.Id))
+            {
+                if (!InstrumentChangeResolver.TryRead(source, group, out _)) invalid.Add(group.Id, BulkEditPreparationContext.Current.Token);
+                if (recent.Count == 4096) recent.Clear();
+            }
             yield return id;
         }
+        invalid.Seal();
+        if (invalid.Count != 0) current.InstrumentChanges = BoundedInstrumentChangeStorage.RemoveAffected(current.InstrumentChanges, invalid);
         current.InstrumentChanges = current.InstrumentChanges.ValidatedAt(current.Events.Generation);
     }
 

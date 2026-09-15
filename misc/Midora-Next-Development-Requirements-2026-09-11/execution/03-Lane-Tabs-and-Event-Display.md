@@ -1,8 +1,8 @@
 # 执行计划 03：Lane Tabs、显示值与事件阶梯线
 
-日期：2026-09-14。近期：R28（P1），A2b；后续：R12／R29（均 P2），A4a。实施、自动验证、人工验收状态：**未开始** 。
+日期：2026-09-15。近期：R28（P1），A2b；后续：R12／R29（均 P2），A4a。用户已确认全部人工验收及交互返修通过，含 LANE-02；扩大压力门见 §8。R12／R29 仍未开始。
 
-总入口：[执行计划索引](00-Execution-Plan.md)。需求依据：[需求 02](../02-Instrument-Changes-and-Lanes.md)、[唯一问答入口 04](../04-Decisions-and-Preparation.md)、[决策汇总 05](../05-Decision-Summary-and-Q2-2026-09-14.md)。R27 包装见 [计划 02](02-Instrument-Changes.md)。本文件只拆解已确认决定，不新增用户问卷，不修改 SRS／ADR／版本，不实现产品或生成发布物。
+总入口：[执行计划索引](00-Execution-Plan.md)。需求依据：[需求 02](../02-Instrument-Changes-and-Lanes.md)、[唯一问答入口 04](../04-Decisions-and-Preparation.md)、[决策汇总 05](../05-Decision-Summary-and-Q2-2026-09-14.md)。R27 包装见 [计划 02](02-Instrument-Changes.md)。本文件拆解已确认决定并记录阶段状态，不新增或改写用户问答；实际实现／SRS 承接／验证证据见 §8。
 
 ## 1. 边界、批次与 requirement trace
 
@@ -33,7 +33,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-01 — target 身份、状态所有权和性能基线
 
-- 状态：未开始；切片：A2b。依据：R28；D-LANE01.a～g、D-STATE03.a、D-UI01.d；关联 R24／R26。
+- 状态：功能已实施；性能实测和缺测见 §8。切片：A2b。依据：R28；D-LANE01.a～g、D-STATE03.a、D-UI01.d；关联 R24／R26。
 - 依赖：R27 的 T-IN-01／02 稳定包装／raw 合同；可在 A2a 期间并行准备，不阻塞 R27 选择器。
 - 工作：列三宿主 target 能力表、Tab 顺序／显隐／活动 target／纵轴／Snap／Selection 归属；定义 owner＋target 摘要接口、点数／曲线／Mapping owner 标记及包装数与成员数口径；重测现有目标发现、切 Lane、List／目录冷暖开销并制定可验证预算。
 - 非目标：不序列化 VM、不提前实施 R06／R07；不以 Tab 文字或索引作身份，不把 Catalog 名称纳入缓存音乐身份。
@@ -42,7 +42,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-02 — 构建精确 target 摘要与旧数据后台补建
 
-- 状态：未开始；切片：A2b。依据：R28；D-LANE01.g；INV-065／069／095。
+- 状态：功能已实施；不可变源首次后台补建，热摘要与增量更新已测。切片：A2b。依据：R28；D-LANE01.g；INV-065／069／095。
 - 依赖：T-LANE-01。
 - 工作：在导入／source page 构建已经遍历时顺带统计 owner＋target 精确点数及曲线／Mapping owner 存在性；旧数据缺摘要时一次有界、可取消后台补建；摘要绑定正式 revision，目录读取 K 个 targets 而非 N 个事件。
 - 非目标：不要求每次目录／刷新／切 Tab 全源扫描，不为 R27 导入 Inst. 执行 Bank-PC 前驱查询，不把未知计数假装 0。
@@ -51,7 +51,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-03 — 编辑、碰撞与 Undo 的增量摘要
 
-- 状态：未开始；切片：A2b。依据：R28；D-LANE01.g；R27／D-IN02.a；INV-047／077／096。
+- 状态：功能已实施；对应值改、换 target、碰撞及 Undo 回归通过。切片：A2b。依据：R28；D-LANE01.g；R27／D-IN02.a；INV-047／077／096。
 - 依赖：T-LANE-01／02 与 T-IN-02。
 - 工作：随正式 command 的最终结果及精确 change set 更新 old/new target 摘要；覆盖新建／删／移动／换 target、覆盖碰撞、曲线／Mapping owner、包装解组、父 owner 变更和 Undo／Redo；目录刷新只取修订摘要。
 - 非目标：不以动作候选数当最终点数、不在 UI 自己猜 delta、不因只改值重扫全 owner，不通过摘要重建已删除 Mapping。
@@ -60,7 +60,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-04 — 每目标 Tab 壳、重排与单活动 Surface
 
-- 状态：未开始；切片：A2b。依据：R28；D-LANE01.b/d/f、D-STATE03.a；需求 02 §5。
+- 状态：功能已实施；三宿主真实 WPF 与受控 DPI 布局已测。切片：A2b。依据：R28；D-LANE01.b/d/f、D-STATE03.a；需求 02 §5。
 - 依赖：T-LANE-01／02；Inst. 内容接 T-IN-07／09。
 - 工作：三宿主替换旧 LANE 标题／下拉与通用 Event/Parameter Tab；Vel. 固定第一，MIDI／SubVoice Inst. 第二，其余 target 各一 Tab。普通 target 首次确定排序，新建追加，保留用户拖拽顺序；头部滚轮水平滚动，工具与目录入口同一行最右；只挂载活动 Surface，隐藏项只留轻量状态。
 - 非目标：不把全部 Lane 垂直堆叠、不为每隐藏 Tab 建索引／计时器／常驻编辑 Surface；Logical 不新增 Inst.，不预建全部 CC。
@@ -69,7 +69,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-05 — 全 target 目录、隐藏与重新打开
 
-- 状态：未开始；切片：A2b。依据：R28；D-LANE01.a/b/c/g。
+- 状态：功能已实施，用户验收通过。切片：A2b。依据：R28；D-LANE01.a/b/c/g。
 - 依赖：T-LANE-02／03／04；包装计数口径接 T-IN-09。
 - 工作：最右下箭头打开可搜索、虚拟化的全部已有 target 目录，名称／精确数量／显隐齐全，曲线与 Mapping owner 无点时明确标记；点击显式显示并激活；普通 Tab 关闭仅隐藏，基础 Tab 不可关闭；未知摘要显示统计中并异步更新。
 - 非目标：不另建常驻重面板、不把隐藏当 Delete Data／Delete owner，不把 0 点误判为没有 owner，不把目录变成任意 target 新建入口。
@@ -78,7 +78,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-06 — 显式导航、Selection、轴与工具接线
 
-- 状态：未开始；切片：A2b。依据：R28；D-LANE01.c/e/f、D-STATE03.a、D-UI01.d；关联 R24／R26。
+- 状态：功能已实施；显式 Add／Locate 与被动选择分离回归通过。切片：A2b。依据：R28；D-LANE01.c/e/f、D-STATE03.a、D-UI01.d；关联 R24／R26。
 - 依赖：T-LANE-04／05；现有 Add／Locate／Properties 命令。
 - 工作：显式 Add／Locate／目录点击显示并激活 target，焦点进有效 Surface；普通 Properties／刷新／后台／Undo 不抢回隐藏 Tab。切 Lane 保留原选择；混合选择用既有显式类型子菜单。主 Piano 与 Event Snap 独立，所有数值 targets 共用 Event Snap；各 Lane 纵轴独立、水平同步。为 A3 共享 Draw 与独立形态组接入稳定接口，不改变工具所有权。
 - 非目标：不因工具栏合并合并两套 Snap，不创建两套主 ToolMode；Inst. 不沿线创建，数值形态不越权作用于音符／Segment。
@@ -87,7 +87,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-07 — 局部失效、关闭释放与后续状态接口
 
-- 状态：未开始；切片：A2b。依据：R28；D-LANE01.c/f/g、D-STATE03.a/c；INV-069／095／112。
+- 状态：功能已实施；切 Workspace／隐藏卸载集成已测，长会话完整压力门未穷尽。切片：A2b。依据：R28；D-LANE01.c/f/g、D-STATE03.a/c；INV-069／095／112。
 - 依赖：T-LANE-02～06。
 - 工作：将显示 generation 与 source revision 分离；只失效改动 target／范围的点、线、标签与选择层；隐藏／卸载取消请求，owner 删除释放自身缓存／任务／订阅／lease，Project 关闭全部释放。按 Segment 保存会话内 Lane 纵轴／顺序／显隐／活动 target，SubVoice 独立，留显式 presentation 适配接口给 B 主题。
 - 非目标：不在 A2b 搭载完整恢复；不把已删除 owner 对象保活，不让同 Track profile 在另一个 Segment 添加不存在的 target，不在每次切换复建全索引。
@@ -96,7 +96,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ### T-LANE-08 — 跨宿主集成与合并验收门
 
-- 状态：未开始；切片：A2b。依据：R28 全部 D-LANE；R27 对接；[需求总表 §6](../00-Overview-and-Delivery-Plan.md#6-每轮交付和共同验收门)。
+- 状态：全部人工验收及返修通过，保留缺测门；切片：A2b。依据：R28 全部 D-LANE；R27 对接；[需求总表 §6](../00-Overview-and-Delivery-Plan.md#6-每轮交付和共同验收门)。
 - 依赖：T-LANE-01～07、T-IN-08／09；与 T-IN-10 共同形成一次 A2b 交付包，不构成循环实现依赖。
 - 工作：执行 AUTO-LANE 矩阵并整理 UAT-A2b-LANE 6 项，与 R27 的 6 项合并。记录三宿主和大样本冷暖分布、目录读取事件数／target 数、资源峰值及关闭释放，复核未改变 source／canonical／输出。
 - 非目标：不把 R12／R29 未实施写成 R28 失败，不增加第二次 A2b 人工轮；不以静态“有虚拟化”替代实际测量。
@@ -215,7 +215,9 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 - 完成证据：完整测量分布／环境／样本／内存与任务峰值／关闭释放、自动回归结果及人工实填清单。
 - 门：正确性源与消费者结果不变；性能相同机器／内容／viewport 对比，并遵守冻结预算；失败、缺样本或未测环境明确记入限制，不能写整体通过。
 
-## 5. 自动验证矩阵（全部未执行）
+## 5. 原定自动验证矩阵
+
+此表是完整计划范围，原状态保留用于对照；A2b 实际已测子集、结果和未跑门见 §8，不把少量断言通过写成整行压力矩阵通过。R12／R29 尚未实施。
 
 下表属于工程自动验证，不能转换成用户重复手工遍历任务。每次报告需列构建／测试命令、fixture、源版本、实际通过／失败／未跑，不能只贴“测试完成”。
 
@@ -240,7 +242,7 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 ## 6. 人工验收清单
 
-用户只核查自动测试不能替代的布局、手感和可理解性。开发方先给自动证据、固定样例与打开位置，并自行完成 DPI 100／125／150／200%、短窗／长名称／禁用状态矩阵；没有当前明确授权不得调用 computer-use。所有项状态均为未开始。
+用户只核查自动测试不能替代的布局、手感和可理解性。开发方先给自动证据、固定样例与打开位置，并自行完成 DPI 100／125／150／200%、短窗／长名称／禁用状态矩阵；没有当前明确授权不得调用 computer-use。A2b 全部人工验收及返修通过，原表操作和预期不变；A4a 未开始。
 
 ### UAT-A2b — 与 R27 全编辑合并一次（本文件 6 项）
 
@@ -248,12 +250,12 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 
 | 检查 ID | 具体操作场景 | 预期 | 状态 |
 |---|---|---|---|
-| UAT-A2b-LANE-01 | 依次打开 MIDI Segment、Logical Segment、SubVoice 的 Lanes，并看空样例与多 target 样例 | 每 target 一个 Tab；Vel. 固定第一，MIDI／SubVoice Inst. 第二且不可关闭，Logical 无 Inst.；旧 LANE 下拉／第二行工具栏退出 | 未开始 |
-| UAT-A2b-LANE-02 | 用长名称多 targets 样例缩窄窗口，滚轮浏览 Tab 头并拖拽普通 Tab 重排 | 可水平滚动和重排，基础 Tab 位置不乱；最右 Add／目录／坐标／Snap 可达，文字和按钮无重叠裁切 | 未开始 |
-| UAT-A2b-LANE-03 | 隐藏有内容的普通 Tab，再开下箭头目录、搜索名称并点回；查看无点曲线与 Mapping owner | 目录同时看到显隐、名称、精确数量／明确存在标记；点击显示并激活；隐藏不删数据，没有内容的假 0 不掩盖统计中 | 未开始 |
-| UAT-A2b-LANE-04 | 改／删／覆盖一条事件，观察目录计数，再 Undo／Redo；隐藏一 Tab 后被动刷新，最后用 Add 或 List Locate | 数量随实际结果变化；被动刷新／Undo 不抢回隐藏 Tab；显式 Add／Locate 才打开并激活目标 | 未开始 |
-| UAT-A2b-LANE-05 | 选一 Lane 的点后切另一 Lane，分别调纵轴；调 Piano Snap 与 Event Snap、再切回 | 原选择不偷偷消失；各纵轴独立，水平同步；Piano/Event Snap 不串，各事件 targets 共用 Event Snap，操作焦点自然回编辑区 | 未开始 |
-| UAT-A2b-LANE-06 | 在给定大型样例快速切 Tab／开关目录与 List，再关 Workspace／项目；重新开一个小项目 | 冷加载反馈清楚，目录／切换没有明显冻结或旧内容闪回；隐藏后不再持续占用可见任务，关闭后操作恢复正常 | 未开始 |
+| UAT-A2b-LANE-01 | 依次打开 MIDI Segment、Logical Segment、SubVoice 的 Lanes，并看空样例与多 target 样例 | 每 target 一个 Tab；Vel. 固定第一，MIDI／SubVoice Inst. 第二且不可关闭，Logical 无 Inst.；旧 LANE 下拉／第二行工具栏退出 | 用户验收通过 |
+| UAT-A2b-LANE-02 | 用长名称多 targets 样例缩窄窗口，滚轮浏览 Tab 头并拖拽普通 Tab 重排 | 可水平滚动和重排，基础 Tab 位置不乱；最右 Add／目录／坐标／Snap 可达，文字和按钮无重叠裁切 | 用户验收通过（返修后） |
+| UAT-A2b-LANE-03 | 隐藏有内容的普通 Tab，再开下箭头目录、搜索名称并点回；查看无点曲线与 Mapping owner | 目录同时看到显隐、名称、精确数量／明确存在标记；点击显示并激活；隐藏不删数据，没有内容的假 0 不掩盖统计中 | 用户验收通过 |
+| UAT-A2b-LANE-04 | 改／删／覆盖一条事件，观察目录计数，再 Undo／Redo；隐藏一 Tab 后被动刷新，最后用 Add 或 List Locate | 数量随实际结果变化；被动刷新／Undo 不抢回隐藏 Tab；显式 Add／Locate 才打开并激活目标 | 用户验收通过 |
+| UAT-A2b-LANE-05 | 选一 Lane 的点后切另一 Lane，分别调纵轴；调 Piano Snap 与 Event Snap、再切回 | 原选择不偷偷消失；各纵轴独立，水平同步；Piano/Event Snap 不串，各事件 targets 共用 Event Snap，操作焦点自然回编辑区 | 用户验收通过 |
+| UAT-A2b-LANE-06 | 在给定大型样例快速切 Tab／开关目录与 List，再关 Workspace／项目；重新开一个小项目 | 冷加载反馈清楚，目录／切换没有明显冻结或旧内容闪回；隐藏后不再持续占用可见任务，关闭后操作恢复正常 | 用户验收通过 |
 
 ### UAT-A4a — 显示域与阶梯线（后续 P2，共 6 项）
 
@@ -274,4 +276,12 @@ A4a 只是总计划 A4 中 R12／R29 的可独立验收子集，不把 P2 升为
 - R12 需全入口＋数值工具显示域＋Help＋Mapping 不变回归；只改文字不算完成，改变 Mapping 音乐域也不符合已确认决定。
 - R29 需范围／前驱／同 Tick／LOD／不命中／界外语义及有界门；只有一条能画出的线不算完成。
 - R06／R07 后续使用稳定 target 和 Segment 局部状态接口；R28 不替它提前私加 presentation 字段。A3 接共享主 ToolMode 与独立事件绘线形态；本计划不恢复 Q1 已撤回的独立 Pen 方案。
-- 本轮没有产品构建、UI、音频或性能验证；没有新增 Q3。预算与布局细节由实施记录实测，若发现必须改变已批准工作流的具体约束，再到 04 留原问题／建议／用户答复／确认状态。
+- 建立本规划时没有产品验证；最新 A2b 证据见 §8。没有新增 Q3。若发现必须改变已批准工作流的具体约束，再到 04 留原问题／建议／用户答复／确认状态。
+
+## 8. A2b 实施记录（2026-09-14～15）
+
+基线 `10afe2e9`。三宿主共用 LaneTabSession／LaneTabHost／LaneTabHeader、target 目录及单活动内容容器；删除旧 LANE 下拉工具栏。Direct 冷摘要按不可变源后台扫描一次，SubVoice 页元数据保存精确记录数，编辑后用实际 old/new root 更新；未知显示 Counting、读取失败明确 unavailable，不冒充 0。普通视图状态仅在会话中保持，Format 4 和音乐语义不变。
+
+实际测试与预算详见 [A2b 报告](../../Midora-A2b-Instrument-Changes-and-Lane-Tabs-Implementation-2026-09-14.md)。AUTO-LANE-01／02／04 已有三宿主 Tab 结构、精确计数、独立轴、隐藏重开、显式导航、选择不隐式导航、受控 DPI 的自动证据。AUTO-LANE-03／05／06 已有部分更新／取消／卸载及数据层大样本证据；没有声称随机命令全部组合、真实 UI 帧时序 p95/p99、百万包装与全部 I/O 故障注入已完成。
+
+人工状态：LANE-01～06 全部通过，含 LANE-02 及五项交互返修。根因、修复、精简复验和用户原答见 [A2b 报告 §8](../../Midora-A2b-Instrument-Changes-and-Lane-Tabs-Implementation-2026-09-14.md#8-2026-09-15-验收返修)。本次按用户要求记录、提交／推送；R12／R29 与 A3 没有提前实施，不本地发布。未穷尽的工程验证门不因人工通过而更改。

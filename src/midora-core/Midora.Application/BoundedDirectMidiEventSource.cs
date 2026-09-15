@@ -13,7 +13,7 @@ internal readonly record struct BoundedDirectEventSpatial(DirectMidiChannelEvent
 /// Independent formal/ID/time indexes share every untouched value page.</summary>
 internal sealed class BoundedDirectMidiEventSource : IPureMidiSegmentContentSource,
     IPureMidiContentRangeFingerprintSource, IPureMidiCachedContentSource, IPureMidiPlaybackEndpointSource,
-    IPureMidiContentOverviewSource
+    IPureMidiContentOverviewSource, IDirectMidiTargetSummarySource
 {
     internal static readonly IComparer<BoundedDirectEventDelta> OrdinalComparer =
         Comparer<BoundedDirectEventDelta>.Create(static (a, b) => a.Ordinal.CompareTo(b.Ordinal));
@@ -27,6 +27,21 @@ internal sealed class BoundedDirectMidiEventSource : IPureMidiSegmentContentSour
     private readonly BoundedDirectMidiIndex<BoundedDirectEventSpatial> _spatial;
     private readonly BoundedDirectMidiIndex<BoundedDirectEventSpatial> _removedSpatial;
     internal int FormalExtent { get; }
+    private System.Collections.Immutable.ImmutableDictionary<DirectMidiLaneKey, int> _targetCountDelta =
+        System.Collections.Immutable.ImmutableDictionary<DirectMidiLaneKey, int>.Empty;
+
+    public IReadOnlyDictionary<DirectMidiLaneKey, int> GetTargetCounts(CancellationToken cancellationToken)
+    {
+        var counts = System.Collections.Immutable.ImmutableDictionary.CreateBuilder<DirectMidiLaneKey, int>();
+        counts.AddRange(_baseline.Query.GetTargetCounts(cancellationToken));
+        foreach (var (key, delta) in _targetCountDelta)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int count = checked(counts.GetValueOrDefault(key) + delta);
+            if (count == 0) counts.Remove(key); else counts[key] = count;
+        }
+        return counts.ToImmutable();
+    }
 
     private BoundedDirectMidiEventSource(Baseline baseline,
         BoundedDirectMidiIndex<BoundedDirectEventDelta> ordinals, BoundedDirectMidiIndex<BoundedDirectNoteId> ids,
@@ -274,11 +289,11 @@ internal sealed class BoundedDirectMidiEventSource : IPureMidiSegmentContentSour
             // canonical opaque consumers already own their bounded sort.
             foreach (var value in _baseline.Query.QueryValues(startTick, endTick))
                 if (!Changed(value.Id)) yield return value;
-            foreach (var value in _spatial.Query(startTick, endTick)) yield return value.Value;
+            foreach (var value in QuerySpatial(startTick, endTick)) yield return value.Value;
             yield break;
         }
         using var left = _baseline.Query.QueryOrderedValues(startTick, endTick).Where(value => !Changed(value.Id)).GetEnumerator();
-        using var right = _spatial.Query(startTick, endTick).GetEnumerator();
+        using var right = QuerySpatial(startTick, endTick).GetEnumerator();
         bool a = left.MoveNext(), b = right.MoveNext();
         while (a || b)
         {
@@ -290,10 +305,13 @@ internal sealed class BoundedDirectMidiEventSource : IPureMidiSegmentContentSour
     {
         foreach (var value in _baseline.Query.QueryStartKeys(keys))
             if (!Changed(value.Id)) yield return value;
-        foreach (var key in keys)
-            foreach (var item in _spatial.Query(key.Tick, key.Tick == long.MaxValue ? key.Tick : key.Tick + 1))
-                if (Key(item.Value) == key) yield return item.Value;
+        foreach (long tick in keys.Select(static key => key.Tick).Distinct())
+            foreach (var item in QuerySpatial(tick, tick == long.MaxValue ? tick : tick + 1))
+                if (keys.Contains(Key(item.Value))) yield return item.Value;
     }
+    private IEnumerable<BoundedDirectEventSpatial> QuerySpatial(long start, long end) =>
+        _spatial.QueryKeys(new(new(default, start, default, 0, 0, long.MinValue), false),
+            new(new(default, end, default, 0, 0, long.MinValue), false), BulkEditPreparationContext.Current?.Token ?? default);
     internal static DirectMidiEventStartKey Key(DirectMidiChannelEventValue value) => new(value.Tick, value.Kind,
         value.Kind is DirectMidiChannelEventKind.ControlChange or DirectMidiChannelEventKind.PolyphonicKeyPressure
             or DirectMidiChannelEventKind.NoteOn or DirectMidiChannelEventKind.NoteOff ? value.Data1 : 0);
@@ -334,9 +352,23 @@ internal sealed class BoundedDirectMidiEventSource : IPureMidiSegmentContentSour
         }
         using var removed = BoundedEditSort.Sort(Normalize().Where(value => value.Ordinal < _baseline.Objects.Count)
             .Select(static value => new BoundedDirectEventSpatial(value.Original, false)), SpatialComparer, resources, token);
+        var counts = _targetCountDelta.ToBuilder();
+        foreach (var change in patch)
+        {
+            token.ThrowIfCancellationRequested();
+            if (change.Original.Id != default) AddCount(change.Original, -1);
+            if (!change.Deleted) AddCount(change.Value, 1);
+        }
+        void AddCount(DirectMidiChannelEventValue value, int delta)
+        {
+            var key = DirectMidiLaneKey.From(value);
+            int count = checked(counts.GetValueOrDefault(key) + delta);
+            if (count == 0) counts.Remove(key); else counts[key] = count;
+        }
         return new(_baseline, _ordinals.ApplyPatch(Normalize(), resources, token), _ids.ApplyPatch(byId, resources, token),
             _spatial.ApplyPatch(Coalesced(), resources, token, static value => value.Deleted),
-            _removedSpatial.ApplyPatch(removed, resources, token), extent ?? FormalExtent);
+            _removedSpatial.ApplyPatch(removed, resources, token), extent ?? FormalExtent)
+        { _targetCountDelta = counts.ToImmutable() };
     }
 
     public ulong GetChannelEventRangeFingerprint(long startTick, long endTick) => unchecked(

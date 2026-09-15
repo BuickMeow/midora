@@ -22,6 +22,9 @@ public partial class InstrumentSelectionDialog : Window
     private bool _finishing;
     private bool _mayClose;
     private InstrumentBankAddress? _displayedBank;
+    internal long? TimelineTick { get; private set; }
+    internal void SetTimelineTick(long tick)
+    { TimelineTick = tick; TimelineTickBox.Text = tick.ToString(CultureInfo.InvariantCulture); TimelineTickRow.Visibility = Visibility.Visible; }
     // Bank names are resolved only when a virtualized row asks for its label.
     private sealed record BankRow(InstrumentBankAddress Address, InstrumentCatalogResolver Catalog)
     {
@@ -188,6 +191,12 @@ public partial class InstrumentSelectionDialog : Window
     {
         if (_finishing) return;
         if (accept && !TryValues(out _)) { SetStatus("Bank and Program must be integers from 0 to 127.", true); return; }
+        if (accept && TimelineTick.HasValue)
+        {
+            if (!long.TryParse(TimelineTickBox.Text, NumberStyles.None, CultureInfo.InvariantCulture, out long tick) || tick == long.MaxValue)
+            { SetStatus("Tick must be a non-negative integer below Int64.MaxValue.", true); return; }
+            TimelineTick = tick;
+        }
         _finishing = true; OkButton.IsEnabled = false;
         try
         {

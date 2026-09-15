@@ -21,6 +21,15 @@ public sealed class InstrumentChangeRealMidiTests(ITestOutputHelper output)
         var clock = Stopwatch.StartNew();
         using var project = MidiProjectImportService.ImportFile(path, "A2a probe", cancellationToken: cancel.Token).Project;
         output.WriteLine($"Import: {clock.Elapsed.TotalSeconds:F3} s; notes={project.PureMidiTracks.Sum(t => (long)t.Segments.Sum(s => s.Notes.Count))}");
+        clock.Restart();
+        var summaries = project.PureMidiTracks.SelectMany(t => t.Segments).Select(s => s.ChannelEvents.CreateQuerySnapshot()).ToArray();
+        long channelCount = 0;
+        foreach (var summary in summaries) channelCount += summary.GetTargetCounts(cancel.Token).Values.Sum();
+        output.WriteLine($"All channel target summaries cold: {clock.Elapsed.TotalMilliseconds:F2} ms; events={channelCount:N0}");
+        clock.Restart();
+        for (int i = 0; i < 100; i++)
+            foreach (var summary in summaries) Assert.Equal(summary.Count, summary.GetTargetCounts(cancel.Token).Values.Sum());
+        output.WriteLine($"All summaries warm x100: {clock.Elapsed.TotalMilliseconds:F2} ms");
         var track = Assert.Single(project.PureMidiTracks, t => t.Name == "MIDI Out #23");
         var id = Assert.Single(track.Segments).Id;
         Assert.Empty(track.Segments[0].InstrumentChanges.Values);

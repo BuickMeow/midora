@@ -375,6 +375,8 @@ public sealed class TemplateEventQuerySnapshot : ITimelineObjectSource<TemplateE
         _values.QueryExactTicks(ticks, int.MinValue, int.MaxValue, EventCategory);
 
     public IReadOnlyList<long> DiscoveryKeys => _values.DiscoveryKeys;
+    public int NoteCount => _values.DiscoveryCounts.GetValueOrDefault(long.MinValue);
+    public IReadOnlyDictionary<long, int> DiscoveryCounts => _values.DiscoveryCounts;
 
     public ulong GetNoteRangeFingerprint(
         long startTick,
@@ -1483,7 +1485,7 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
                 _getLane,
                 _getFingerprint,
                 _getRasterValue,
-                _discoveryKeyPageCounts.Keys.Order().ToArray())
+                _discoveryKeyPageCounts)
             {
                 EditableRoot = CaptureEditableRoot()
             };
@@ -2156,22 +2158,22 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> : IList<T>
 
     private void AddDiscoveryKeys(PagedTimelineValuePage<TValue> page)
     {
-        foreach (long key in page.DiscoveryKeys)
+        foreach (var (key, occurrences) in page.DiscoveryCounts)
         {
             _discoveryKeyPageCounts = _discoveryKeyPageCounts.SetItem(key,
-                _discoveryKeyPageCounts.TryGetValue(key, out int count) ? checked(count + 1) : 1);
+                _discoveryKeyPageCounts.TryGetValue(key, out int count) ? checked(count + occurrences) : occurrences);
         }
     }
 
     private void RemoveDiscoveryKeys(PagedTimelineValuePage<TValue>? page)
     {
         if (page is null) return;
-        foreach (long key in page.DiscoveryKeys)
+        foreach (var (key, occurrences) in page.DiscoveryCounts)
         {
             int count = _discoveryKeyPageCounts[key];
-            _discoveryKeyPageCounts = count == 1
+            _discoveryKeyPageCounts = count == occurrences
                 ? _discoveryKeyPageCounts.Remove(key)
-                : _discoveryKeyPageCounts.SetItem(key, count - 1);
+                : _discoveryKeyPageCounts.SetItem(key, checked(count - occurrences));
         }
     }
 
@@ -2271,6 +2273,7 @@ internal sealed class PagedTimelineValuePage<TValue>
             _spatialOrder = [];
             SpatialBlocks = [];
             DiscoveryKeys = [];
+            DiscoveryCounts = FrozenDictionary<long, int>.Empty;
             return;
         }
         long minimumStart = long.MaxValue;
@@ -2303,9 +2306,15 @@ internal sealed class PagedTimelineValuePage<TValue>
         _fingerprintBlocks = BuildFingerprintBlocks(values);
         _spatialOrder = BuildSpatialOrder(values);
         SpatialBlocks = BuildSpatialBlocks(values, _spatialOrder);
-        DiscoveryKeys = getDiscoveryKeys is null
-            ? []
-            : values.SelectMany(getDiscoveryKeys).Distinct().Order().ToArray();
+        // Count targets while building this bounded page, not all event records
+        // again when a Lane directory opens. A value may expose several targets.
+        Dictionary<long, int> discovery = [];
+        if (getDiscoveryKeys is not null)
+            foreach (TValue value in values)
+                foreach (long key in getDiscoveryKeys(value))
+                    discovery[key] = discovery.TryGetValue(key, out int count) ? checked(count + 1) : 1;
+        DiscoveryCounts = discovery.ToFrozenDictionary();
+        DiscoveryKeys = discovery.Keys.Order().ToArray();
     }
 
     public TimelineValueBuffer<TValue> Values { get; }
@@ -2319,6 +2328,7 @@ internal sealed class PagedTimelineValuePage<TValue>
     public ulong CategoryMask { get; }
     public PagedTimelineSpatialBlockMetadata[] SpatialBlocks { get; }
     public long[] DiscoveryKeys { get; }
+    public IReadOnlyDictionary<long, int> DiscoveryCounts { get; }
 
     public void AppendSpatialRangeValues(
         List<PagedTimelineOrderedValue<TValue>> destination,
@@ -3196,7 +3206,7 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
         Func<TValue, int> getLane,
         Func<TValue, ulong> getFingerprint,
         Func<TValue, double>? getRasterValue,
-        long[] discoveryKeys)
+        ImmutableDictionary<long, int> discoveryCounts)
     {
         _sequence = sequence;
         _spatialOverlayIndex = spatialOverlayIndex;
@@ -3209,7 +3219,8 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
         _getLane = getLane;
         _getFingerprint = getFingerprint;
         _getRasterValue = getRasterValue;
-        DiscoveryKeys = discoveryKeys;
+        DiscoveryCounts = discoveryCounts;
+        DiscoveryKeys = discoveryCounts.Keys.Order().ToArray();
         _spatialIndex = spatialIndex;
         Count = count;
         Generation = generation;
@@ -3225,6 +3236,7 @@ internal sealed partial class PagedTimelineValueSnapshot<TValue>
     public long MaximumEndTick { get; }
     public ulong ContentFingerprint { get; }
     public IReadOnlyList<long> DiscoveryKeys { get; }
+    public IReadOnlyDictionary<long, int> DiscoveryCounts { get; }
     internal int StorageLeafCount => _sequence.EnumerateLeaves().Count();
     internal void CollectSequenceStorageNodes(ISet<object> nodes) => _sequence.CollectStorageNodes(nodes);
 

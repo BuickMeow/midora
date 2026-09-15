@@ -45,6 +45,31 @@ public sealed class DirectMidiChannelEventQuerySnapshot
     public int Count { get; }
     public long Generation { get; }
 
+    private IReadOnlyDictionary<DirectMidiLaneKey, int>? _targetCounts;
+    public IReadOnlyDictionary<DirectMidiLaneKey, int> GetTargetCounts(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Volatile.Read(ref _targetCounts) is { } ready) return ready;
+        var counts = System.Collections.Immutable.ImmutableDictionary.CreateBuilder<DirectMidiLaneKey, int>();
+        if (_source is not null)
+            counts.AddRange(DirectMidiTargetSummary.Read(_source, cancellationToken));
+        foreach (var value in _excluded)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            DirectMidiTargetSummary.Add(counts, DirectMidiLaneKey.From(value), -1);
+        }
+        foreach (var value in _overlayIndex.Query(0, long.MaxValue))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            DirectMidiTargetSummary.Add(counts, DirectMidiLaneKey.From(value), 1);
+        }
+        var result = counts.ToImmutable();
+        if (result.Values.Any(static count => count < 0) || result.Values.Sum() != Count)
+            throw new InvalidOperationException("Direct MIDI target summary does not match its immutable source.");
+        Interlocked.CompareExchange(ref _targetCounts, result, null);
+        return _targetCounts;
+    }
+
     internal IEnumerable<DirectMidiChannelEventSourceMatch> ResolveSourceMatches(IReadOnlySet<MidoraId> ids) =>
         _source is null ? [] : _sourceIdCache.Resolve(ids, _source.QueryChannelEventsByIds);
 

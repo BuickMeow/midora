@@ -450,6 +450,29 @@ internal sealed class BoundedDirectMidiIndex<T> where T : unmanaged
             }
     }
 
+    /// <summary>Exact half-open range in this index's sort order. Unlike the
+    /// spatial bounds query, this seeks inside a leaf instead of rescanning its
+    /// whole page for each requested point.</summary>
+    public IEnumerable<T> QueryKeys(T inclusive, T exclusive, CancellationToken token = default)
+    {
+        int first = LowerBound(inclusive), end = LowerBound(exclusive);
+        if (first >= end) yield break;
+        int leafIndex = Array.BinarySearch(_starts, first);
+        if (leafIndex < 0) leafIndex = ~leafIndex - 1;
+        while (first < end)
+        {
+            token.ThrowIfCancellationRequested();
+            Leaf leaf = _leaves[leafIndex];
+            int absolute = leaf.First + first - _starts[leafIndex];
+            var page = leaf.Source.ReadPage(absolute / leaf.Source.PageCapacity);
+            int offset = absolute % leaf.Source.PageCapacity;
+            int take = Math.Min(end - first, Math.Min(_starts[leafIndex + 1] - first, page.Length - offset));
+            for (int i = 0; i < take; i++) { if ((i & 255) == 0) token.ThrowIfCancellationRequested(); yield return page.Span[offset + i]; }
+            first += take;
+            if (first == _starts[leafIndex + 1]) leafIndex++;
+        }
+    }
+
     public IEnumerable<T> Query(long start, long end, int minKey = 0, int maxKey = 127,
         CancellationToken cancellationToken = default)
     {

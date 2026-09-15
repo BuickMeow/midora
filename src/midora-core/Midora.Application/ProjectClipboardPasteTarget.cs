@@ -54,6 +54,7 @@ public static partial class ProjectObjectClipboard
             case DirectMidiNoteClipboardData:
                 return new(OnlyNotes: true);
             case LogicalParameterLaneContentClipboardData:
+            case InstrumentChangeClipboardData:
                 return new(OnlyEventPoints: true);
             case DirectMidiEventClipboardData direct:
                 {

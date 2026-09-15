@@ -28,7 +28,7 @@ internal sealed class BoundedTemplatePointPlan : IDisposable
         Func<IReadOnlyList<BoundedLogicalNotePlanning.Selected<TemplateEventSnapshotValue>>,
             Func<TemplateEventSnapshotValue, TemplateEventSnapshotValue?>> transform,
         bool resolveCollisions, bool duplicate, bool formalOrderWins, Func<MidoraId> allocate,
-        Action<TemplateEventSnapshotValue> validate)
+        Action<TemplateEventSnapshotValue> validate, bool rejectCollisions = false)
     {
         var context = BulkEditPreparationContext.Current!;
         using var selected = BoundedLogicalNotePlanning.Select(source, ids, valid, context.Resources, context.Token);
@@ -56,7 +56,7 @@ internal sealed class BoundedTemplatePointPlan : IDisposable
         }
         planned.Seal(); original.Seal();
         return Resolve(source, selected, planned, deleted, original, affected,
-            resolveCollisions, duplicate, formalOrderWins);
+            resolveCollisions, duplicate, formalOrderWins, rejectCollisions);
     }
 
     public static BoundedTemplatePointPlan Append(TemplateEventQuerySnapshot source,
@@ -113,7 +113,7 @@ internal sealed class BoundedTemplatePointPlan : IDisposable
         BoundedEditRecordStore<Row> planned,
         BoundedEditRecordStore<TimelineValueEdit<TemplateEventSnapshotValue>> deleted,
         BoundedEditRecordStore<MidoraId> original, BoundedEditRecordStore<MidoraId> affected,
-        bool resolveCollisions, bool duplicate, bool formalOrderWins)
+        bool resolveCollisions, bool duplicate, bool formalOrderWins, bool rejectCollisions = false)
     {
         var context = BulkEditPreparationContext.Current!;
         source.PrepareOrdinalLookup(BoundedTimelineOrdinalIndexBuilder.Instance, context.Token);
@@ -165,6 +165,7 @@ internal sealed class BoundedTemplatePointPlan : IDisposable
             if (row.Incumbent && row.Value.Kind == TemplateEventKind.Note) discard = false;
             if (discard)
             {
+                if (rejectCollisions) throw new InvalidOperationException("The Instrument Change transform would create overlapping points.");
                 if (!row.Created) deleted.Add(new(row.Ordinal, true, row.Old), context.Token);
                 affected.Add(row.Value.Id, context.Token);
             }

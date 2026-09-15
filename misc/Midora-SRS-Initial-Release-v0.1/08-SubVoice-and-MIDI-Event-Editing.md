@@ -1248,6 +1248,8 @@ Bank Select 与 Program Change 彼此不冲突
 
 关联是持久 source 编辑组织数据，严格保存到 §16.35 的 Format 4；不是可损坏丢弃的 presentation。Initial State 的统一选择器另按三个独立 override/inherit 位工作，不生成 Tick 0 点、不改变模板长度；显式选择完整 preset 才同时覆盖三个字段。
 
+完整包装支持 Copy/Cut/Paste/Delete、水平 Move/Ctrl 复制拖动、水平 Flip、Scale、Quantize 和多选 Properties。所有成员在同一个有界、可取消事务中处理，不能按中间态拆组；结果选择为实际幸存成员，Undo 恢复原成员选择，混合选择中未处理对象保持。Properties 的 Tick、MSB、LSB、Program 使用显式 Mixed 统一赋值/还原；不提供纵移、移调、Note Split/Join 或普通单 Point Value 的 Batch 表达式。Move/复制拖动共同夹止于内容 Tick 0；Flip/Scale 产生同 target 同 Tick 碰撞时拒绝，其他适用编辑仍服从事件后来者覆盖规则。新复制包装才建立新的插入顺序，已有包装不因值编辑或移动而重建身份/正式顺序。
+
 ## 8.56 Pitch Bend 与 Pitch Bend Range
 ### 8.56.1 Pitch Bend
 Pitch Bend 支持曲线编辑，并在编译 / 导出时离散化为 Pitch Bend 事件。

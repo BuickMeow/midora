@@ -1474,7 +1474,7 @@ public sealed partial class WpfInteractionRegressionTests
         Assert.Equal("Center", (string?)splitIcon.Attribute("VerticalAlignment"));
 
         XElement subVoiceLowerEditor = document.Descendants().Single(element =>
-            element.Name.LocalName == "TabControl"
+            element.Name.LocalName == "LaneTabHost"
             && ((string?)element.Attribute("SelectedIndex"))?.Contains(
                 "ActiveLowerEditorIndex",
                 StringComparison.Ordinal) == true);
@@ -1924,7 +1924,11 @@ public sealed partial class WpfInteractionRegressionTests
                 StringComparison.Ordinal))
             .ToArray();
 
-        Assert.Equal(4, snapButtons.Length);
+        Assert.Equal(2, snapButtons.Length); // Piano/Arrangement template buttons.
+        XDocument header = XDocument.Load(Path.Combine(Path.GetDirectoryName(path)!, "LaneTabHeader.xaml"));
+        snapButtons = snapButtons.Concat(header.Descendants(presentation + "ToggleButton")
+            .Where(element => (string?)element.Attribute("Content") == "Snap")).ToArray();
+        Assert.Equal(3, snapButtons.Length); // One shared header serves all event hosts.
         Assert.All(snapButtons, button => Assert.Equal(
             "Enable/Disable Snap (A)",
             (string?)button.Attribute("ToolTip")));

@@ -1111,7 +1111,7 @@ public partial class MainWindow : Window
         return LogicalTreeHelper.GetParent(current);
     }
 
-    private static bool HasReachedUiReorderDragThreshold(Point origin, Point current)
+    internal static bool HasReachedUiReorderDragThreshold(Point origin, Point current)
     {
         double horizontal = current.X - origin.X;
         double vertical = current.Y - origin.Y;
@@ -1164,6 +1164,7 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(workspace);
         if (session.Project is not MidoraProject project) return;
+        MidoraId? createdParameter = null;
         static CompressedMidoraIdSet NewIds<T>(IEnumerable<T> items, Func<T, MidoraId> id, long first) =>
             CompressedMidoraIdSet.Create(items.Select(id).Where(value => value.Value >= first));
 
@@ -1204,6 +1205,14 @@ public partial class MainWindow : Window
             workspace.Selection.Clear();
             foreach (MidoraId id in created) workspace.Selection.Add(id, makePrimary: false);
         }
+        if (createdParameter is { } parameter && workspace is TimelineWorkspaceViewModel timeline)
+        {
+            // Creating a Lane is explicit navigation. Ordinary selection or
+            // passive rebuilds must not infer navigation from selected points.
+            session.RefreshWorkspace(workspace);
+            timeline.ActiveParameterLaneIndex = timeline.ParameterLaneOptions.ToList().FindIndex(value => value.ParameterId == parameter);
+            timeline.PreferCurrentParameterLaneOnNextRebuild();
+        }
         session.RefreshWorkspaceSelection(workspace);
         return;
 
@@ -1212,7 +1221,7 @@ public partial class MainWindow : Window
             if (TimelineWorkspaceViewModel.FindSegment(project, segmentId) is { Segment: var logical })
             {
                 var lanes = NewIds(logical.ParameterLanes, static value => value.Id, firstNewStableId);
-                if (lanes.Count != 0) return lanes;
+                if (lanes.Count != 0) { createdParameter = logical.ParameterLanes.First(lane => lanes.Contains(lane.Id)).ParameterId; return lanes; }
                 return CompressedMidoraIdSet.Create(CreatedIn(logical.Notes.CreateQuerySnapshot())
                     .Concat(logical.ParameterLanes.SelectMany(lane => CreatedIn(lane.Points.CreateQuerySnapshot()))));
             }
@@ -8282,6 +8291,7 @@ public partial class MainWindow : Window
                 workspace.ActiveParameterLaneIndex = workspace.ParameterLaneOptions.ToList()
                     .FindIndex(value => value.DirectMidiTarget == target);
                 _session.RefreshWorkspace(workspace);
+                ShowActiveEventLaneTab(workspace);
                 RestoreModalCommandFocus(workspace, FindWorkspaceElement<TimelineSurface>("ParameterLanes"));
             }
             return;
@@ -8311,6 +8321,10 @@ public partial class MainWindow : Window
             if (RunSynchronous("Create Logical Parameter Lane", () => ExecuteAndSelectCreated(
                 ProjectDomainEditCommands.CreateLogicalParameterLane(segmentId, parameterId), workspace)))
             {
+                workspace.ActiveParameterLaneIndex = workspace.ParameterLaneOptions.ToList().FindIndex(value => value.ParameterId == parameterId);
+                workspace.PreferCurrentParameterLaneOnNextRebuild();
+                _session.RefreshWorkspace(workspace);
+                ShowActiveEventLaneTab(workspace);
                 RestoreModalCommandFocus(workspace, FindWorkspaceElement<TimelineSurface>("ParameterLanes"));
             }
         }
@@ -8592,6 +8606,7 @@ public partial class MainWindow : Window
                 voiceId.Value,
                 target)))) return;
         if (!_session.ActivateCreatedSubVoiceEventLane(workspace, voiceId.Value, target)) return;
+        ShowActiveEventLaneTab(workspace);
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
         {
             if (!IsActive || !ReferenceEquals(_session.ActiveWorkspace, workspace)
@@ -10116,7 +10131,12 @@ public partial class MainWindow : Window
         try
         {
             if (IsObjectListSelectionCommandContext(workspace)
-                && await ReadObjectListSelectionAsync(workspace) is { CanCopyOrCut: false }) return;
+                && await ReadObjectListSelectionAsync(workspace) is { } listSelection)
+            {
+                if (!listSelection.CanCopyOrCut) return;
+                if (listSelection.InstrumentMembers.Count != 0)
+                { RunInstrumentAction(workspace, cut ? "Cut" : "Copy"); return; }
+            }
             ClipboardTransferRequest request = ResolveWorkspaceClipboardRequest(document, project, workspace);
             await RunClipboardTransferAsync(document, workspace, request.Copy, cut ? request.Delete : null);
         }
@@ -10325,6 +10345,8 @@ public partial class MainWindow : Window
                 await PasteArrangementSegmentsAsync(arrangementPaste, document, project, payload);
                 return;
             }
+            if (payload.Kind == ProjectObjectClipboardKind.InstrumentChanges && InstrumentOwner(workspace) is not null)
+            { RunInstrumentAction(workspace, "Paste"); return; }
             long cursor = workspace is TimelineWorkspaceViewModel timeline
                 ? timeline.EditCursorTick ?? 0
                 : 0;

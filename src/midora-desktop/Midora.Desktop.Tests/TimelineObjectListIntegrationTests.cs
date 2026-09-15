@@ -23,7 +23,7 @@ namespace Midora.Desktop.Tests;
 /// MainWindow BAML, its real DataTemplates and code-behind connectors. The source
 /// is a hidden (never WS_VISIBLE) WPF presentation host, not desktop automation.
 /// </summary>
-public static class TimelineObjectListIntegrationTests
+public static partial class TimelineObjectListIntegrationTests
 {
     public static void VerifyActualMainWindowTemplatesAndHandlers()
     {
@@ -111,6 +111,7 @@ public static class TimelineObjectListIntegrationTests
         FrameworkElement content, WorkspaceViewModel workspace, TimelineObjectListOwnerKind expectedKind)
     {
         Layout(content);
+        VerifyLaneHeader(window, content, workspace, expectedKind);
         TimelineSurface piano = Descendants<TimelineSurface>(content).Single(surface => surface.IsVisible
             && ReferenceEquals(surface.DataContext, workspace) && surface.SurfaceMode == TimelineSurfaceMode.PianoRoll);
         Assert.Equal(expectedKind != TimelineObjectListOwnerKind.SubVoice, piano.IsTimeRangeSelectionEnabled);

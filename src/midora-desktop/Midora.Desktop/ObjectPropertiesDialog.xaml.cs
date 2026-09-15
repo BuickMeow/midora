@@ -15,6 +15,7 @@ public partial class ObjectPropertiesDialog : Window
     private readonly ObjectPropertiesViewModel _properties;
     private readonly Func<IReadOnlyDictionary<string, string>, bool>? _customSubmit;
     private bool _isSubmitting;
+    private readonly Func<IReadOnlyDictionary<string, string>, IProjectEditCommand?>? _customCommand;
     private readonly ObjectPropertiesSelectionContext? _frozenSelection;
     private readonly CompressedMidoraIdSet? _retainedSelectionIds;
 
@@ -56,6 +57,10 @@ public partial class ObjectPropertiesDialog : Window
 
     public bool CanEdit { get; }
 
+    internal ObjectPropertiesDialog(DesktopSessionController session, WorkspaceViewModel workspace,
+        ObjectPropertiesViewModel properties, Func<IReadOnlyDictionary<string, string>, IProjectEditCommand?> command)
+        : this(session, workspace, properties) => _customCommand = command;
+
     private void OnActivateMixedClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: PropertyField property })
@@ -77,7 +82,13 @@ public partial class ObjectPropertiesDialog : Window
         if (_isSubmitting) return;
         try
         {
-            if (_customSubmit is not null)
+            if (_customCommand is not null)
+            {
+                var pending = _properties.Fields.Where(static field => field.HasPendingChange)
+                    .ToDictionary(static field => field.Key, static field => field.Value, StringComparer.Ordinal);
+                if (_customCommand(pending) is { } command && !await ApplyPreparedPropertiesAsync(command)) return;
+            }
+            else if (_customSubmit is not null)
             {
                 Dictionary<string, string> values = _properties.Fields
                     .Where(property => property.IsEditable)

@@ -2,7 +2,7 @@ using Midora.Domain;
 
 namespace Midora.Application.Tests;
 
-public sealed class InstrumentChangeTests
+public sealed partial class InstrumentChangeTests
 {
     [Fact]
     public void DefinitionCopyRemapsAssociationsAndDoesNotRebuildDeletedMappings()
@@ -183,7 +183,8 @@ public sealed class InstrumentChangeTests
             edit.Apply(project);
             var group = Assert.Single(Midi(project).InstrumentChanges.Values);
             Assert.True(InstrumentChangeResolver.TryRead(Midi(project), group, out var value));
-            Assert.Equal(new InstrumentChangeValue(group.Id, 100, msb, lsb, program), value);
+            Assert.Equal(new InstrumentChangeValue(group.Id, 100, msb, lsb, program, 2,
+                group.BankEventId, group.BankLsbEventId, group.ProgramEventId), value);
             var events = Midi(project).ChannelEvents.CreateQuerySnapshot().QueryValues(100, 101).OrderBy(e => e.Order).ToArray();
             Assert.Equal(new[] { 0L, 1L, 2L }, events.Select(e => e.Order));
             Assert.True(Midi(project).Notes.CreateQuerySnapshot().QueryValues(100, 101).Single().NoteOnOrder > events[^1].Order);

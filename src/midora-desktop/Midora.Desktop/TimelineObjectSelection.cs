@@ -13,13 +13,14 @@ internal sealed record TimelineObjectSelection(
     WorkspaceTimelineSelectionSource? EventSource,
     WorkspaceTimelineSelectionSource? EventQuantizeScope)
 {
-    public bool IsMixed => Notes.Count != 0 && Events.Count != 0;
+    public CompressedMidoraIdSet InstrumentMembers { get; init; } = CompressedMidoraIdSet.Empty;
+    public bool IsMixed => (Notes.Count != 0 ? 1 : 0) + (Events.Count != 0 ? 1 : 0) + (InstrumentMembers.Count != 0 ? 1 : 0) > 1;
     public bool ContainsOpaque => Opaque.Count != 0;
     public bool CanDelete => Ids.Count != 0;
     public bool CanUseNoteTools => Notes.Count != 0;
     public bool CanUseEventValueTools => Events.Count != 0 && !ContainsOpaque && EventSource is not null;
     public bool CanQuantizeEvents => Events.Count != 0 && !ContainsOpaque && EventQuantizeScope is not null;
-    public bool CanCopyOrCut => !IsMixed && !ContainsOpaque && (Notes.Count != 0 || EventSource is not null
+    public bool CanCopyOrCut => !IsMixed && !ContainsOpaque && (InstrumentMembers.Count != 0 || Notes.Count != 0 || EventSource is not null
         || Events.Count != 0 && Owner.Kind is ProjectTimelineOwnerKind.DirectMidiSegment or ProjectTimelineOwnerKind.SubVoice);
     public WorkspaceTimelineSelectionSource? HomogeneousSource => IsMixed || ContainsOpaque ? null
         : Notes.Count != 0 ? NoteSource : EventSource;
@@ -38,16 +39,25 @@ internal sealed record TimelineObjectSelection(
             if (page != previousPage) pageCount++;
             previousPage = page;
         }
-        // Three disjoint/classification builders plus compressed outputs,
+        // Four disjoint/classification builders plus compressed outputs,
         // sorted page entries and dictionary resize overlap. Pages, not item
         // count, bound this operation (dense million-note sets stay cheap).
-        const long bytesPerInputPage = 3 * 1536;
+        const long bytesPerInputPage = 4 * 1536;
         if (maximumBuilderWorkingBytes < 4096
             || pageCount > (maximumBuilderWorkingBytes - 4096) / bytesPerInputPage)
             throw new InvalidOperationException("The timeline selection partition exceeds its temporary working-memory budget. Select fewer objects.");
         var noteBuilder = CompressedMidoraIdSet.CreateBuilder();
         var eventBuilder = CompressedMidoraIdSet.CreateBuilder();
         var opaqueBuilder = CompressedMidoraIdSet.CreateBuilder();
+        var instrumentBuilder = CompressedMidoraIdSet.CreateBuilder();
+        if (owner.Kind != ProjectTimelineOwnerKind.LogicalSegment)
+        {
+            var context = InstrumentChangeSelectionQuery.Capture(project, new(owner.OwnerId,
+                owner.Kind == ProjectTimelineOwnerKind.SubVoice ? owner.EventInstrumentId : null));
+            foreach (var group in InstrumentChangeSelectionQuery.EnumerateGroups(context.Groups, frozenIds, token))
+                foreach (var id in group.MemberIds) instrumentBuilder.Add(id);
+        }
+        var instrumentMembers = instrumentBuilder.Build();
         WorkspaceTimelineSelectionSource? eventSource = null, quantize = null;
         // These descriptors are per lane, not per selected point. A million
         // points must not repeat the Project/Definition metadata search.
@@ -56,6 +66,7 @@ internal sealed record TimelineObjectSelection(
         foreach (var member in ProjectTimelineObjectSelection.ReadMembers(project, owner, frozenIds, token, progress))
         {
             token.ThrowIfCancellationRequested();
+            if (instrumentMembers.Contains(member.Id)) continue;
             if (member.Kind == TimelineObjectSelectionKind.Note) { noteBuilder.Add(member.Id); continue; }
             eventBuilder.Add(member.Id);
             if (member.Kind == TimelineObjectSelectionKind.Opaque)
@@ -89,7 +100,7 @@ internal sealed record TimelineObjectSelection(
         var notes = noteBuilder.Build(); var events = eventBuilder.Build(); var opaque = opaqueBuilder.Build();
         token.ThrowIfCancellationRequested();
         return new(owner, frozenIds, notes, events, opaque, NoteSourceFor(owner),
-            oneSource ? eventSource : null, oneQuantize ? quantize : null);
+            oneSource ? eventSource : null, oneQuantize ? quantize : null) { InstrumentMembers = instrumentMembers };
     }
 
     internal static WorkspaceTimelineSelectionSource NoteSourceFor(TimelineObjectOwner owner) => owner.Kind switch

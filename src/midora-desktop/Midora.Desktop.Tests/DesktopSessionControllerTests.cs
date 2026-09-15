@@ -2030,7 +2030,7 @@ public sealed class DesktopSessionControllerTests
         workspace.Selection.Replace(cc74.Id);
         session.RefreshWorkspace(workspace);
         Assert.Equal(
-            MidiValueTarget.ControlChange(74),
+            MidiValueTarget.ControlChange(1), // A2b: selection changes are not explicit navigation.
             workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)?.Target);
         int targetLane = workspace.RenderLanes
             .Select((lane, index) => (lane, index))
@@ -2061,7 +2061,7 @@ public sealed class DesktopSessionControllerTests
         workspace.Selection.Replace(cc74.Id);
         session.RefreshWorkspace(workspace);
         Assert.Equal(
-            MidiValueTarget.ControlChange(74),
+            MidiValueTarget.ControlChange(1),
             workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)?.Target);
     }
 
@@ -2112,7 +2112,7 @@ public sealed class DesktopSessionControllerTests
 
         workspace.Selection.Replace(secondLanePoint.Id);
         session.RefreshWorkspace(workspace);
-        Assert.Equal(parameters[1].Id, workspace.GetActiveParameterLaneOption()?.ParameterId);
+        Assert.Equal(parameters[0].Id, workspace.GetActiveParameterLaneOption()?.ParameterId);
         int targetLane = workspace.ParameterLaneOptions
             .Select((lane, index) => (lane, index))
             .Single(value => value.lane.ParameterId == parameters[0].Id)
@@ -2135,7 +2135,7 @@ public sealed class DesktopSessionControllerTests
 
         workspace.Selection.Replace(secondLanePoint.Id);
         session.RefreshWorkspace(workspace);
-        Assert.Equal(parameters[1].Id, workspace.GetActiveParameterLaneOption()?.ParameterId);
+        Assert.Equal(parameters[0].Id, workspace.GetActiveParameterLaneOption()?.ParameterId);
     }
 
     [Fact]

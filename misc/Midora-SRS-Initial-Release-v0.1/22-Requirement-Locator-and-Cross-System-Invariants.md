@@ -127,8 +127,8 @@
 | INV-116 | All Tracks Compiled 为混合只读显示：Logical 只从完整成功 canonical 按 Port/Channel/Key FIFO 展开并用正式 NoteOn source Track 着色；Pure MIDI 复用当前源音符，不建立整曲 FIFO 索引、不宣称源 Gate 等于最终流配对。保留跨可视起点的 Note，旧 Logical 标为 stale。播放指针/跟随不重建音符缓存；标尺/内容单击仅复用既有 Seek。Onion 的手选列表与 custom/previous/next 显示模式分别保存，快捷命令不得改写手选列表；独立 presentation schema 2 只随显式保存写入，v1 读为 custom。Duplicate remap、dormant/Undo 与损坏隔离按 §18.11/§16.7.5 执行，不改变音乐 Modified/Undo、canonical、播放和导出语义。 |
 | INV-117 | 完整诊断逻辑序列、ordinal 与严重程度统计使用非负 Int64，保持顺序、重复、来源与失败策略；计数超限明确失败，不发布不完整新结果。WPF 仅对超过 Int32.MaxValue 的筛选结果使用 4096 行分页，筛选和状态统计仍针对全源。MIDI README 仅输出前 1000 条 Warning/Info 文本及精确总数/省略数，不截断正式诊断，不改变音乐语义、Warning-as-error 或 Project 持久化。 |
 | INV-118 | SMF 超长 delta 仅在导出编码时用零长度 Text Meta `FF 01 00` 分段，保持原事件 Tick、顺序和 Track/EOT，不进入 Project/canonical/编译诊断、统计或增量检查。每个 MTrk 数据区硬上限为 `0xFFFFFFFF` 字节（不含 8 字节 chunk 头），不因大小拆分，超限只使本次 MIDI 导出原子失败，编译不感知该字节限制。填充成本和字节计数须安全预检、有界流式写入且可取消；其他 MIDI 值域、单条 payload 和 ntrks 硬限制不放宽。成功填充只输出导出级汇总 Info/README 摘要，不逐条列占位。 |
-
 | INV-119 | Instrument Change 是显式创建的持久编辑关联，不是新的音乐事件；MIDI Segment 关联同 Tick CC0/CC32/PC，SubVoice 关联完整 Bank/Program，只保存自身及成员 Stable ID。值改保留、结构破坏按完整事务最终态解组，剩余 raw 保留，Undo 恢复；导入不自动发现包装。新组 Bank→PC 位于本 Track 同 Tick NoteOn 前，不改变较早其他 Track 顺序。Format 4 独立严格关联组件不得以 presentation 回退丢弃；旧 1/2/3 reader/golden 冻结。统一选择器 Program 0～127，Initial State 三字段独立继承，preset audition 经干净 canonical/现有 Master→Limiter，仅停止自身 owner，不抢停普通播放。 |
+| INV-120 | 三类钢琴卷帘的事件编辑器按正式 target 展示 Lane Tabs；Vel. 固定第一，MIDI Segment/SubVoice 的 Inst. 固定第二。隐藏或重排只改会话视图，不删除数据、Mapping 或选择；被动刷新/Undo/选择不隐式导航，显式 Add/Locate/目录才显示并激活目标。目录计数按冻结实际 source 建立有界、可取消、修订隔离的后台摘要；未知不能显示为 0。各 target 的纵轴独立、水平共享，Piano/Event Snap 分离而事件 targets 共用 Event Snap；只保留一个活动画布。Instrument Change 的 List 行替代其成员行，选择仍使用真实成员 ID，所有包装批改经完整原子 raw 事务与最终态关联校验。 |
 
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
@@ -143,6 +143,7 @@
 | Event Instrument 定义、Pre-Roll Ticks 与内部索引 | 第 7、9～13、16、18、24 章 |
 | SubVoice、Note/CC/RPN 等事件 | 第 8 章 |
 | A2a：显式音色变更关联、统一选择器、Initial State 与独立 preset audition | §8.55、§13.31、§16.35、§18.4；INV-119 |
+| A2b：包装全编辑、List 投影、Lane Tabs、目录与独立纵轴 | §8.55.4、§18.2.5/7/8、§18.4.2；INV-119～120 |
 | Logical Parameter、映射、快捷 Event Binding 和受限 Mapping Function | 第 9、18、20 章；INV-102 |
 | Release、Loop、Envelope、Overlap | 第 10 章；Loop 进入条件见 §10.9.5、INV-114 |
 | Logical Track、Logical Segment、裁剪与 Logical Note | 第 11 章 |

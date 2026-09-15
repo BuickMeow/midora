@@ -195,7 +195,15 @@ Delete Lane Data
 ```
 Hide 不删除 Project 数据；Delete Lane Data 删除该 Lane 的用户内容，并按破坏性规则确认。
 
-下部编辑区使用“Velocity + Lane 列表 + 单个活动 Lane 编辑器”，不得把所有参数 Lane 垂直压缩堆叠。该区域可隐藏、恢复和调整高度；显隐与高度只属于当前 Project Session UI State。高度分隔条必须位于“Piano Roll + Timeline Overview”整体上部区域与下部编辑区之间；拖动必须实际改变下部编辑区高度，不得只调整固定高度的 Timeline Overview。
+下部编辑区使用 target Tabs 和单个活动 Lane 编辑器，不得把所有参数 Lane 垂直压缩堆叠。该区域可隐藏、恢复和调整高度；显隐与高度只属于当前 Project Session UI State。高度分隔条必须位于“Piano Roll + Timeline Overview”整体上部区域与下部编辑区之间；拖动必须实际改变下部编辑区高度，不得只调整固定高度的 Timeline Overview。
+
+三种宿主共用同一 Tab 行：`Vel.` 固定第一，MIDI Segment/SubVoice 的 `Inst.` 固定第二，二者不能隐藏；其余按正式 target 标识。首次发现普通 targets 使用确定顺序，新建追加，允许拖拽重排及滚轮水平滚动；关闭只隐藏，不删除点、Curve 或 Mapping owner。最右侧目录可搜索并虚拟化显示全部已有 targets，列出名称、精确数量、显隐及无点 Curve/Mapping 标记；未知数量明确显示统计中，失败显示不可用，不报假零。
+
+右侧 `+` 在所有 target（包括 Inst.）统一执行 Add Lane，不因活动 Tab 改成创建包装。普通 Tab 的整个头部都能作为重排目标，不得要求命中狭小缝隙；基础 Tab 固定在排序前部，拖放只作用于当前 owner 的 Lane 会话，不冒泡为外层 Workspace 重排。
+
+显式 Add/Locate/目录点击显示并激活目标，布局后焦点进入相应画布；普通刷新、选择变化、Properties、后台结果和 Undo 不自动显示已隐藏目标或抢回旧目标。切换不清除原选择。每个 target 独立记忆纵轴、共同水平时间轴；Piano Snap 与底部事件 Snap 独立，底部 targets 共用事件 Snap。顺序、显隐、活动目标和纵轴是 owner-local 会话状态，不写音乐 Source/Modified/Undo/canonical；本切片不新增 presentation 持久化字段。
+
+目录摘要不得常驻第二份完整点数组。缺少摘要时仅允许一次有界、可取消后台补建，热读取按 target 数量工作，编辑/覆盖碰撞/Undo 的计数必须对应实际最终结果。隐藏项只保留轻量描述和状态，不各自建立画布；旧修订、卸载和关闭任务不能恢复旧选择或目标。
 
 Velocity 视图按 Note start tick 绘制固定窄柱，高度表示 velocity；柱宽不表达 Note 长度，柱顶必须显示明显大于柱宽的方形 onset marker，以同时明确 Note start tick 和 velocity 顶点。同 tick 存在多个 pitch 时，按 pitch 从低到高绘制，使高 pitch 对应柱位于最上层；pitch 相同时按稳定 ID 确定顺序。
 
@@ -219,7 +227,7 @@ Segment 编辑后：
 
 Logical Segment 变体的下部 Lane 编辑 Logical Parameter，并通过 Track 绑定的 Event Instrument 解释 Note。Pure MIDI 变体的 Velocity 直接编辑 Direct MIDI NoteOn velocity，下部 Event Lane 直接编辑完整 Channel Voice Event；不显示 Logical Parameter 或 Event Instrument 绑定控件。
 
-Pure MIDI `Add Lane` 使用与 SubVoice `Add Event` 一致的分步目标选择器，不得平铺数百个条目。Pure MIDI 允许选择 MIDI 1.0 的全部 CC `0..127`；已被 BASSMIDI 名称表识别者统一显示为 `CC <n> - <Name>`，未识别者显示为 `CC <n>`。活动 Event Lane 下拉框使用同一格式。
+Pure MIDI `Add Lane` 使用与 SubVoice `Add Event` 一致的分步目标选择器，不得平铺数百个条目。Pure MIDI 允许选择 MIDI 1.0 的全部 CC `0..127`；已被 BASSMIDI 名称表识别者统一显示为 `CC <n> - <Name>`，未识别者显示为 `CC <n>`。活动 Event Lane Tab 与目录使用同一格式。
 
 Pure MIDI 与 SubVoice 的 Pitch Bend Event Lane 统一使用 `−8192..8191` 显示标尺及指针坐标；中性刻度必须标为实际值 `0`，不能将非对称范围的算术中点 `−0.5` 标成 `−1`。Direct MIDI 正式 scalar 仍为 `0..16383`，显示值等于 scalar 减 8192；SubVoice 正式值仍为 `−8192..8191`。此显示转换不改变持久化、编码、编译结果或批量编辑的正式输入值域。
 
@@ -241,6 +249,8 @@ Logical Segment、MIDI Segment 与 SubVoice 共享左侧 owner-data 对象列表
 新建列表状态的默认宽度为 400 DIP；用户已经调整的宽度在同一会话隐藏/重开时保留，不因新默认值被覆盖，继续使用既有 240～700 DIP 范围。
 
 列表按 local tick 和确定性同 tick 顺序合并当前 owner 的所有音符和非音符事件：Logical 包含全部参数 Lane point，MIDI 包含 Channel Event 与 Opaque SysEx/Meta，SubVoice 包含 Template Note/MIDI Event。音符每个对象一行，不拆 NoteOn/NoteOff；展示 Tick、Gate/Length、Key、Velocity，内部 Stable ID 不显示。
+
+完整显式 Instrument Change 在 List 合并为一个特殊行，不再重复列出其 raw 成员。行选择映射到全部实际成员，原始 Lane 仍可独立编辑成员；解组后剩余 raw 恢复普通行。包装数与成员消息数是不同口径，不相加虚增事件总数。混合 Note/Event/Instrument Change 选择使用显式类型子菜单，不能将包装伪装成单 scalar Event 批量编辑。
 Value 列按正式事件类型显示数值，不拼接无意义的 `Number · Value` 前缀；CC、RPN/NRPN、Polyphonic Key Pressure 的目标编号必须在 Type/Target 中保留。Bank 的 MSB/LSB 存在性与 Pitch Bend Range 的复合值不得丢失。这里只调整格式，不改变 raw 值域或现行 Program 的显示编号。
 
 列表与图形共用 Selection。单击、Ctrl toggle、Shift 冻结 ordinal 范围及拖动范围遵循 §20.3；双击只针对被双击对象打开 `Properties...`。`Locate` 定位到对象，事件必须自动打开 Lanes 并选择对应 Lane。右键目标在打开时冻结；无效/旧修订后台结果不能恢复旧选区。Opaque payload 仅可读，不得作为普通数值点执行表达式工具。
@@ -320,7 +330,8 @@ UI 不显示或允许用户指定固定 Port / Channel。
 | [C] Pitch   | [D] Note Timeline                                         |
 |     Keyboard|                                                            |
 +-------------+------------------------------------------------------------+
-| [E] Event Lane List | [F] Event Lane Stack                              |
+| [E] Target Lane Tabs + Tools                                            |
+| [F] Single Active Velocity / Inst. / Event Lane                          |
 +--------------------------------------------------------------------------+
 | [G] Timeline Overview and Horizontal Scroll                              |
 +--------------------------------------------------------------------------+
@@ -340,7 +351,7 @@ Initial State
 
 SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll Grid / Snap、默认 Note 长度和默认 velocity。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
 
-从 Velocity 切换到 Event Lane 后，键盘焦点必须在布局更新后进入 Event Lane Timeline Surface，不得停留在 `LANE` 下拉框；因此 `D` / `S` / `E`、Space 及其他焦点敏感 Workspace 快捷键必须立即可用。
+从 Velocity 切换到事件 target Tab 后，键盘焦点必须在布局更新后进入对应 Timeline Surface，不得停留在 Tab 头、目录或下拉框；因此 `D` / `S` / `E`、Space 及其他焦点敏感 Workspace 快捷键必须立即可用。Inst. 将焦点交给自身包装编辑区。
 SubVoice `Add Event` 成功后必须按稳定 MIDI target 显示并激活新 Lane、打开下部事件区，并在布局完成后把焦点交回对应 Surface；不得仅依赖列表下标，也不得在绑定列表尚未刷新时查找新 Lane 并放弃导航。此后 `A` 操作该事件视图的 Snap，不是上方 piano roll 的独立 Snap。取消、失败、旧 Workspace 或已失效导航不能改变当前 Lane/选择或抢回焦点。添加空 Lane 本身不延长模板。
 
 SubVoice Note piano roll 复用第 18.2.3～18.2.4 节的 Pitch Ruler 琴键与 C 音名规则、Draw / Select 直接编辑边界、拖动预览和第 20 章的工具互斥、指针及快捷键规则。
@@ -348,7 +359,9 @@ SubVoice 不提供 Time Range 选择：主 piano ruler、Velocity ruler 与 Even
 ### 18.4.3 Initial State
 Event Instrument 全局和 SubVoice Initial State 提供统一一行音色选择入口及高级 raw Bank/Program override 区。选择器在 draft 中联动 Bank/Program 名称列表与三个独立 0～127 数值框，保留独立继承；OK 原子提交，Cancel/关闭零音乐变更。无 SoundFont 仍可合法编辑。
 
-MIDI Segment 和 SubVoice 的底部基础 Tab 常驻为 `Vel.`、`Inst.`，Logical Segment 只有 `Vel.`。Inst. 采用固定 y 的时间点与有限数量边框标签；Draw 单点创建、双击/Properties 复用上述选择器，不提供沿线连续创建。使用正式关联命中；目录/排序/分页读取放到有界、可取消后台任务，隐藏/关闭释放索引且迟到结果不得复活。完整包装批量编辑与列表合并由后续 A2b 交付，不因此破坏既有 raw 编辑维护。
+MIDI Segment 和 SubVoice 的底部基础 Tab 常驻为 `Vel.`、`Inst.`，Logical Segment 只有 `Vel.`。Inst. 采用固定 y 的时间点与有限数量边框标签；Draw 单点创建、双击/Properties 复用上述选择器，不提供沿线连续创建。使用正式关联命中；目录/排序/分页读取放到有界、可取消后台任务，隐藏/关闭释放索引且迟到结果不得复活。完整包装编辑与 List 合并服从 §8.55.4 和 §18.2.8，不能破坏既有 raw 编辑维护。
+
+Inst. Draw 悬停以当前 Snap 后的横坐标、事件行固定纵坐标显示轻量创建预览；离开内容区或开始其他手势时隐藏。框选使用与其他 Timeline 相同的蓝色信息色与虚线，不改变已选事件的选中色。中键拖动平移共享水平时间轴，固定 y 不随垂直鼠标位移变化；捕获支持出界完成，取消或失去捕获不编辑事件。
 
 Initial State 与 tick 0 普通事件严格分离：
 ```text

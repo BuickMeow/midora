@@ -25,7 +25,8 @@ public enum ProjectObjectClipboardKind
     MappingStep,
     EnvelopePreset,
     MappingFunction,
-    ConductorEvents
+    ConductorEvents,
+    InstrumentChanges
 }
 
 public sealed class ProjectObjectClipboardPayload : IDisposable

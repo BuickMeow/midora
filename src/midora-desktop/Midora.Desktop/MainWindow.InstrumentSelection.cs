@@ -35,8 +35,15 @@ public partial class MainWindow
 
     internal void EditInstrumentChange(InstrumentChangeLane lane, long tick, MidoraId? id)
     {
+        if (lane.DataContext is WorkspaceViewModel workspace)
+            EditInstrumentChange(workspace, tick, id, selectedTick => { lane.Refresh(); lane.SelectAt(selectedTick); });
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => { if (lane.IsVisible) lane.Focus(); }));
+    }
+
+    internal void EditInstrumentChange(WorkspaceViewModel workspace, long tick, MidoraId? id, Action<long>? accepted = null)
+    {
         if (!PrepareForModalSurface()) return;
-        if (!_session.CanEditProject || GetInstrumentLaneOwner(lane.DataContext) is not { } owner) return;
+        if (!_session.CanEditProject || GetInstrumentLaneOwner(workspace) is not { } owner) return;
         var values = new InstrumentSelectionValues(0, 0, 0);
         if (id is { } changeId)
         {
@@ -48,21 +55,22 @@ public partial class MainWindow
             if (!exists) return;
         }
         var document = _session.Document;
-        var dialog = new InstrumentSelectionDialog(values, new(0, 0, 0), false, _instrumentCatalogResolver,
+        InstrumentSelectionDialog? dialog = null;
+        dialog = new InstrumentSelectionDialog(values, new(0, 0, 0), false, _instrumentCatalogResolver,
             _preferences.InstrumentAudition, owner.Mode, _session, async selected =>
             {
                 if (!ReferenceEquals(document, _session.Document)) return "The Project is no longer open.";
                 var address = selected.Resolve(new(0, 0, 0));
+                long selectedTick = dialog!.TimelineTick ?? tick;
                 IProjectEditCommand command = owner.Midi is { } midi
-                    ? ProjectDomainEditCommands.SetMidiInstrumentChange(midi.Id, tick, address, id)
-                    : ProjectDomainEditCommands.SetSubVoiceInstrumentChange(owner.Instrument!.Id, owner.Voice!.Id, tick, address, id);
+                    ? ProjectDomainEditCommands.SetMidiInstrumentChange(midi.Id, selectedTick, address, id)
+                    : ProjectDomainEditCommands.SetSubVoiceInstrumentChange(owner.Instrument!.Id, owner.Voice!.Id, selectedTick, address, id);
                 return await ExecuteWorkspaceEditAsync(command) ? null : "The instrument change was not applied.";
             }) { Owner = this };
-        bool? accepted = ShowModalDialog(dialog);
+        dialog.SetTimelineTick(tick);
+        bool? result = ShowModalDialog(dialog);
         SaveInstrumentAuditionPreferences(dialog.AuditionPreferences);
-        lane.Refresh();
-        if (accepted == true) lane.SelectAt(tick);
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => { if (lane.IsVisible) lane.Focus(); }));
+        if (result == true) accepted?.Invoke(dialog.TimelineTick ?? tick);
         bool Assign(InstrumentChangeValue read)
         { tick = read.Tick; values = new(read.BankMsb, read.BankLsb, read.Program); return true; }
     }

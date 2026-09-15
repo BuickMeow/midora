@@ -33,10 +33,10 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             leaves = [];
             var oldPage = pages[leaf];
             pages.Remove(leaf); removed.Add(oldPage);
-            foreach (long key in oldPage.DiscoveryKeys)
+            foreach (var (key, occurrences) in oldPage.DiscoveryCounts)
             {
                 int count = discovery[key];
-                if (count == 1) discovery.Remove(key); else discovery[key] = count - 1;
+                if (count == occurrences) discovery.Remove(key); else discovery[key] = checked(count - occurrences);
             }
             var original = new LeafValueSource(leaf);
             int local = 0;
@@ -116,8 +116,8 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                 new TimelineValueBuffer<TValue>(input, ReferenceEquals(input, pendingInput) ? pendingFirst : 0, pendingCount), _getFingerprint);
             var page = CreatePublishedPage(leaf);
             leaves!.Add(leaf); pages.Add(leaf, page); added.Add(page);
-            foreach (long key in page.DiscoveryKeys)
-                discovery[key] = discovery.TryGetValue(key, out int prior) ? checked(prior + 1) : 1;
+            foreach (var (key, occurrences) in page.DiscoveryCounts)
+                discovery[key] = discovery.TryGetValue(key, out int prior) ? checked(prior + occurrences) : occurrences;
             pendingInput = null; pendingCount = 0;
         }
     }

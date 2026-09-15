@@ -25,7 +25,9 @@ internal static class InstrumentChangeCopies
         IEnumerable<InstrumentChangeClipboardRecord> records, long firstEventId, bool direct,
         Func<InstrumentChange, bool> valid)
     {
-        var result = InstrumentChangeSet.Empty;
+        return new InstrumentChangeSet(BoundedInstrumentChangeStorage.Create(Read()));
+        IEnumerable<InstrumentChange> Read()
+        {
         foreach (var record in records)
         {
             BulkEditPreparationContext.Current?.Token.ThrowIfCancellationRequested();
@@ -33,8 +35,9 @@ internal static class InstrumentChangeCopies
                 new(checked(firstEventId + record.BankOrdinal)),
                 record.LsbOrdinal >= 0 ? new MidoraId(checked(firstEventId + record.LsbOrdinal)) : null,
                 new(checked(firstEventId + record.ProgramOrdinal)));
-            if (valid(group)) result = result.Add(group, direct);
+            group.ValidateShape(direct);
+            if (valid(group)) yield return group;
         }
-        return result;
+        }
     }
 }

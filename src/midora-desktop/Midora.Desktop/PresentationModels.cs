@@ -1080,6 +1080,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
     private GridLength _conductorBottomEditorRowHeight = new(1, GridUnitType.Star);
     private CancellationTokenSource _midiTargetDiscoveryCancellation = new();
     private long _midiTargetDiscoveryGeneration;
+    private string? _laneCountError;
     private MidiSegment? _midiTargetDiscoverySegment;
     private DirectMidiChannelEventQuerySnapshot? _midiTargetDiscoverySnapshot;
 
@@ -1359,6 +1360,11 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
     {
         _directMidiLaneTargets.Add(target);
     }
+
+    internal int? GetMidiLaneCount(MidoraId owner, long generation, DirectMidiEventLaneTarget target) =>
+        _directMidiEventTargetCache.TryGetValue(owner, out var cached) && cached.Generation == generation
+            ? cached.Index.Counts.GetValueOrDefault(target) : null;
+    internal string? LaneCountError => _laneCountError;
 
     public bool ActiveValueDragEnabled
     {
@@ -1656,6 +1662,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         _midiTargetDiscoveryCancellation.Dispose();
         _midiTargetDiscoveryCancellation = new();
         _midiTargetDiscoveryGeneration = checked(_midiTargetDiscoveryGeneration + 1);
+        _laneCountError = null;
         _midiTargetDiscoverySegment = null;
         _midiTargetDiscoverySnapshot = null;
         ProjectTickOffset = Mode == TimelineWorkspaceMode.Segment
@@ -2291,8 +2298,8 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
             _explicitParameterLaneSelectionRevision = -1;
         }
         MidoraId? preferredParameterId = _explicitParameterLaneId
-            ?? selectedParameterId
-            ?? previousParameterId;
+            ?? previousParameterId
+            ?? selectedParameterId;
         int preferredIndex = preferredParameterId is MidoraId parameterId
             ? ParameterLaneOptions.ToList().FindIndex(option => option.ParameterId == parameterId)
             : -1;
@@ -2489,13 +2496,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
                     targetValue,
                     selectedIds,
                     Selection.Primary,
-                    channelEventSnapshot: channelEventSnapshot,
-                    eventIndex: targetCache is not null
-                        && targetCache.Generation == channelEventSnapshot.Generation
-                        ? targetCache.Index.TryGetLane(targetValue, out TimelineEventTargetLaneIndex? lane)
-                            ? lane
-                            : TimelineEventTargetLaneIndex.Empty
-                        : null)
+                    channelEventSnapshot: channelEventSnapshot)
                 : null;
         (TimelineRenderItem[] activeItems, ITimelineRenderItemSource? retainedActiveSource) =
             TimelinePresentationPaging.Adapt(activeSource);
@@ -2534,24 +2535,31 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         _ = Task.Run(
             () =>
             {
-                return TimelineEventTargetIndex<DirectMidiEventLaneTarget>.Build(
-                    snapshot.QueryValues(0, long.MaxValue).Select(static value => (
-                        ToDirectMidiLaneTarget(value),
-                        new TimelineEventTargetPoint(
-                            value.Id,
-                            value.Tick,
-                            NormalizeDirectMidiEventValue(value)))),
+                return new TimelineTargetSummary<DirectMidiEventLaneTarget>(
+                    snapshot.GetTargetCounts(cancellationToken).ToDictionary(
+                        static pair => new DirectMidiEventLaneTarget(pair.Key.Kind, pair.Key.Number), static pair => pair.Value),
                     Comparer<DirectMidiEventLaneTarget>.Create(static (left, right) =>
                     {
                         int kind = left.Kind.CompareTo(right.Kind);
                         return kind != 0 ? kind : left.Data1.CompareTo(right.Data1);
-                    }),
-                    cancellationToken);
+                    }));
             },
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    if (task.IsCanceled || task.IsFaulted || cancellationToken.IsCancellationRequested) return;
+                    if (task.IsFaulted)
+                    {
+                        _ = task.Exception; // Observe failure even when this revision was superseded.
+                        WorkspacePresentationDispatch.Post(dispatcher, cancellationToken, () =>
+                        {
+                            if (IsDisposed || IsPresentationSuspended || requestGeneration != _midiTargetDiscoveryGeneration
+                                || ObjectId != segmentId || segment.ChannelEvents.Generation != sourceGeneration) return;
+                            _laneCountError = "Count unavailable; reopen this editor to retry.";
+                            Raise("LaneTargetCounts");
+                        });
+                        return;
+                    }
+                    if (task.IsCanceled || cancellationToken.IsCancellationRequested) return;
                     WorkspacePresentationDispatch.Post(dispatcher, cancellationToken,
                         () =>
                         {
@@ -2566,6 +2574,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
                                 sourceGeneration,
                                 task.Result);
                             ApplyDiscoveredMidiTargets(task.Result.Targets);
+                            Raise("LaneTargetCounts");
                         });
                 },
                 CancellationToken.None,
@@ -2617,7 +2626,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
 
     private sealed record DirectMidiEventTargetCacheEntry(
         long Generation,
-        TimelineEventTargetIndex<DirectMidiEventLaneTarget> Index);
+        TimelineTargetSummary<DirectMidiEventLaneTarget> Index);
 
     private void SetMissingSegmentSnapshots(long revision)
     {
@@ -3616,6 +3625,8 @@ public sealed class InstrumentWorkspaceViewModel(
                     eventLaneMappings.TryAdd(eventTarget, null);
                 }
             }
+            foreach (ValueCurve curve in activeVoice.Curves)
+                eventLaneMappings.TryAdd(curve.Target, null);
             if (previousTarget is MidiValueTarget retainedTarget)
                 eventLaneMappings.TryAdd(retainedTarget, null);
             ScheduleSubVoiceEventTargetIndex(
@@ -3662,8 +3673,8 @@ public sealed class InstrumentWorkspaceViewModel(
             _explicitRenderLaneSelectionRevision = -1;
         }
         MidiValueTarget? preferredTarget = _explicitRenderLaneTarget
-            ?? selectedTarget
-            ?? previousTarget;
+            ?? previousTarget
+            ?? selectedTarget;
         int preferredLane = preferredTarget is MidiValueTarget target
             ? lanes.FindIndex(item => item.Target == target)
             : -1;
@@ -3702,17 +3713,7 @@ public sealed class InstrumentWorkspaceViewModel(
                     templateSnapshot,
                     activeEventTarget,
                     selectedIds,
-                    Selection.Primary,
-                    _subVoiceEventTargetCache.TryGetValue(
-                            activeVoice.Id,
-                            out SubVoiceEventTargetCacheEntry? eventIndexCache)
-                        && eventIndexCache.Generation == templateSnapshot.Generation
-                        ? eventIndexCache.Index.TryGetLane(
-                            activeEventTarget,
-                            out TimelineEventTargetLaneIndex? targetLaneIndex)
-                                ? targetLaneIndex
-                                : TimelineEventTargetLaneIndex.Empty
-                        : null);
+                    Selection.Primary);
         (TimelineRenderItem[] activeEvents, ITimelineRenderItemSource? retainedActiveEventSource) =
             TimelinePresentationPaging.Adapt(activeEventSource);
         string projectionSuffix = activeVoice?.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none";
@@ -3897,7 +3898,7 @@ public sealed class InstrumentWorkspaceViewModel(
 
     private sealed record SubVoiceEventTargetCacheEntry(
         long Generation,
-        TimelineEventTargetIndex<MidiValueTarget> Index);
+        TimelineTargetSummary<MidiValueTarget> Index);
 
     private void ScheduleSubVoiceEventTargetIndex(
         MidoraProject project,
@@ -3927,26 +3928,16 @@ public sealed class InstrumentWorkspaceViewModel(
         _ = Task.Run(
             () =>
             {
-                return TimelineEventTargetIndex<MidiValueTarget>.Build(
-                    snapshot.QueryEvents(0, long.MaxValue).SelectMany(static value =>
-                        TemplateEventMidiTargets.Enumerate(value).Select(target =>
-                        {
-                            (double minimum, double maximum) = MidiValueRange(target);
-                            int raw = TemplateEventMidiTargets.GetValue(value, target);
-                            double normalized = Math.Clamp(
-                                (raw - minimum) / (maximum - minimum),
-                                0,
-                                1);
-                            return (
-                                target,
-                                new TimelineEventTargetPoint(value.Id, value.Tick, normalized));
-                        })),
+                cancellationToken.ThrowIfCancellationRequested();
+                return new TimelineTargetSummary<MidiValueTarget>(
+                    snapshot.DiscoveryCounts.Where(static pair => TemplateEventMidiTargets.TryDecodeDiscoveryKey(pair.Key, out _))
+                        .ToDictionary(static pair => { TemplateEventMidiTargets.TryDecodeDiscoveryKey(pair.Key, out var target); return target; },
+                            static pair => pair.Value),
                     Comparer<MidiValueTarget>.Create(static (left, right) =>
                     {
                         int kind = left.Kind.CompareTo(right.Kind);
                         return kind != 0 ? kind : left.Number.CompareTo(right.Number);
-                    }),
-                    cancellationToken);
+                    }));
             },
             cancellationToken).ContinueWith(
                 task =>

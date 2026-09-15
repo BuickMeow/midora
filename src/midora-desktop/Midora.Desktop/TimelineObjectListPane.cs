@@ -328,7 +328,10 @@ public sealed class TimelineObjectListPane : Grid
             for (int i = 0; i < owner._visible.Length; i++)
             {
                 var row = owner._visible[i]; double y = i * RowHeight;
-                if (owner.Selection?.Contains(row.Id) == true) dc.DrawRectangle(selected, null, new(0, y, ActualWidth, RowHeight));
+                bool isSelected = owner.Selection is { } selection && selection.Contains(row.Id)
+                    && (!row.IsInstrumentChange || selection.Contains(row.InstrumentChange.BankEventId)
+                        && (row.InstrumentChange.BankLsbEventId is not { } lsb || selection.Contains(lsb)));
+                if (isSelected) dc.DrawRectangle(selected, null, new(0, y, ActualWidth, RowHeight));
                 Text(row.Tick.ToString(CultureInfo.InvariantCulture), 8, y, 78, muted);
                 Text(owner.Source?.GetRowTypeLabel(row) ?? TimelineObjectListSource.GetTypeLabel(row), 92, y, 105, normal);
                 Text(TimelineObjectListSource.GetValueLabel(row), 203, y, Math.Max(1, ActualWidth - 211), muted);

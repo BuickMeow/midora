@@ -16,8 +16,13 @@ public readonly record struct TimelineObjectListRow(
     TemplateEventKind TemplateKind = default, DirectMidiChannelEventKind DirectKind = default,
     int Number = 0, int SecondaryValue = 0, long Order = 0,
     OpaqueMidiEventKind OpaqueKind = default, byte MetaType = 0, int PayloadLength = 0,
-    bool HasBankMsb = false, bool HasBankLsb = false)
+    bool HasBankMsb = false, bool HasBankLsb = false, InstrumentChangeValue InstrumentChange = default)
 {
+    public bool IsInstrumentChange => InstrumentChange.Id != default;
+    public IEnumerable<MidoraId> SelectionIds => IsInstrumentChange ? InstrumentChangeLane.MemberIds(InstrumentChange) : [Id];
+    public bool IsSelected(IReadOnlySet<MidoraId> ids) => IsInstrumentChange
+        ? ids.Contains(InstrumentChange.BankEventId) && ids.Contains(InstrumentChange.ProgramEventId)
+            && (InstrumentChange.BankLsbEventId is not { } lsb || ids.Contains(lsb)) : ids.Contains(Id);
     public bool IsNote => Kind is TimelineItemKind.LogicalNote or TimelineItemKind.DirectMidiNote or TimelineItemKind.TemplateNote;
     public bool IsOpaque => Kind == TimelineItemKind.OpaqueMidiEvent;
     public DirectMidiEventLaneTarget? DirectMidiTarget => Kind == TimelineItemKind.DirectMidiEvent
@@ -110,6 +115,7 @@ public sealed class TimelineObjectListSource : IDisposable
 
     public static TimelineObjectListSource CreateMidi(MidoraProject project, MidiSegment segment)
     {
+        var instrumentSnapshot = segment.ChannelEvents.CreateQuerySnapshot();
         ArgumentNullException.ThrowIfNull(project); ArgumentNullException.ThrowIfNull(segment);
         var notes = segment.Notes.CreateObjectSource();
         var events = segment.ChannelEvents.CreateObjectSource();
@@ -119,13 +125,14 @@ public sealed class TimelineObjectListSource : IDisposable
                 static value => new(value.Id, TimelineItemKind.DirectMidiNote, value.StartTick, value.LengthTicks,
                     value.Key, value.NoteOnVelocity, Order: value.NoteOnOrder),
                 candidates: (end, _) => notes.QueryTickRange(new(0, end))),
-            Make(events, segment.ChannelEvents,
+            Wrap(Make(events, segment.ChannelEvents,
                 static value => new(value.Id, TimelineItemKind.DirectMidiEvent, value.Tick,
                     Value: value.Kind switch
                     { DirectMidiChannelEventKind.ProgramChange or DirectMidiChannelEventKind.ChannelPressure => value.Data1,
                         DirectMidiChannelEventKind.PitchBend => (value.Data2 << 7) | value.Data1, _ => value.Data2 },
                     DirectKind: value.Kind, Number: value.Data1, SecondaryValue: value.Data2, Order: value.Order),
-                candidates: (end, _) => events.QueryTickRange(new(0, end))),
+                candidates: (end, _) => events.QueryTickRange(new(0, end))), segment.InstrumentChanges,
+                    group => InstrumentChangeResolver.TryRead(instrumentSnapshot, group, out var value) ? value : null, true),
             MakeOpaque(segment.OpaqueEvents.CreateObjectSource(), segment.OpaqueEvents)
         ]);
     }
@@ -135,11 +142,13 @@ public sealed class TimelineObjectListSource : IDisposable
         ArgumentNullException.ThrowIfNull(project); ArgumentNullException.ThrowIfNull(voice);
         var snapshot = voice.Events.CreateQuerySnapshot();
         return new(project, voice.Id, TimelineObjectListOwnerKind.SubVoice, instrumentId,
-        [Make(snapshot, voice.Events, static value =>
+        [Wrap(Make(snapshot, voice.Events, static value =>
             new(value.Id, value.Kind == TemplateEventKind.Note ? TimelineItemKind.TemplateNote : TimelineItemKind.TemplateEvent,
                 value.Tick, value.LengthTicks, value.Number, value.Value, value.Value,
                 TemplateKind: value.Kind, Number: value.Number, SecondaryValue: value.SecondaryValue,
-                HasBankMsb: value.HasBankMsb, HasBankLsb: value.HasBankLsb), candidates: snapshot.EnumerateListCandidates)]);
+                HasBankMsb: value.HasBankMsb, HasBankLsb: value.HasBankLsb), candidates: snapshot.EnumerateListCandidates),
+                voice.InstrumentChanges, group => { InstrumentChangeSelectionQuery.PrepareSource(snapshot);
+                    return InstrumentChangeResolver.TryRead(snapshot, group, out var value) ? value : null; })]);
     }
 
     public bool IsSameContent(TimelineObjectListSource? other)
@@ -185,7 +194,7 @@ public sealed class TimelineObjectListSource : IDisposable
         {
             using var reader = AcquireReader();
             foreach (var row in directory.EnumerateRange(first, last - first + 1, linked.Token))
-            { linked.Token.ThrowIfCancellationRequested(); yield return row.Id; }
+            { linked.Token.ThrowIfCancellationRequested(); foreach (var id in row.SelectionIds) yield return id; }
         }
     }
 
@@ -316,6 +325,29 @@ public sealed class TimelineObjectListSource : IDisposable
             (owner, ids, token) => ProjectTimelineReadPreparation.ReadSelectedOpaqueValues(owner, source, ids, token,
                 requireAll: false).Select(Project), Candidates: (end, _) => source.QueryTickRange(new(0, end)).Select(Project));
 
+    private static Component Wrap(Component source, InstrumentChangeSet groups, Func<InstrumentChange, InstrumentChangeValue?> read, bool direct = false)
+    {
+        if (groups.Count == 0) return source;
+        // Program is the representative identity. The other members never
+        // become additional list rows, yet all remain selectable in raw lanes.
+        int removed = direct ? 2 : 1;
+        return source with { Identity = groups, Count = checked(source.Count - groups.Count * removed),
+            All = token => ProjectRows(source.All(token), token),
+            Candidates = source.Candidates is null ? null : (end, token) => ProjectRows(source.Candidates(end, token), token),
+            Selected = (project, ids, token) => ProjectRows(source.Selected(project, ids, token), token) };
+        IEnumerable<TimelineObjectListRow> ProjectRows(IEnumerable<TimelineObjectListRow> rows, CancellationToken token)
+        {
+            foreach (var row in rows)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!groups.TryGetByMember(row.Id, out var group)) { yield return row; continue; }
+                if (row.Id != group.ProgramEventId) continue;
+                var value = read(group) ?? throw new InvalidOperationException("The Instrument Change list source is incomplete.");
+                yield return row with { InstrumentChange = value, Order = value.Order };
+            }
+        }
+    }
+
     private static TimelineObjectListRow Project(OpaqueMidiEventValue value) =>
         new(value.Id, TimelineItemKind.OpaqueMidiEvent, value.Tick, Order: value.Order,
             OpaqueKind: value.Kind, MetaType: value.MetaType, PayloadLength: value.Payload.Length);
@@ -359,7 +391,7 @@ public sealed class TimelineObjectListSource : IDisposable
     private sealed class ReverseRowComparer : IComparer<TimelineObjectListRow>
     { public static readonly ReverseRowComparer Instance = new(); public int Compare(TimelineObjectListRow x, TimelineObjectListRow y) => RowComparer.Instance.Compare(y, x); }
 
-    public static string GetTypeLabel(TimelineObjectListRow row) => row.IsNote ? "Note" : row.Kind switch
+    public static string GetTypeLabel(TimelineObjectListRow row) => row.IsInstrumentChange ? "Instrument Change" : row.IsNote ? "Note" : row.Kind switch
     {
         TimelineItemKind.LogicalParameterPoint => "Parameter",
         TimelineItemKind.OpaqueMidiEvent => row.OpaqueKind.ToString(),
@@ -373,7 +405,9 @@ public sealed class TimelineObjectListSource : IDisposable
     };
     public string GetRowTypeLabel(TimelineObjectListRow row) => row.Kind == TimelineItemKind.LogicalParameterPoint
         ? _parameterNames.GetValueOrDefault(row.LaneId, "Broken parameter") : GetTypeLabel(row);
-    public static string GetValueLabel(TimelineObjectListRow row) => row.IsNote
+    public static string GetValueLabel(TimelineObjectListRow row) => row.IsInstrumentChange
+        ? $"Bank {row.InstrumentChange.BankMsb}.{row.InstrumentChange.BankLsb} · Program {row.InstrumentChange.Program}"
+        : row.IsNote
         ? $"Key {row.Key} · Gate {row.LengthTicks} · Vel {row.Velocity}"
         : row.IsOpaque ? $"{row.PayloadLength} bytes"
         : row.Kind == TimelineItemKind.LogicalParameterPoint ? row.Value.ToString("G", CultureInfo.InvariantCulture)

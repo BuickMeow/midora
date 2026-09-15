@@ -237,7 +237,7 @@ public static class TemplateEventMidiTargets
 
     public static IEnumerable<long> EnumerateDiscoveryKeys(
         TemplateEventSnapshotValue value) =>
-        Enumerate(value).Select(EncodeDiscoveryKey);
+        value.Kind == TemplateEventKind.Note ? [long.MinValue] : Enumerate(value).Select(EncodeDiscoveryKey);
 
     public static int GetValue(TemplateEvent value, MidiValueTarget target)
     {

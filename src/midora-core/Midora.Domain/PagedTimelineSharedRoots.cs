@@ -88,8 +88,8 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             PagedTimelineValuePage<TValue> page = CreatePublishedPage(leaf);
             pages.Add(leaf, page);
             spatialPages.Add(page);
-            foreach (long key in page.DiscoveryKeys)
-                discovery[key] = discovery.TryGetValue(key, out int count) ? checked(count + 1) : 1;
+            foreach (var (key, occurrences) in page.DiscoveryCounts)
+                discovery[key] = discovery.TryGetValue(key, out int count) ? checked(count + occurrences) : occurrences;
         }
         PagedTimelineSpatialBlockIndex<TValue> spatial = PagedTimelineSpatialBlockIndex<TValue>.Create(spatialPages);
         ITimelineOrdinalLookup ordinals = source is IIndexedImmutableTimelineValueSource<TValue> indexed
@@ -333,10 +333,10 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
                 PagedTimelineValuePage<TValue> oldPage = pages[leaf];
                 pages.Remove(leaf);
                 if (removedPages.Add(oldPage))
-                    foreach (long key in oldPage.DiscoveryKeys)
+                    foreach (var (key, occurrences) in oldPage.DiscoveryCounts)
                     {
                         int count = discovery[key];
-                        if (count == 1) discovery.Remove(key); else discovery[key] = count - 1;
+                        if (count == occurrences) discovery.Remove(key); else discovery[key] = checked(count - occurrences);
                     }
                 if (replacement is not null) AddPage(replacement);
             }
@@ -401,8 +401,8 @@ internal sealed partial class PagedTimelineObjectList<T, TValue> where T : class
             PagedTimelineValuePage<TValue> page = CreatePublishedPage(leaf);
             pages.Add(leaf, page);
             addedPages.Add(page);
-            foreach (long key in page.DiscoveryKeys)
-                discovery[key] = discovery.TryGetValue(key, out int count) ? checked(count + 1) : 1;
+            foreach (var (key, occurrences) in page.DiscoveryCounts)
+                discovery[key] = discovery.TryGetValue(key, out int count) ? checked(count + occurrences) : occurrences;
         }
     }
 

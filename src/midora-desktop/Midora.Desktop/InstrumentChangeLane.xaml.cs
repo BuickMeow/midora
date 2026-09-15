@@ -16,21 +16,33 @@ namespace Midora.Desktop;
 
 public partial class InstrumentChangeLane : UserControl
 {
+    public static readonly DependencyProperty PointerPositionTextProperty = DependencyProperty.Register(nameof(PointerPositionText), typeof(string), typeof(InstrumentChangeLane), new PropertyMetadata(""));
+    public string PointerPositionText { get => (string)GetValue(PointerPositionTextProperty); private set => SetValue(PointerPositionTextProperty, value); }
     private WorkspaceViewModel? _workspace;
     private MidoraId? _owner;
     private InstrumentChangeProjection? _index;
+    private InstrumentChangeProjection? _selectionIndex;
+    private long _selectionRevision = -1;
+    private ProjectionRequest? _latest;
     private ProjectionRequest? _pending;
     private ProjectionRequest? _indexed;
     private CancellationTokenSource? _reading;
     private bool _running;
+    private int _lifetimeVersion;
     private long? _selectTick;
     private InstrumentChangeValue? _selectedValue;
     private sealed record ProjectionRequest(InstrumentChangeSet Root, long Revision, MidoraId Owner,
         Func<InstrumentChange, InstrumentChangeValue?> Read, long Start, long End, int Pixels,
-        long? SelectTick, MidoraId? SelectedId);
-    private readonly InstrumentChangeSelectionState _selection = new();
-    internal MidoraId? SelectedChangeId => _selection.SelectedId;
-    internal MainWindow? Host => Window.GetWindow(this) as MainWindow;
+        long? SelectTick, MidoraId? SelectedId, CompressedMidoraIdSet Selection, long SelectionRevision, long PreviewDelta);
+    private readonly object _projectionGate = new();
+    internal MidoraId? SelectedChangeId => _selectedValue?.Id;
+    internal bool IsSelected(InstrumentChangeValue value) => _workspace?.Selection.IdSet is { } ids
+        && ids.Contains(value.BankEventId) && ids.Contains(value.ProgramEventId)
+        && (value.BankLsbEventId is not { } lsb || ids.Contains(lsb));
+    internal long PreviewDelta => _dragging && _pressedHit is not null ? _delta : 0;
+    internal bool CopyPreview => _dragging && _copy;
+    internal MainWindow? CommandHost { get; set; }
+    internal MainWindow? Host => CommandHost ?? Window.GetWindow(this) as MainWindow;
     internal TimelineEditorSettings? Settings => DataContext switch
     {
         TimelineWorkspaceViewModel timeline => timeline.LaneEditorSettings,
@@ -39,17 +51,27 @@ public partial class InstrumentChangeLane : UserControl
     };
     public InstrumentChangeLane()
     {
-        InitializeComponent(); Points.Lane = this;
+        InitializeComponent(); Points.Lane = this; GestureOverlay.Lane = this;
         Points.MouseLeftButtonUp += OnPointClick;
+        Points.MouseMove += OnPointMove;
+        Points.MouseLeave += (_, _) => { _hoverPoint = null; GestureOverlay.InvalidateVisual(); if (!Points.IsMouseCaptured) PointerPositionText = ""; };
+        Points.LostMouseCapture += (_, _) => { if (!_releasing) ResetGesture(); };
         Points.MouseRightButtonUp += OnContextClick;
         SizeChanged += (_, _) => { Backdrop.LaneHeight = Math.Max(20, Backdrop.ActualHeight - 24); Refresh(); };
         DataContextChanged += (_, _) => { Attach(); Refresh(); };
     }
-    private void OnLoaded(object sender, RoutedEventArgs e) { Attach(); Refresh(); }
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    { Interlocked.Increment(ref _lifetimeVersion); ResetInteractionLifetime(); Attach(); Refresh(); }
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        Detach(); Points.Clear(); _pending = null; _reading?.Cancel(); _pressPoint = null;
-        if (!_running) { _index?.Dispose(); _index = null; _indexed = null; }
+        Detach(); Points.Clear(); _pending = null; _latest = null; _reading?.Cancel(); _interaction.Cancel(); _hoverPoint = null; ResetGesture();
+        _selectedValue = null; _selectTick = null;
+        if (ContextMenu is { } menu) menu.IsOpen = false;
+        ContextMenu = null;
+        int version = Interlocked.Increment(ref _lifetimeVersion);
+        _ = Task.Run(() => { lock (_projectionGate)
+            if (version == Volatile.Read(ref _lifetimeVersion))
+            { _index?.Dispose(); _index = null; _indexed = null; _selectionIndex?.Dispose(); _selectionIndex = null; _selectionRevision = -1; } });
     }
     private void Attach()
     {
@@ -66,8 +88,6 @@ public partial class InstrumentChangeLane : UserControl
         Backdrop.SetBinding(Presentation.Controls.TimelineSurface.TimeSignatureMapProperty, new Binding("EditorSettings.TimeSignatureMap"));
         if (workspace is TimelineWorkspaceViewModel)
             Backdrop.SetBinding(Presentation.Controls.TimelineSurface.ProjectTickOffsetProperty, new Binding("ProjectTickOffset"));
-        SnapButton.SetBinding(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty,
-            new Binding(workspace is InstrumentWorkspaceViewModel ? "EventLaneEditorSettings.SnapEnabled" : "LaneEditorSettings.SnapEnabled") { Mode = BindingMode.TwoWay });
         Backdrop.Snapshot = new(0, "instrument-lane-background", [], laneLabels: ["Inst."]);
     }
     private void Detach()
@@ -76,13 +96,15 @@ public partial class InstrumentChangeLane : UserControl
     {
         if (e.PropertyName is "Snapshot" or "SubVoiceSnapshot" or "SubVoiceEventSnapshot" or "ActiveSubVoiceId"
             or "StartTick" or "TickSpan" or "TimelineStartTick" or "TimelineTickSpan") Refresh();
+        else if (_workspace?.Selection.Revision != _latest?.SelectionRevision) Refresh();
         Points.InvalidateVisual();
+        GestureOverlay.InvalidateVisual();
     }
     internal void Refresh()
     {
         if (!IsLoaded) return;
         if (Host?.GetInstrumentLaneOwner(DataContext) is not { } context)
-        { _pending = null; _reading?.Cancel(); Points.Clear(); _selection.Select(null); _selectedValue = null; return; }
+        { _pending = null; _reading?.Cancel(); Points.Clear(); _selectedValue = null; return; }
         InstrumentChangeSet root; long generation; Func<InstrumentChange, InstrumentChangeValue?> read;
         if (context.Midi is { } midi)
         {
@@ -95,15 +117,18 @@ public partial class InstrumentChangeLane : UserControl
         {
             root = voice.InstrumentChanges; generation = voice.Events.Generation;
             var snapshot = voice.Events.CreateQuerySnapshot();
-            read = group => InstrumentChangeResolver.TryRead(snapshot, group, out var value) ? value : null;
+            read = group => { InstrumentChangeSelectionQuery.PrepareSource(snapshot); return InstrumentChangeResolver.TryRead(snapshot, group, out var value) ? value : null; };
             ChangeOwner(voice.Id);
         }
         else return;
-        _selection.Enter(_owner!.Value, root);
+
         var range = VisibleRange;
-        _pending = new(root, generation, _owner!.Value, read, range.Start, range.End,
+        if (_latest is { } prior && (prior.Owner != _owner || prior.Revision != generation || !ReferenceEquals(prior.Root, root)))
+        { ResetInteractionLifetime(); ResetGesture(); }
+        _latest = _pending = new(root, generation, _owner!.Value, read, range.Start, range.End,
             (int)Math.Clamp(Points.ActualWidth * VisualTreeHelper.GetDpi(this).DpiScaleX, 1, 16_384),
-            _selectTick, SelectedChangeId);
+            _selectTick, SelectedChangeId, _workspace?.Selection.SharedIds ?? CompressedMidoraIdSet.Empty,
+            _workspace?.Selection.Revision ?? 0, PreviewDelta);
         _reading?.Cancel();
         if (!_running) _ = ReadProjectionAsync();
     }
@@ -121,26 +146,41 @@ public partial class InstrumentChangeLane : UserControl
                 {
                     var result = await Task.Run(() =>
                     {
+                        lock (_projectionGate)
+                        {
                         if (_index is null || _indexed is null || !ReferenceEquals(request.Root, _indexed.Root)
                             || request.Revision != _indexed.Revision || request.Owner != _indexed.Owner)
                         {
                             _index?.Dispose(); _index = null; _indexed = null;
+                            _selectionIndex?.Dispose(); _selectionIndex = null; _selectionRevision = -1;
                             _index = InstrumentChangeProjection.Create(request.Root, request.Read, cancel.Token);
                             _indexed = request;
                         }
                         var visible = _index.ReadVisible(request.Start, request.End, request.Pixels, cancel.Token);
+                        if (_selectionIndex is null || _selectionRevision != request.SelectionRevision)
+                        {
+                            _selectionIndex?.Dispose(); _selectionIndex = null;
+                            _selectionIndex = request.Selection.Count >= request.Root.Count
+                                ? _index.SelectMembers(request.Selection, cancel.Token)
+                                : InstrumentChangeProjection.Create(InstrumentChangeSelectionQuery.EnumerateGroups(
+                                    request.Root, request.Selection, cancel.Token), request.Read, cancel.Token);
+                            _selectionRevision = request.SelectionRevision;
+                        }
+                        long selectedStart = (long)Math.Clamp((decimal)request.Start - request.PreviewDelta, 0, long.MaxValue);
+                        long selectedEnd = (long)Math.Clamp((decimal)request.End - request.PreviewDelta, 0, long.MaxValue);
+                        var selectedValues = _selectionIndex.ReadVisible(selectedStart, selectedEnd, request.Pixels, cancel.Token);
                         InstrumentChangeValue? selected = request.SelectTick is { } tick
                             ? _index.ReadAtTick(tick, cancel.Token)
                             : request.SelectedId is { } id && request.Root.TryGet(id, out var group) ? request.Read(group) : null;
-                        return (visible, selected);
+                        return (visible, selected, selectedValues);
+                        }
                     });
                     if (!cancel.IsCancellationRequested && IsLoaded)
                     {
-                        Points.SetValues(result.visible);
+                        Points.SetValues(result.visible, result.selectedValues);
                         if (request.SelectTick is not null && _selectTick == request.SelectTick)
                         { Select(result.selected); _selectTick = null; }
-                        else if (request.SelectedId == SelectedChangeId && _selectTick is null)
-                            Select(result.selected);
+
                     }
                 }
                 catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
@@ -155,17 +195,22 @@ public partial class InstrumentChangeLane : UserControl
         finally
         {
             _running = false;
-            if (!IsLoaded) { _index?.Dispose(); _index = null; _indexed = null; }
         }
     }
     private void ChangeOwner(MidoraId owner)
     {
         if (_owner == owner) return;
         _owner = owner; _selectedValue = null; _selectTick = null;
+        ResetInteractionLifetime(); ResetGesture();
         Points.Clear();
     }
     private void Select(InstrumentChangeValue? value)
-    { _selectedValue = value; _selection.Select(value?.Id); Points.InvalidateVisual(); }
+    {
+        _selectedValue = value;
+        if (_workspace is { } workspace) Host?.PublishInstrumentSelection(workspace,
+            CompressedMidoraIdSet.Create(value is { } row ? MemberIds(row) : []));
+        Points.InvalidateVisual();
+    }
     internal double TickX(long tick) => 64 + (tick - Backdrop.StartTick) * ((Points.ActualWidth - 64) / Math.Max(1, (double)Backdrop.TickSpan));
     internal long PointTick(double x, bool snap = true)
     {
@@ -190,60 +235,6 @@ public partial class InstrumentChangeLane : UserControl
     }
     internal string Label(InstrumentChangeValue value) => Host?.InstrumentChangeLabel(value)
         ?? $"{value.BankMsb}.{value.BankLsb}.{value.Program}";
-    internal bool HandleShortcut(KeyEventArgs e)
-    {
-        if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.A && Settings is { } settings)
-        { settings.SnapEnabled = !settings.SnapEnabled; e.Handled = true; return true; }
-        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.P)
-        { OpenSelected(); e.Handled = true; return true; }
-        // Wrapper-specific bulk editing is the next accepted slice. Do not act on a hidden Note selection.
-        if (e.Key == Key.Delete || Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
-            && e.Key is Key.C or Key.X or Key.V or Key.E or Key.Q or Key.T)
-        { e.Handled = true; return true; }
-        return false;
-    }
-    private int _clickCount;
-    private Point? _pressPoint;
-    private void OnPointClick(object sender, MouseButtonEventArgs e)
-    {
-        Focus(); e.Handled = true;
-        Point point = e.GetPosition(Points);
-        var press = _pressPoint; _pressPoint = null;
-        if (press is null || Math.Abs(point.X - press.Value.X) >= SystemParameters.MinimumHorizontalDragDistance
-            || Math.Abs(point.Y - press.Value.Y) >= SystemParameters.MinimumVerticalDragDistance) return;
-        if (point.X < 64 || point.Y < 24) return;
-        var hit = Points.Hit(point);
-        Select(hit);
-        var mode = DataContext switch { TimelineWorkspaceViewModel w => w.ToolMode,
-            InstrumentWorkspaceViewModel w => w.ToolMode, _ => TimelineToolMode.Select };
-        if (hit is { } value && _clickCount >= 2) Host?.EditInstrumentChange(this, value.Tick, value.Id);
-        else if (hit is null && mode == TimelineToolMode.Draw) Host?.EditInstrumentChange(this, PointTick(point.X), null);
-    }
-    protected override void OnPreviewMouseLeftButtonDown(MouseButtonEventArgs e)
-    {
-        base.OnPreviewMouseLeftButtonDown(e); _clickCount = e.ClickCount;
-        var point = e.GetPosition(Points);
-        _pressPoint = point.X >= 64 && point.Y >= 24 && point.Y <= Points.ActualHeight ? point : null;
-    }
-    private void OnContextClick(object sender, MouseButtonEventArgs e)
-    {
-        e.Handled = true; Focus();
-        var point = e.GetPosition(Points);
-        if (point.X < 64 || point.Y < 24) return;
-        var hit = Points.Hit(point); Select(hit);
-        var menu = new ContextMenu();
-        var properties = new MenuItem { Header = "Properties…", InputGestureText = "Ctrl+P", IsEnabled = hit.HasValue };
-        properties.Click += (_, _) => OpenSelected(); menu.Items.Add(properties);
-        ContextMenu = menu; menu.PlacementTarget = this; menu.IsOpen = true;
-    }
-    private void OpenSelected()
-    { if (_selectedValue is { } value) Host?.EditInstrumentChange(this, value.Tick, value.Id); }
-    private void OnAddClick(object sender, RoutedEventArgs e)
-    {
-        long tick = DataContext switch { TimelineWorkspaceViewModel w => w.EditCursorTick ?? 0,
-            InstrumentWorkspaceViewModel w => w.EditCursorTick ?? 0, _ => 0 };
-        Host?.EditInstrumentChange(this, Settings?.SnapAbsolute(tick) ?? tick, null);
-    }
     internal void SelectAt(long tick)
     {
         _selectTick = tick;
@@ -257,8 +248,10 @@ public sealed class InstrumentChangeLaneVisual : FrameworkElement
 {
     internal InstrumentChangeLane? Lane;
     private InstrumentChangeValue[] _values = [];
-    internal void Clear() { _values = []; InvalidateVisual(); }
-    internal void SetValues(InstrumentChangeValue[] values) { _values = values; InvalidateVisual(); }
+    private InstrumentChangeValue[] _selected = [];
+    internal void Clear() { _values = []; _selected = []; InvalidateVisual(); }
+    internal void SetValues(InstrumentChangeValue[] values, InstrumentChangeValue[] selected)
+    { _values = values; _selected = selected; InvalidateVisual(); }
     private int LowerBound(long tick)
     {
         int lo = 0, hi = _values.Length;
@@ -289,7 +282,8 @@ public sealed class InstrumentChangeLaneVisual : FrameworkElement
         for (; index < _values.Length && _values[index].Tick < range.End; index++)
         {
             var value = _values[index]; double x = Lane.TickX(value.Tick), pixel = Math.Floor(x * dpi);
-            bool selected = value.Id == Lane.SelectedChangeId;
+            bool selected = Lane.IsSelected(value);
+            if (selected && !Lane.CopyPreview) x = Lane.TickX((long)Math.Clamp((decimal)value.Tick + Lane.PreviewDelta, 0, long.MaxValue - 1));
             if (pixel != lastPixel || selected)
                 dc.DrawEllipse(selected ? Brushes.IndianRed : Brushes.SlateGray, new Pen(Brushes.LightGray, 1), new(x, y), 4, 4);
             lastPixel = pixel;
@@ -301,6 +295,30 @@ public sealed class InstrumentChangeLaneVisual : FrameworkElement
                 new Pen(TryFindResource("Brush.Border.Strong") as Brush ?? Brushes.DimGray, 1), new(x, y + 10, width, 24), 3, 3);
             dc.DrawText(text, new(x + 4, y + 13)); labelEnd = x + width + 8; labels++;
         }
+        // Selection has its own bounded pixel projection. A selected member
+        // need not be the normal layer's representative at a dense pixel.
+        foreach (var value in _selected)
+        {
+            if (!Lane.IsSelected(value)) continue;
+            long tick = (long)Math.Clamp((decimal)value.Tick + Lane.PreviewDelta, 0, long.MaxValue - 1);
+            dc.DrawEllipse(Lane.PreviewDelta != 0 ? Brushes.DodgerBlue : Brushes.IndianRed,
+                new Pen(Brushes.LightGray, 1), new(Lane.TickX(tick), y), 4, 4);
+        }
+        dc.Pop();
+    }
+}
+
+/// <summary>Pointer-only feedback must not rebuild labels or query source pages.</summary>
+public sealed class InstrumentChangeGestureVisual : FrameworkElement
+{
+    internal InstrumentChangeLane? Lane;
+    protected override void OnRender(DrawingContext dc)
+    {
+        if (Lane is null || ActualWidth <= 64 || ActualHeight <= 24) return;
+        dc.PushClip(new RectangleGeometry(new Rect(64, 24, ActualWidth - 64, ActualHeight - 24)));
+        var typeface = new Typeface(TryFindResource("Font.UI") as FontFamily ?? EmbeddedFontFamilies.Ui,
+            FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        Lane.DrawGesture(dc, typeface, VisualTreeHelper.GetDpi(this).PixelsPerDip);
         dc.Pop();
     }
 }

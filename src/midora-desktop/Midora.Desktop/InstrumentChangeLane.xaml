@@ -3,22 +3,14 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:Midora.Desktop"
  xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
- Tag="InstrumentChanges" Focusable="True" IsTabStop="True" Loaded="OnLoaded" Unloaded="OnUnloaded">
+ Tag="InstrumentChanges" Focusable="True" IsTabStop="True" InputMethod.IsInputMethodEnabled="False" Loaded="OnLoaded" Unloaded="OnUnloaded">
  <Grid Background="{DynamicResource Brush.Surface.0}">
-  <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <Border Padding="8,0" Background="{DynamicResource Brush.Surface.1}" BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
-   <Grid><TextBlock Text="INSTRUMENT CHANGES" Style="{DynamicResource Text.Overline}" VerticalAlignment="Center"/>
-    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" VerticalAlignment="Center">
-     <ToggleButton x:Name="SnapButton" Content="Snap" ToolTip="Enable/Disable Snap (A)"/>
-     <Button Content="Add Instrument…" Margin="6,0,0,0" Height="23" Click="OnAddClick"/>
-    </StackPanel>
-   </Grid>
-  </Border>
-  <Grid Grid.Row="1" ClipToBounds="True">
+  <Grid ClipToBounds="True">
    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/></Grid.ColumnDefinitions>
    <ui:TimelineSurface x:Name="Backdrop" SurfaceMode="Conductor" CanEdit="False" IsHitTestVisible="False" IsTimeRangeSelectionEnabled="False"
      LaneHeaderWidthOverride="64" DisplayGridUsesBars="True" FirstLane="0"/>
    <local:InstrumentChangeLaneVisual x:Name="Points"/>
+   <local:InstrumentChangeGestureVisual x:Name="GestureOverlay" IsHitTestVisible="False"/>
    <Border Grid.Column="1" Background="{DynamicResource Brush.Surface.1}"/>
   </Grid>
  </Grid>

@@ -6,7 +6,7 @@ namespace Midora.Persistence;
 
 internal static class InstrumentChangesProtobufCodecV1
 {
-    public static void Serialize(MidoraProject project, Stream destination, CancellationToken token)
+    public static void Serialize(MidoraProject project, Stream destination, CancellationToken token, IInstrumentChangeStorageLoader? storage = null)
     {
         using var output = new CodedOutputStream(destination, leaveOpen: true) { Deterministic = true };
         output.WriteRawTag(8); output.WriteUInt32(1);
@@ -25,6 +25,7 @@ internal static class InstrumentChangesProtobufCodecV1
         {
             if (voice.InstrumentChanges.Count == 0) continue;
             var snapshot = voice.Events.CreateQuerySnapshot();
+            storage?.PrepareSource(snapshot, token);
             foreach (var group in voice.InstrumentChanges.Values)
             {
                 token.ThrowIfCancellationRequested();
@@ -47,56 +48,69 @@ internal static class InstrumentChangesProtobufCodecV1
         }
     }
 
-    public static void Restore(MidoraProject project, Stream input, CancellationToken token)
+    public static void Restore(MidoraProject project, Stream input, CancellationToken token, IInstrumentChangeStorageLoader? storage = null)
     {
-        // This is strict source data, unlike optional presentation. Never
-        // recover a malformed association file as an empty editor view.
         var midi = project.PureMidiTracks.SelectMany(track => track.Segments).ToDictionary(owner => owner.Id);
         var voices = project.EventInstruments.SelectMany(instrument => instrument.SubVoices).ToDictionary(owner => owner.Id);
         var midiSnapshots = new Dictionary<MidoraId, DirectMidiChannelEventQuerySnapshot>();
         var voiceSnapshots = new Dictionary<MidoraId, TemplateEventQuerySnapshot>();
-        var reader = new StreamingProtobufReader(input, token);
-        var frame = reader.Root(InstrumentChangesV1.Descriptor);
-        bool versionSeen = false;
-        Google.Protobuf.Reflection.FieldDescriptor? field;
-        while ((field = reader.Field(ref frame)) is not null)
+        try
         {
-            if (field.FieldNumber == 1)
+            if (storage is not null) storage.Load(project, Read(), token);
+            else foreach (var record in Read())
             {
-                if (reader.Integer(frame, field) != 1) throw new InvalidDataException("Unsupported Instrument Changes schema version.");
-                versionSeen = true;
-                continue;
+                if (record.DirectMidi)
+                { var owner = midi[record.OwnerId]; owner.InstrumentChanges = owner.InstrumentChanges.Add(record.Change, true); }
+                else
+                { var owner = voices[record.OwnerId]; owner.InstrumentChanges = owner.InstrumentChanges.Add(record.Change, false); }
             }
-            var wire = (InstrumentChangeV1)reader.SmallMessage(reader.Child(frame, field));
-            if (!wire.HasId || !wire.HasOwnerId || !wire.HasDirectMidi || !wire.HasBankEventId || !wire.HasProgramEventId
-                || wire.Id <= 0 || wire.OwnerId <= 0 || wire.BankEventId <= 0 || wire.ProgramEventId <= 0
-                || wire.DirectMidi != wire.HasBankLsbEventId || wire.HasBankLsbEventId && wire.BankLsbEventId <= 0)
-                throw Invalid();
-            var group = new InstrumentChange(new(wire.Id), new(wire.BankEventId),
-                wire.HasBankLsbEventId ? new MidoraId(wire.BankLsbEventId) : null, new(wire.ProgramEventId));
-            try
+        }
+        catch (ArgumentException exception) { throw new InvalidDataException("Invalid Instrument Change identity or membership.", exception); }
+
+        IEnumerable<InstrumentChangeOwnerRecord> Read()
+        {
+            var reader = new StreamingProtobufReader(input, token);
+            var frame = reader.Root(InstrumentChangesV1.Descriptor);
+            bool versionSeen = false;
+            Google.Protobuf.Reflection.FieldDescriptor? field;
+            while ((field = reader.Field(ref frame)) is not null)
             {
+                if (field.FieldNumber == 1)
+                {
+                    if (reader.Integer(frame, field) != 1) throw new InvalidDataException("Unsupported Instrument Changes schema version.");
+                    versionSeen = true; continue;
+                }
+                var wire = (InstrumentChangeV1)reader.SmallMessage(reader.Child(frame, field));
+                if (!wire.HasId || !wire.HasOwnerId || !wire.HasDirectMidi || !wire.HasBankEventId || !wire.HasProgramEventId
+                    || wire.Id <= 0 || wire.OwnerId <= 0 || wire.BankEventId <= 0 || wire.ProgramEventId <= 0
+                    || wire.DirectMidi != wire.HasBankLsbEventId || wire.HasBankLsbEventId && wire.BankLsbEventId <= 0)
+                    throw Invalid();
+                var group = new InstrumentChange(new(wire.Id), new(wire.BankEventId),
+                    wire.HasBankLsbEventId ? new MidoraId(wire.BankLsbEventId) : null, new(wire.ProgramEventId));
+                group.ValidateShape(wire.DirectMidi);
+                var ownerId = new MidoraId(wire.OwnerId);
                 if (wire.DirectMidi)
                 {
-                    if (!midi.TryGetValue(new(wire.OwnerId), out var owner)) throw Invalid();
+                    if (!midi.TryGetValue(ownerId, out var owner)) throw Invalid();
                     if (!midiSnapshots.TryGetValue(owner.Id, out var snapshot))
                         midiSnapshots.Add(owner.Id, snapshot = owner.ChannelEvents.CreateQuerySnapshot());
                     if (!InstrumentChangeResolver.TryRead(snapshot, group, out _)) throw Invalid();
-                    owner.InstrumentChanges = owner.InstrumentChanges.Add(group, true);
                 }
                 else
                 {
-                    if (!voices.TryGetValue(new(wire.OwnerId), out var owner)) throw Invalid();
+                    if (!voices.TryGetValue(ownerId, out var owner)) throw Invalid();
                     if (!voiceSnapshots.TryGetValue(owner.Id, out var snapshot))
+                    {
                         voiceSnapshots.Add(owner.Id, snapshot = owner.Events.CreateQuerySnapshot());
+                        storage?.PrepareSource(snapshot, token);
+                    }
                     if (!InstrumentChangeResolver.TryRead(snapshot, group, out _)) throw Invalid();
-                    owner.InstrumentChanges = owner.InstrumentChanges.Add(group, false);
                 }
+                yield return new(ownerId, wire.DirectMidi, group);
             }
-            catch (ArgumentException exception) { throw new InvalidDataException("Invalid Instrument Change identity or membership.", exception); }
+            if (!versionSeen) throw new InvalidDataException("Instrument Changes schema version is missing.");
+            reader.ThrowSemanticFailure();
         }
-        if (!versionSeen) throw new InvalidDataException("Instrument Changes schema version is missing.");
-        reader.ThrowSemanticFailure();
     }
 
     private static InvalidDataException Invalid() => new("An Instrument Change has an invalid owner, member, target or Tick.");

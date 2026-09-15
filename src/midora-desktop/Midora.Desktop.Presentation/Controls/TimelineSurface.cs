@@ -10934,6 +10934,18 @@ public sealed partial class TimelineSurface : Control
     }
 
     /// <summary>Restore the complete displayed value axis without changing horizontal navigation.</summary>
+    public (double Minimum, double Maximum) CaptureValueViewport() => (_valueViewMinimum, _valueViewMaximum);
+
+    public void RestoreValueViewport((double Minimum, double Maximum) range)
+    {
+        if (!double.IsFinite(range.Minimum) || !double.IsFinite(range.Maximum)
+            || range.Minimum < 0 || range.Maximum > 1 || range.Maximum <= range.Minimum)
+            throw new ArgumentOutOfRangeException(nameof(range));
+        SetValueViewRange(range.Minimum, range.Maximum);
+        UpdateValueScrollMetrics();
+        SetCurrentValue(ValueScrollOffsetProperty, Math.Clamp(1 - range.Maximum, 0, ValueScrollMaximum));
+    }
+
     public void ResetValueViewport()
     {
         SetValueViewRange(0, 1);

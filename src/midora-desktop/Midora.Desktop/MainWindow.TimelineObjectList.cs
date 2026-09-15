@@ -64,6 +64,8 @@ public partial class MainWindow
                 {
                     if (pane.DataContext is not WorkspaceViewModel workspace) return;
                     await SelectObjectListRowAsync(pane, row);
+                    if (row.IsInstrumentChange && row.IsSelected(workspace.Selection.IdSet))
+                    { RunInstrumentAction(workspace, "Properties", () => pane.Focus()); return; }
                     if (ReferenceEquals(_session.ActiveWorkspace, workspace) && ReferenceEquals(pane.DataContext, workspace)
                         && workspace.Selection.Primary == row.Id && workspace.Selection.Ids.Count == 1)
                         await OpenWorkspacePropertiesCoreAsync(workspace);
@@ -159,7 +161,7 @@ public partial class MainWindow
         try
         {
             IReadOnlyCollection<MidoraId> range = e.First == e.Last && e.Primary is { } row
-                ? new[] { row.Id } : await source.ReadSelectionAsync(e.First, e.Last, token);
+                ? row.SelectionIds.ToArray() : await source.ReadSelectionAsync(e.First, e.Last, token);
             var prepared = await Task.Run(() =>
             {
                 CompressedMidoraIdSet ids = CompressedMidoraIdSet.Create(range, token);
@@ -216,6 +218,11 @@ public partial class MainWindow
             var selection = await ReadObjectListSelectionAsync(workspace, token);
             if (selection is null || selection.Ids.Count == 0 || selection.IsMixed
                 || !ReferenceEquals(_session.ActiveWorkspace, workspace) || IsTransientInputSurfaceOpen()) return;
+            if (selection.InstrumentMembers.Count != 0)
+            {
+                if (key is Key.P or Key.Q) RunInstrumentAction(workspace, key == Key.P ? "Properties" : "Scale", () => pane?.Focus());
+                return;
+            }
             if (key == Key.P)
             {
                 if (!selection.ContainsOpaque || selection.Ids.Count == 1)
@@ -257,7 +264,7 @@ public partial class MainWindow
         if (sender is not TimelineObjectListPane pane || pane.DataContext is not WorkspaceViewModel workspace) return;
         try
         {
-            if (e.Row is { } row && !workspace.Selection.IdSet.Contains(row.Id))
+            if (e.Row is { } row && !row.IsSelected(workspace.Selection.IdSet))
                 await SelectObjectListRowAsync(pane, row);
             if (!ReferenceEquals(pane.Source, e.Source) || !pane.IsVisible) return;
             ContextMenu menu = new() { PlacementTarget = pane, Placement = PlacementMode.MousePoint };
@@ -272,6 +279,14 @@ public partial class MainWindow
     private void LocateObjectListRow(TimelineObjectListPane pane, TimelineObjectListRow row)
     {
         if (pane.DataContext is not WorkspaceViewModel workspace) return;
+        if (row.IsInstrumentChange)
+        {
+            if (workspace is TimelineWorkspaceViewModel t) { t.StartTick = Math.Max(0, row.Tick - t.TickSpan / 2); t.IsLowerEditorVisible = true; }
+            if (workspace is InstrumentWorkspaceViewModel v) { v.TimelineStartTick = Math.Max(0, row.Tick - v.TimelineTickSpan / 2); v.IsLowerEditorVisible = true; }
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+                LaneTabHeader.Find<LaneTabHost>(this, host => host.IsVisible && ReferenceEquals(host.DataContext, workspace))?.ShowInstrumentTarget()));
+            return;
+        }
         int visibleKeys = Math.Clamp(ObjectListCommandSurface(workspace, true)?.VisibleLaneCount ?? 24, 1, 128);
         int firstKeyLane = Math.Clamp(127 - row.Key - visibleKeys / 2, 0, 128 - visibleKeys);
         if (workspace is TimelineWorkspaceViewModel timeline)
@@ -288,9 +303,7 @@ public partial class MainWindow
                         ? lane.ParameterId == row.ParameterId : lane.DirectMidiTarget == row.DirectMidiTarget);
                 timeline.PreferCurrentParameterLaneOnNextRebuild();
                 _session.RefreshWorkspace(workspace);
-                var tab = FindDescendant<TabControl>(WorkspaceTabs, c => c.IsVisible
-                    && c.Items.OfType<TabItem>().Any(t => Equals(t.Header, "Parameter Lane")));
-                if (tab is not null) tab.SelectedIndex = 1;
+                ShowActiveEventLaneTab(workspace);
             }
         }
         else if (workspace is InstrumentWorkspaceViewModel instrument)
@@ -305,6 +318,7 @@ public partial class MainWindow
                     lane.EventMappingTarget == row.MidiTarget);
                 instrument.PreferCurrentRenderLaneOnNextRebuild();
                 _session.RefreshWorkspace(workspace);
+                ShowActiveEventLaneTab(workspace);
             }
         }
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
@@ -331,18 +345,25 @@ public partial class MainWindow
             if (!menu.IsOpen || selection is null || !Current()) return;
             menu.Items.Clear();
             bool canEdit = _session.CanEditProject;
+            if (selection.InstrumentMembers.Count != 0)
+            {
+                var instrumentMenu = InstrumentMenu(workspace, true);
+                ItemCollection items = menu.Items;
+                if (selection.IsMixed) { var parent = new MenuItem { Header = "For Instrument Changes" }; menu.Items.Add(parent); items = parent.Items; }
+                foreach (var item in instrumentMenu.Items.Cast<object>().ToArray()) { instrumentMenu.Items.Remove(item); items.Add(item); }
+            }
             if (selection.IsMixed)
             {
                 MenuItem notes = new() { Header = "For Notes" };
                 MenuItem events = new() { Header = "For Events" };
-                menu.Items.Add(notes); menu.Items.Add(events);
-                PopulateType(notes.Items, true);
-                PopulateType(events.Items, false);
+                if (selection.Notes.Count != 0) { menu.Items.Add(notes); PopulateType(notes.Items, true); }
+                if (selection.Events.Count != 0) { menu.Items.Add(events); PopulateType(events.Items, false); }
                 menu.Items.Add(new Separator());
                 Add(menu.Items, "Delete All Selected", () => DeleteAll(), canEdit, "Delete");
                 Add(menu.Items, "Copy", () => { }, false, "Ctrl+C");
                 Add(menu.Items, "Cut", () => { }, false, "Ctrl+X");
             }
+            else if (selection.InstrumentMembers.Count != 0) { }
             else if (selection.Ids.Count != 0) PopulateType(menu.Items, selection.Notes.Count != 0);
             else Add(menu.Items, "Properties…", () => { }, false, "Ctrl+P");
             menu.Items.Add(new Separator());
@@ -360,7 +381,8 @@ public partial class MainWindow
                 _lastTimelineCommandSurface = eventSurface;
                 OnBatchCreateTimelineObjectsClick(this, new());
             }, canEdit && eventCreation);
-            Add(menu.Items, "Paste", () => OnPasteClick(this, new()), canEdit, "Ctrl+V");
+            if (selection.IsMixed || selection.InstrumentMembers.Count == 0)
+                Add(menu.Items, "Paste", () => OnPasteClick(this, new()), canEdit, "Ctrl+V");
             Add(menu.Items, "Deselect All", () =>
             {
                 workspace.Selection.Clear(); _session.RefreshWorkspaceSelection(workspace);
@@ -375,7 +397,7 @@ public partial class MainWindow
             void PopulateType(ItemCollection items, bool notes)
             {
                 CompressedMidoraIdSet ids = notes ? selection.Notes : selection.Events;
-                CompressedMidoraIdSet retained = notes ? selection.Events : selection.Notes;
+                CompressedMidoraIdSet retained = (notes ? selection.Events : selection.Notes).Union(selection.InstrumentMembers);
                 WorkspaceTimelineSelectionSource? source = notes ? selection.NoteSource : selection.EventSource;
                 WorkspaceTimelineSelectionSource? quantizeSource = notes ? source : selection.EventQuantizeScope;
                 TimelineSelectionOperationContext? operation = source is { } homogeneous

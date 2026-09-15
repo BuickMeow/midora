@@ -667,6 +667,9 @@
           <TabItem Header="Vel.">
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <ui:TimelineSurface x:Name="SegmentVelocityTimeline" Tag="Velocity" Snapshot="{Binding VelocitySnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" SurfaceMode="Velocity" ContextMenu="{StaticResource TimelineContextMenu}"
+                                ToolMode="{Binding ToolMode}" ValueTraceShape="{Binding ValueTraceShape}"
+                                ItemInvoked="OnTimelineItemInvoked" BackgroundInvoked="OnTimelineBackgroundInvoked" RulerClicked="OnTimelineRulerClicked"
+                                SelectionReplacementStarted="OnTimelineSelectionReplacementStarted" MarqueeCompleted="OnTimelineMarqueeCompleted"
                                 CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                 StartTick="{Binding StartTick, Mode=TwoWay}" TickSpan="{Binding TickSpan, Mode=TwoWay}"
                                 FirstLane="0" LaneHeight="160" GridStepTicks="{Binding GridStepTicks}" GridVisible="{Binding GridVisible}"
@@ -693,6 +696,7 @@
               <GroupBox Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="Logical Parameter lane" AutomationProperties.AutomationId="LogicalParameterTimelineSurface">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <ui:TimelineSurface x:Name="SegmentParameterTimeline" Tag="ParameterLanes" Snapshot="{Binding ParameterSnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" ContextMenu="{StaticResource TimelineContextMenu}"
+                                    ValueTraceShape="{Binding ValueTraceShape}"
                                     CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                     StartTick="{Binding StartTick, Mode=TwoWay}" TickSpan="{Binding TickSpan, Mode=TwoWay}"
                                     FirstLane="0" LaneHeight="160" GridStepTicks="{Binding GridStepTicks}" OperationStepTicks="{Binding LaneEditorSettings.EffectiveOperationStepTicks}"
@@ -879,6 +883,7 @@
                       <GroupBox Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice note piano roll" AutomationProperties.AutomationId="SubVoiceNoteTimelineSurface">
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <ui:TimelineSurface x:Name="SubVoiceNoteTimeline" Tag="SubVoiceNotes" Snapshot="{Binding SubVoiceNoteSnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" OnionSnapshot="{Binding OnionSnapshot}"
+                                            RulerClicked="OnTimelineRulerClicked"
                                             ContextMenu="{StaticResource TimelineContextMenu}"
                                             IsTimeRangeSelectionEnabled="False"
                                             CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
@@ -926,6 +931,9 @@
                       <local:LaneTabHost Style="{StaticResource LaneTabs}" Grid.Row="3" Grid.Column="2" SelectedIndex="{Binding ActiveLowerEditorIndex, Mode=TwoWay}" SelectionChanged="OnSubVoiceLowerEditorSelectionChanged"
                                   Visibility="{Binding IsLowerEditorVisible, Converter={StaticResource BooleanToVisibility}}">
                         <TabItem Header="Vel."><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ui:TimelineSurface x:Name="SubVoiceVelocityTimeline" Tag="SubVoiceVelocity" Snapshot="{Binding SubVoiceVelocitySnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" SurfaceMode="Velocity" ContextMenu="{StaticResource TimelineContextMenu}" ValueScrollOffset="{Binding VelocityValueScrollOffset, Mode=TwoWay}" IsTimeRangeSelectionEnabled="False"
+                          ToolMode="{Binding ToolMode}" ValueTraceShape="{Binding ValueTraceShape}" RulerClicked="OnTimelineRulerClicked"
+                          ItemInvoked="OnTimelineItemInvoked" BackgroundInvoked="OnTimelineBackgroundInvoked"
+                          SelectionReplacementStarted="OnTimelineSelectionReplacementStarted" MarqueeCompleted="OnTimelineMarqueeCompleted"
                           CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                           StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
                           FirstLane="0" LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"
@@ -938,6 +946,7 @@
                         <TabItem Header="Event Lane"><Grid>
                           <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                           <ui:TimelineSurface x:Name="SubVoiceEventTimeline" Tag="SubVoiceEvents" Snapshot="{Binding SubVoiceEventSnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" ContextMenu="{StaticResource TimelineContextMenu}" ValueScrollOffset="{Binding EventValueScrollOffset, Mode=TwoWay}" IsTimeRangeSelectionEnabled="False"
+                                              ValueTraceShape="{Binding ValueTraceShape}" RulerClicked="OnTimelineRulerClicked"
                                               CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" SurfaceMode="EventLanes" ToolMode="{Binding ToolMode}"
                                               StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
                                               LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" OperationStepTicks="{Binding EventLaneEditorSettings.EffectiveOperationStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"

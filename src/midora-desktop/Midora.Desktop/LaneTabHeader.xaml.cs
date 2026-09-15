@@ -99,6 +99,7 @@ public partial class LaneTabHeader : UserControl
     {
         if (_state is null || Owner is null || _workspace is null) return;
         var key = _state.Active;
+        Shapes.Visibility = key == LaneTabKey.Instrument ? Visibility.Collapsed : Visibility.Visible;
         int index = key.Type == 0 ? 0 : key.Type == 1 ? 1 : 2;
         bool restore = _restoreOwnerAxis || _restoreAxisKey == key || _displayed != key || Owner.SelectedIndex != index;
         _restoreOwnerAxis = false;
@@ -185,6 +186,7 @@ public partial class LaneTabHeader : UserControl
     private void OnDirectoryClosed(object sender, EventArgs e)
     { if (IsLoaded) Present(true); }
     private void OnSnapClick(object sender, RoutedEventArgs e) => Present(true);
+    private void OnShapeChosen(object? sender, EventArgs e) => Present(true);
     private void OnAddLane(object sender, RoutedEventArgs e) => Host?.AddLaneFromHeader(this);
     private void OnSubdivisionLostFocus(object sender, KeyboardFocusChangedEventArgs e) => Host?.CommitLaneSubdivision(sender, e);
     internal static T? Find<T>(DependencyObject? root, Func<T, bool>? predicate = null) where T : DependencyObject

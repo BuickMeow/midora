@@ -207,13 +207,13 @@ Hide 不删除 Project 数据；Delete Lane Data 删除该 Lane 的用户内容�
 
 Velocity 视图按 Note start tick 绘制固定窄柱，高度表示 velocity；柱宽不表达 Note 长度，柱顶必须显示明显大于柱宽的方形 onset marker，以同时明确 Note start tick 和 velocity 顶点。同 tick 存在多个 pitch 时，按 pitch 从低到高绘制，使高 pitch 对应柱位于最上层；pitch 相同时按稳定 ID 确定顺序。
 
-左键在空白处按下并拖动形成自由轨迹，右键拖动使用起止点直线轨迹；无选择时手势作用于轨迹经过的全部柱，存在选择时只作用于经过且已选择的柱。按住期间只显示轻量轨迹覆盖层，不逐柱重绘、不更新 Velocity tile，也不提交 Project；松开时根据完整轨迹一次性计算最终值、提交一次 Project Undo，并异步重建受影响 tile。单击而未移动仍以该点作为单点轨迹，包括 tick 0。Escape 或 mouse capture 丢失取消轨迹且不提交。
+Draw 下在空白处左拖执行当前 Free / Line / Horizontal 形态：分别为自由轨迹、起止点直线、原点力度的水平线；右拖只框选对应 Note。无选择时绘线作用于轨迹经过的全部柱，存在选择时只作用于经过且已选择的柱。按住期间只显示轻量轨迹覆盖层，不逐柱重绘、不更新 Velocity tile，也不提交 Project；松开时根据完整轨迹一次性计算最终值、提交一次 Project Undo，并异步重建受影响 tile。单击而未移动仍以该点作为单点轨迹，包括 tick 0。Escape 或 mouse capture 丢失取消轨迹且不提交。
 
 左键直接按住单柱或其 onset marker 上下拖动时，只调整命中的一个 Note，不显示轨迹；同 tick 重叠柱按上述最上层顺序命中。该单柱 transient 允许只覆盖一个柱，松开时提交。所有 Velocity 手势都不得改变 Note 的位置、长度或 pitch。
 
 Logical/MIDI Segment 与 SubVoice 的 Velocity ruler 不建立 Time Range Selection；从 Velocity 内容区向 ruler 或视图外拖动时，当前 velocity 手势继续按 pointer capture 完成或取消，不得被 ruler 的时间范围手势截获。Segment Logical Parameter / Direct MIDI Event Lane 与 SubVoice Event Lane 的 ruler 服从同一“无 Time Range”规则。
 
-`Alt + Left Drag` 必须强制使用自由轨迹手势：起点即使命中单柱或 onset marker，也不得进入单 Note 调整。该修饰键只覆盖 direct-hit 分流，不改变“存在选择时仅作用于已选择 Note”的过滤规则。
+`Alt + Left Drag` 强制使用当前绘线形态：起点即使命中单柱或 onset marker，也不得进入单 Note 调整。该修饰键只覆盖 direct-hit 分流，不改变“存在选择时仅作用于已选择 Note”的过滤规则。形态工具组和共享主 ToolMode 见 §20.4.12.2；非 Draw 禁用子组，D 不重置形态。
 
 单个参数 Lane 编辑器左侧显示值标尺，右侧显示对应水平参考线；Lane 具有独立于 piano roll 的纵向缩放。参考值密度随纵向缩放调整。纵向缩放、滚轮平移、中键平移和右侧滚动条必须操作同一有界数值视口，标尺随视口更新，不得越过参数合法范围；顶部与底部标签保持在可视区域内。Integer 参数由指针纵坐标得到的值必须先按 `AwayFromZero` 取到最近整数，再执行合法范围验证。
 ### 18.2.6 同步
@@ -373,7 +373,7 @@ A user event at tick 0 may override the corresponding Initial State.
 同一 SubVoice Section 的 `Initial State` 子页还必须提供该 SubVoice 的 Name、Root Note inherited/override 与全部现有 Initial State target 的精确编辑。添加新的 CC/RPN/NRPN target 使用显式选择器；空值表示删除该 Initial State override。提交失败恢复最后合法值。
 ### 18.4.4 Template 与 Root Note
 Template Length 属于 Event Instrument，不是每条 SubVoice 独立长度。
-可视模板末端不是 SubVoice 普通事件的创建上界。单击、Shift 单点、自由绘线、右键直线/水平线、批量创建、粘贴、复制拖动，以及已有事件 Move/Properties 等正式入口，创建或移到模板外的点必须在同一原子命令中把 Template Length 扩至至少 `tick + 1`；原有 Value Curve 点创建遵循同一边界但不转换为离散事件。所有打开的同 Definition 视图随成功提交刷新；一次 Undo 同时恢复内容与旧模板长度，Redo 恢复结果。负 tick、溢出、取消、过期 owner/revision 或资源失败不得部分发布。不要为扩模板重建已删除的可选 Mapping；Initial State 无 tick，不参与扩长。Logical/Pure MIDI Segment 的 crop 和合法编辑边界不由此改变。
+可视模板末端不是 SubVoice 普通事件的创建上界。单击、Shift 单点、左键 Free/Line/Horizontal 绘线、批量创建、粘贴、复制拖动，以及已有事件 Move/Properties 等正式入口，创建或移到模板外的点必须在同一原子命令中把 Template Length 扩至至少 `tick + 1`；原有 Value Curve 点创建遵循同一边界但不转换为离散事件。所有打开的同 Definition 视图随成功提交刷新；一次 Undo 同时恢复内容与旧模板长度，Redo 恢复结果。负 tick、溢出、取消、过期 owner/revision 或资源失败不得部分发布。不要为扩模板重建已删除的可选 Mapping；Initial State 无 tick，不参与扩长。Logical/Pure MIDI Segment 的 crop 和合法编辑边界不由此改变。
 Configurations 的 Template 区必须提供 `Pre-Roll Ticks` 非负整数编辑，显示范围 `0..当前 Template Length`、默认 0。Configuration 输入留空或仅含空白时，提交前静默将输入框及待提交值归为 `0`；原正式值已为 `0` 时不产生 History edit。提交只在 `0 <= value <= Template Length` 时通过一个正式原子 Definition 命令生效；非空非法输入仍拒绝并恢复打开/提交前的合法值，不进行 Clamp。Properties Dialog 同时修改 Template Length、Pre-Roll Ticks、Loop 边界与 Per-Note Instance Isolation 时，必须按最终 draft 一次验证并作为一个 History edit 提交。帮助文本须说明 Logical Note start 是 Gate anchor、模板 origin 会提前，并提示实例 origin 越过 Segment 左边界将导致编译 Error。
 SubVoice 显示 Root Note 的 inherited / override 状态和 Effective Value。
 Loop 区域可以只读显示，但在 Lifecycle Editor 中编辑。
@@ -536,7 +536,7 @@ Project End Marker
 ### 18.7.2 Tempo
 初版只支持离散 Tempo 事件，不支持 Tempo Ramp 或连续 Tempo Automation。
 Tempo 大于 0，允许小数，不设置 20～300 等经验型限制。
-Tempo 占独立较高区域，以水平保持线及变化 tick 的竖直跳变连接，不得画斜线暗示 Ramp。可见区域左界须恢复最近前驱状态。BPM 显示范围可缩放、平移或 Fit，不是合法值限制。自由绘线、右键直线、Shift+右键 `y=k`、Shift 固定 tick 改值及 Ctrl 复制均沿用 Event Lane 交互；Snap 开启按操作格点插点，关闭逐 tick 插点。所有生成值仍按第 4 章和 MIDI 表示边界验证。
+Tempo 占独立较高区域，以水平保持线及变化 tick 的竖直跳变连接，不得画斜线暗示 Ramp。可见区域左界须恢复最近前驱状态。BPM 显示范围可缩放、平移或 Fit，不是合法值限制。左键 Free/Line/Horizontal 绘制、Shift 固定 tick 改值、Ctrl 复制和右拖框选均沿用 Event Lane 交互；Snap 开启按操作格点插点，关闭逐 tick 插点。所有生成值仍按第 4 章和 MIDI 表示边界验证；绘制轨迹不会把 Tempo 变为连续 Ramp。
 
 密集 Tempo 按设备列保留 first/last/min/max 包络和末值保持；可分离点保持固定 device pixel 大小。LOD、阶梯缓存和标签只是展示，不替代正式对象命中或编译。其他正式事件 lane 同样使用有界密集点聚合和不重叠标签，不把任意 opaque Meta 提升为 Conductor 类型。
 ### 18.7.3 Time Signature 与 Key Signature

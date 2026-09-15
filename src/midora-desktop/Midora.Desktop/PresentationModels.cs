@@ -341,6 +341,12 @@ public abstract class WorkspaceViewModel(
     private bool _isPresentationSuspended;
     public bool IsDisposed => _isDisposed;
     public bool IsPresentationSuspended => _isPresentationSuspended;
+    private TimelineValueTraceShape _valueTraceShape;
+    public virtual TimelineValueTraceShape ValueTraceShape
+    {
+        get => _valueTraceShape;
+        set => Set(ref _valueTraceShape, value);
+    }
 
     public void SuspendPresentation()
     {
@@ -3289,7 +3295,18 @@ public sealed class InstrumentWorkspaceViewModel(
     public MidoraId? ActiveSubVoiceId
     {
         get => _activeSubVoiceId;
-        private set => Set(ref _activeSubVoiceId, value);
+        private set { if (Set(ref _activeSubVoiceId, value)) Raise(nameof(ValueTraceShape)); }
+    }
+    private readonly Dictionary<MidoraId, TimelineValueTraceShape> _subVoiceTraceShapes = [];
+    public override TimelineValueTraceShape ValueTraceShape
+    {
+        get => ActiveSubVoiceId is { } id ? _subVoiceTraceShapes.GetValueOrDefault(id) : TimelineValueTraceShape.Free;
+        set
+        {
+            if (ActiveSubVoiceId is not { } id || ValueTraceShape == value) return;
+            _subVoiceTraceShapes[id] = value;
+            Raise(nameof(ValueTraceShape));
+        }
     }
     public string ActiveSubVoiceName
     {

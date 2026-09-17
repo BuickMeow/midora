@@ -1631,6 +1631,8 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         Raise(nameof(CanUseContextMenus));
     }
 
+    public bool ShowEventLaneLines => _applicationPreferences.Appearance.ShowEventLaneLines;
+
     public bool RequiresAudioWorkerRebuild(ApplicationPreferences preferences)
     {
         ArgumentNullException.ThrowIfNull(preferences);
@@ -1656,6 +1658,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         }
 
         _applicationPreferences = preferences;
+        Raise(nameof(ShowEventLaneLines));
         if (!rebuildAudioWorker)
         {
             _context?.Playback?.ConfigurePlaybackPreferences(

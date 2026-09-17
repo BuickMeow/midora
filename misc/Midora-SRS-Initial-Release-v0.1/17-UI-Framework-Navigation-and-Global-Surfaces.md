@@ -143,6 +143,7 @@ Realtime Maximum Sample Voices per Unit Stream
 Maximum Reusable Audio Cache Bytes
 Ordered application SoundFont list: absolute local SF2/SFZ path + Enabled + optional target mapping
 Appearance Language (initial release only offers English)
+Show event lane lines (default enabled; all lanes except Vel. and Inst.)
 ```
 Audio Cache Root 不是可编辑 Preference，固定为 `<ProgramRoot>/.tmp/AudioCache`。这些状态：
 - 不进入 Project Undo / Redo；
@@ -155,6 +156,8 @@ Audio Cache Root 不是可编辑 Preference，固定为 `<ProgramRoot>/.tmp/Audi
 SoundFont 列表对所有 Project 和从 MIDI 导入的新 Project 共用，不属于 Project 创建参数。列表支持新增 SF2/SFZ、删除、启用/禁用和排序；Enabled 只显示复选框，不重复显示 `Enabled` 文字。每项还提供完整 Target Bank MSB/LSB/Program 三元组：SF2 可关闭映射，SFZ 强制启用映射。顺序是正式 BASSMIDI 优先顺序。列表工具栏位于列表顶部；列表自身单个滚轮刻度使用小幅像素滚动，不得沿用下拉框或外层页面的大步进。Apply 的 Draft/持久化部分只保存路径与映射结构，不读取、复制或完整 hash 文件，不检查 SFZ 依赖；若 SoundFont、target、实时音频或音频缓存配置变化，持久化后必须显示 `Saving Settings` 模态任务并立即重建、加载和保留 Worker。加载失败必须明确报告且不得伪装成保存失败或静默恢复旧设置。列表不得进入 `.midora`、Project Modified 或 Undo/Redo。
 
 Application Preferences 必须分为 `Audio | SoundFonts | Appearance` 三个 Tab。Audio 包含 Playback、Realtime Audio 与 Audio Cache；SoundFonts 包含上述有序列表；Appearance 初版显示 Language 下拉框且唯一可选项为 `English`，为未来本地化预留稳定入口，但本轮不引入语言包或热切换。
+
+Appearance 同时提供全局 `Show event lane lines`，默认启用，控制 MIDI Segment、Logical Segment 和 SubVoice 除 Vel.／Inst. 外全部 Lane 的辅助线（§18.2.10）。不再在各 Lane 工具栏提供 Lines 开关。设置成功保存后立即应用于已打开及以后打开的 Lane；取消、关闭或设置保存失败不发布 draft 值。旧程序设置没有此字段时使用启用默认值。该显示偏好不标记 Project Modified、不进入 Undo／canonical／音频配置，不因此重建 Worker。
 ### 17.2.3 Project Presentation 与 Project Session UI State
 
 Format 3 的 Project presentation 只保存第 3.11 与第 16.33 节明确列出的 Onion/All-Tracks 容器。它使用独立 revision/save baseline，不标记 Project Modified、不进入 Undo/Redo、编译或 canonical；损坏时恢复默认 presentation 并独立警告。

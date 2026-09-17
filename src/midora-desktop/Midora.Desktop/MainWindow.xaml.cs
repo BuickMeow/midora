@@ -3088,13 +3088,14 @@ public partial class MainWindow : Window
         string text = source.Trim();
         if (text.Length == 0) return null;
         int entered = int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
-        int clamped = MidiStateValueRules.Clamp(target, entered);
+        int raw = MidiEditingValueDomain.ClampInitialState(target, entered);
+        int clamped = raw + MidiEditingValueDomain.Offset(target);
         if (clamped != entered)
         {
             _session.SetStatusMessage(
                 $"{displayName}: {entered.ToString(CultureInfo.InvariantCulture)} was clamped to {clamped.ToString(CultureInfo.InvariantCulture)}.");
         }
-        return clamped;
+        return raw;
     }
 
     private static MidiValueTarget ParseConfigurationMidiTarget(string key)
@@ -6818,8 +6819,8 @@ public partial class MainWindow : Window
                             WorkspaceTimelineSelectionKind.LogicalParameterPoint,
                             segmentId,
                             laneId,
-                            PointMinimum: timeline.ActiveValueMinimum,
-                            PointMaximum: timeline.ActiveValueMaximum);
+                            PointMinimum: timeline.ActiveEditingValueMinimum,
+                            PointMaximum: timeline.ActiveEditingValueMaximum);
                     }
                     if (lane?.DirectMidiTarget is DirectMidiEventLaneTarget target
                         && (item is null
@@ -6830,8 +6831,8 @@ public partial class MainWindow : Window
                             segmentId,
                             DirectMidiEventKind: target.Kind,
                             DirectMidiData1: target.Data1,
-                            PointMinimum: timeline.ActiveValueMinimum,
-                            PointMaximum: timeline.ActiveValueMaximum);
+                            PointMinimum: timeline.ActiveEditingValueMinimum,
+                            PointMaximum: timeline.ActiveEditingValueMaximum);
                     }
                     return null;
                 }
@@ -6896,8 +6897,8 @@ public partial class MainWindow : Window
                     instrumentId,
                     subVoiceId,
                     target,
-                    PointMinimum: instrument.ActiveValueMinimum,
-                    PointMaximum: instrument.ActiveValueMaximum);
+                    PointMinimum: instrument.ActiveValueAxisMinimum,
+                    PointMaximum: instrument.ActiveValueAxisMaximum);
 
             default:
                 return null;
@@ -8115,10 +8116,9 @@ public partial class MainWindow : Window
                     segmentId,
                     DirectMidiEventKind: target.Kind,
                     DirectMidiData1: target.Data1,
-                    PointMinimum: 0,
-                    PointMaximum: target.Kind == DirectMidiChannelEventKind.PitchBend
-                        ? 16383
-                        : 127));
+                    PointMinimum: MidiEditingValueDomain.Offset(target.Kind, target.Data1),
+                    PointMaximum: (target.Kind == DirectMidiChannelEventKind.PitchBend ? 16383 : 127)
+                        + MidiEditingValueDomain.Offset(target.Kind, target.Data1)));
         }
     }
 
@@ -8524,8 +8524,8 @@ public partial class MainWindow : Window
                         instrumentId,
                         voice.Id,
                         target,
-                        PointMinimum: minimum,
-                        PointMaximum: maximum));
+                        PointMinimum: minimum + MidiEditingValueDomain.Offset(target),
+                        PointMaximum: maximum + MidiEditingValueDomain.Offset(target)));
             }
             return;
         }

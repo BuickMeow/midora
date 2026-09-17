@@ -112,7 +112,7 @@
 | INV-101 | Instrument Catalog 是 `<ProgramRoot>\Data\Catalogs` 中独立版本化的程序级名称辅助数据；解析优先级固定为 User Override→Enabled SoundFont 顺序绑定的 Imported Profile→Enabled User Profile 顺序→General MIDI→数值 fallback。Catalog/Profile/名称与 SoundFontEntryId 不进入 Project、canonical、导出、音频配置等价性或缓存身份；损坏只回退名称。 |
 | INV-102 | `Add Event Binding...` 冻结当前目标 SubVoice IDs，并以一个失败原子的 Project command创建一个 Integer Logical Parameter、每 SubVoice 一个正式 Mapping及缺失的空 event owner；不得创建 tick 0 event。All 不动态包含以后新增者；CC91/93拒绝；Append/Replace顺序、Override/Add/Multiply accumulator语义、Round/Clamp及一次Undo/Redo必须确定。 |
 | INV-103 | Pure MIDI Track 新建/SMF导入按最终 global Arrangement位置使用固定八色 palette轮换；Duplicate/Copy/Paste继承，既有 Track 不因排序/删除重染。Logical Track继续使用独立 ColorOverride→Definition color；颜色只发布 presentation change，不得改变 canonical、导出或音频缓存。 |
-| INV-104 | Timeline 工具表达式固定使用独立 batch-note/event v1、note-split v1、generate-note/event v1 profile；精确变量 schema 见 §20.4.13。非空表达式必须以 `=` 开头，共用 8,192 scalar / 512 syntax node / 64 depth 上限与固定纯数值 Math 白名单；依赖必须无环，结果必须 finite。Generator 不能扩大旧 Batch profile，工具与 Project Mapping ABI v3 互相独立。Preset 只位于 `<ProgramRoot>\Data\Presets`，带 schema/profile/tool/数值契约版本并在每次加载时严格重验证；不进入 Project、Undo 或 canonical。 |
+| INV-104 | Timeline 工具表达式固定使用独立 batch-note v1、batch-event v2、note-split v1、generate-note v1、generate-event v2 profile；精确变量 schema 见 §20.4.13。非空表达式必须以 `=` 开头，共用 8,192 scalar / 512 syntax node / 64 depth 上限与固定纯数值 Math 白名单；依赖必须无环，结果必须 finite。Generator 不能扩大旧 Batch profile，工具与 Project Mapping ABI v3 互相独立。Preset 只位于 `<ProgramRoot>\Data\Presets`，带 schema/profile/tool/数值契约版本并在每次加载时严格重验证；不进入 Project、Undo 或 canonical。 |
 | INV-105 | Humanize 只作用于三类 Note 的 Tick/Gate/Velocity，不改 Key。同一显式 seed 必须依据 owner identity、冻结 formal ordinal 和 field kind 得到稳定结果；Undo/Redo 不重抽样。Tick 越 owner 硬边界删除 Note 且不扩展容器，Velocity/Gate 分别 Clamp 到 `1..127` / 最小 1 tick，最后执行 Note later-loses exact-collision reducer。 |
 | INV-106 | Note Split 必须按 owner 的全局选区刀线以 active-interval sweep 生成，提供 Fixed Piece Length、Maximum Piece Count 和受限 Expression；只有 Expression 读取可配置的 Maximum Cuts（默认 65,535），Fixed / Maximum Pieces 必须完整规划且不得被它截断，三种模式共用 16,777,216 刀硬上限。结果记录上限 100,000,000，working/resident 各 64 MiB，owned spill 16 GiB。第一片保留源 ID，Direct MIDI 全片继承 NoteOff velocity。Join 按 owner+key 以非负 Maximum Gap（默认 0）合并，使用第一条 NoteOn velocity、Direct run 最后一条 NoteOff velocity，不改未选 Note。 |
 | INV-107 | Note/Event Quantize 复用正式 Snap/Grid/Time Signature 服务，固定 100%、不提供 Bar，中点选早格。Note 提供 Start only 与 Start+End，后者 `end<=start` 时饱和为 `start+1`，exact start+key 按冻结 formal order later-loses。Event 只覆盖 Direct MIDI Channel Event、Logical Parameter Point 和 SubVoice MIDI Event，只改 Tick，exact tick+target 按冻结 formal order later-wins；未命中的导入重复必须保留。全部命令以 detached paged transaction 可取消准备、零部分发布，成功后形成一次 Undo 和确定选择结果。 |
@@ -129,6 +129,9 @@
 | INV-118 | SMF 超长 delta 仅在导出编码时用零长度 Text Meta `FF 01 00` 分段，保持原事件 Tick、顺序和 Track/EOT，不进入 Project/canonical/编译诊断、统计或增量检查。每个 MTrk 数据区硬上限为 `0xFFFFFFFF` 字节（不含 8 字节 chunk 头），不因大小拆分，超限只使本次 MIDI 导出原子失败，编译不感知该字节限制。填充成本和字节计数须安全预检、有界流式写入且可取消；其他 MIDI 值域、单条 payload 和 ntrks 硬限制不放宽。成功填充只输出导出级汇总 Info/README 摘要，不逐条列占位。 |
 | INV-119 | Instrument Change 是显式创建的持久编辑关联，不是新的音乐事件；MIDI Segment 关联同 Tick CC0/CC32/PC，SubVoice 关联完整 Bank/Program，只保存自身及成员 Stable ID。值改保留、结构破坏按完整事务最终态解组，剩余 raw 保留，Undo 恢复；导入不自动发现包装。新组 Bank→PC 位于本 Track 同 Tick NoteOn 前，不改变较早其他 Track 顺序。Format 4 独立严格关联组件不得以 presentation 回退丢弃；旧 1/2/3 reader/golden 冻结。统一选择器 Program 0～127，Initial State 三字段独立继承，preset audition 经干净 canonical/现有 Master→Limiter，仅停止自身 owner，不抢停普通播放。 |
 | INV-120 | 三类钢琴卷帘的事件编辑器按正式 target 展示 Lane Tabs；Vel. 固定第一，MIDI Segment/SubVoice 的 Inst. 固定第二。隐藏或重排只改会话视图，不删除数据、Mapping 或选择；被动刷新/Undo/选择不隐式导航，显式 Add/Locate/目录才显示并激活目标。目录计数按冻结实际 source 建立有界、可取消、修订隔离的后台摘要；未知不能显示为 0。各 target 的纵轴独立、水平共享，Piano/Event Snap 分离而事件 targets 共用 Event Snap；只保留一个活动画布。Instrument Change 的 List 行替代其成员行，选择仍使用真实成员 ID，所有包装批改经完整原子 raw 事务与最终态关联校验。 |
+
+| INV-121 | CC10／71～78 的外侧图形、列表、Properties、适用 Initial/Reset State 和 Batch/Generator 使用 raw−64 的显示域，提交一次反变换；delta/factor 不偏移，Generator 反馈保持显示域。Project/Mapping 全链/Context/canonical/文件/音频仍 raw；其他 target 及 PB 既有契约不变。Event 工具 profile/numeric contract v2，旧 Event Preset 不静默重解释，保留原文件并明确不兼容。 |
+| INV-122 | 三宿主除 Vel./Inst. 外全部 Lane 的辅助阶梯线，由程序级 Appearance 全局开关控制、默认启用。只连接自身 owner/target 显式点与自身前驱，正式同 Tick order 不以 ID 替代；不补 Initial/default、不跨 owner，不参与命中或编辑。包含 Bank-PC/协议命令/opaque，opaque 沿用点的固定 y、不解释 payload，线不声明 MIDI 状态持续；Value Curve/Envelope 不变。crop 外弱化，SubVoice 线止于模板末尾；设备列聚合与范围缓存必须有界、异步、可取消，迟到任务不得串目标或覆盖新修订，点/选择优先。不设逐 Lane 开关，不进入 Project/Undo/Modified，不因此重建 Worker。 |
 
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
@@ -163,6 +166,7 @@
 | Track/SubVoice 洋葱皮、All Tracks Raw/Compiled、有界只读缓存、来源色和 Stale | 第 3、16、18 章；INV-115～116 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、分页 ordinal/range query、detached edit、浮动工具、拖放、验证、快捷键和 UI 验收 | 第 18、20、23、24 章；INV-095～100 |
+| 指定 CC 友好数值、事件辅助阶梯线 | §8.54.4、§18.2.9/10、§20.4.13；INV-121/122 |
 | 工具表达式 profile、Preset、Humanize、Note Split/Join、Note/Event Quantize、Batch Create、Segment 双向转换 | 第 18、20、23 章；INV-104～109 |
 | 初版排除项、实现自由度和变更控制 | 第 21 章 |
 | MIDI Channel Root、Pure MIDI Track、Track Color、Midi Segment、SMF 导入、Running Status、Pure MIDI 导出拓扑 | 第 23、24 章；INV-103 |

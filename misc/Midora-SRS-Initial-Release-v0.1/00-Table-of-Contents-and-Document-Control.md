@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-09-15**
+> 最近修订日期：**2026-09-17**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -50,7 +50,14 @@
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
 
+## 2026-09-17 修订摘要
+
+- 按 A4a 验收后的明确需求改动，§18.2.10／INV-122 的辅助 Lines 扩大为三宿主除 Vel.／Inst. 外的所有 Lane，包含 Bank、Program、协议命令 CC 和 Imported Meta／SysEx；辅助线用于位置和自身前驱提示，不代表 MIDI 状态持续，也不解释 opaque payload。
+- 删除逐 Lane 工具栏 Lines 开关，改为 §17.2.2 Application Preferences → Appearance 的全局 `Show event lane lines`，默认启用，保存后更新当前及后续 Lane；不进入 Project／Undo／Modified，不因此重建音频 Worker。原始数值、曲线插值和编译语义保持不变。实施与样例修正见 [验收后修订记录](../Midora-A4a-Acceptance-Followup-2026-09-17.md)。
+
 ## 2026-09-15 修订摘要
+
+- A4a 按已确认 R12/R29、D-VAL01.a～d／D-STEP01～04 落地指定 CC 的外侧友好域与三宿主可关闭辅助阶梯线；Project/Mapping/raw/canonical/音频和 Format 4 不变。Event Batch/Generator profile 与 numeric contract 升至 v2，旧 Event Preset 不静默重解释。见 §8.54.4、§18.2.9/10、§20.4.13、INV-104/121/122 及 [A4a 实施记录](../Midora-A4a-Event-Display-Implementation-2026-09-15.md)。
 
 - A3 后续用户明确修订：浮动图标 15 DIP 居中、27 DIP 按钮；Timeline 内容空白右击在有有效选区时提供完整选区菜单，无选择才使用容器菜单，混合类型仍显式分组。修复内容菜单与标尺原生菜单复用造成的坐标偏移。见 §20.3.7、§20.4.12、§20.7.3/4/9.1、INV-097/098、A3 记录 §8；不改变格式或音乐语义。
 

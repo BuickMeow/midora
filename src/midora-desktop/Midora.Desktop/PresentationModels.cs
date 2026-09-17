@@ -1388,8 +1388,12 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         get => _activeValueMaximum;
         private set { if (Set(ref _activeValueMaximum, value)) Raise(nameof(ActiveValueAxisMaximum)); }
     }
-    // Display coordinates only. Bulk commands still receive the formal scalar
-    // range above (Direct MIDI Pitch Bend is encoded as 0..16383).
+    // The CC editor/tools use the friendly domain. Direct Pitch Bend retains
+    // its separate axis-only signed projection; its tool scalar stays 0..16383.
+    public double ActiveEditingValueMinimum => ActiveValueMinimum + (GetActiveParameterLaneOption()?.DirectMidiTarget is { } target
+        ? MidiEditingValueDomain.Offset(target.Kind, target.Data1) : 0);
+    public double ActiveEditingValueMaximum => ActiveValueMaximum + (GetActiveParameterLaneOption()?.DirectMidiTarget is { } target
+        ? MidiEditingValueDomain.Offset(target.Kind, target.Data1) : 0);
     public double ActiveValueAxisMinimum => ActiveValueMinimum + _activeValueDisplayOffset;
     public double ActiveValueAxisMaximum => ActiveValueMaximum + _activeValueDisplayOffset;
     private double ActiveValueDisplayOffset
@@ -2270,6 +2274,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
         EventInstrument? instrument = project.FindEventInstrumentDefinition(track);
         List<TimelineRenderItem> parameterItems = [];
         List<string> parameterLabels = [];
+        TimelineStepSignalSource? stepSignal = null;
         ITimelineRenderItemSource? retainedParameterSource = null;
         MidoraId? previousParameterId = GetActiveParameterLaneOption()?.ParameterId;
         ParameterLaneOptions.Clear();
@@ -2363,6 +2368,8 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
                     maximum = definition.Maximum;
                 }
                 CurvePointQuerySnapshot pointSnapshot = lane.Points.CreateQuerySnapshot();
+                if (definition is not null)
+                    stepSignal = EventStepSignalSources.Logical(lane.Id, pointSnapshot, minimum, maximum);
                 PagedLogicalParameterTimelineItemSource parameterSource = new(
                     lane,
                     pointSnapshot,
@@ -2383,7 +2390,7 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
             $"segment-parameters:{segment.Id.Value}",
             parameterItems,
             parameterLabels,
-            itemSource: retainedParameterSource);
+            itemSource: retainedParameterSource, stepSignalSource: stepSignal);
     }
 
     private void RebuildMidiSegment(
@@ -2486,7 +2493,8 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
             : 127;
         ActiveValueIntegral = true;
         DirectMidiEventLaneTarget? activeTarget = GetActiveParameterLaneOption()?.DirectMidiTarget;
-        ActiveValueDisplayOffset = activeTarget is { Kind: DirectMidiChannelEventKind.PitchBend } ? -8192 : 0;
+        ActiveValueDisplayOffset = activeTarget is { Kind: DirectMidiChannelEventKind.PitchBend } ? -8192
+            : activeTarget is { } displayTarget ? MidiEditingValueDomain.Offset(displayTarget.Kind, displayTarget.Data1) : 0;
         bool activeOpaque = GetActiveParameterLaneOption()?.IsOpaqueMidiLane == true;
         ITimelineRenderItemSource? activeSource = activeOpaque
             ? new PagedDirectMidiTimelineItemSource(
@@ -2513,7 +2521,11 @@ public sealed partial class TimelineWorkspaceViewModel : WorkspaceViewModel, IPl
             activeOpaque
                 ? ["Imported Meta / SysEx"]
                 : activeTarget is null ? [] : [DirectMidiLaneLabel(activeTarget.Value)],
-            itemSource: retainedActiveSource);
+            itemSource: retainedActiveSource,
+            stepSignalSource: activeOpaque
+                ? EventStepSignalSources.Opaque(segment.Id, opaqueEventSnapshot)
+                : activeTarget is { } signalTarget
+                    ? EventStepSignalSources.Direct(segment.Id, channelEventSnapshot, signalTarget) : null);
         ScheduleMidiTargetDiscovery(segment, channelEventSnapshot);
     }
 
@@ -3280,13 +3292,16 @@ public sealed class InstrumentWorkspaceViewModel(
     public double ActiveValueMinimum
     {
         get => _activeValueMinimum;
-        private set => Set(ref _activeValueMinimum, value);
+        private set { if (Set(ref _activeValueMinimum, value)) Raise(nameof(ActiveValueAxisMinimum)); }
     }
     public double ActiveValueMaximum
     {
         get => _activeValueMaximum;
-        private set => Set(ref _activeValueMaximum, value);
+        private set { if (Set(ref _activeValueMaximum, value)) Raise(nameof(ActiveValueAxisMaximum)); }
     }
+    private int _activeEditingValueOffset;
+    public double ActiveValueAxisMinimum => ActiveValueMinimum + _activeEditingValueOffset;
+    public double ActiveValueAxisMaximum => ActiveValueMaximum + _activeEditingValueOffset;
     public bool ActiveValueIntegral
     {
         get => _activeValueIntegral;
@@ -3712,14 +3727,18 @@ public sealed class InstrumentWorkspaceViewModel(
         ActiveValueMinimum = 0;
         ActiveValueMaximum = 127;
         ActiveValueIntegral = true;
+        _activeEditingValueOffset = 0;
         if (lanes.Count != 0)
         {
             InstrumentRenderLane activeLane = lanes[ActiveRenderLaneIndex];
             if (activeLane.Target is MidiValueTarget activeTarget)
             {
                 (ActiveValueMinimum, ActiveValueMaximum) = MidiValueRange(activeTarget);
+                _activeEditingValueOffset = MidiEditingValueDomain.Offset(activeTarget);
             }
         }
+        Raise(nameof(ActiveValueAxisMinimum));
+        Raise(nameof(ActiveValueAxisMaximum));
         ITimelineRenderItemSource? activeEventSource = activeVoice is null
             || templateSnapshot is null
             || lanes.Count == 0
@@ -3765,7 +3784,10 @@ public sealed class InstrumentWorkspaceViewModel(
             $"instrument-events:{instrument.Id.Value}:{projectionSuffix}",
             activeEvents,
             lanes.Count == 0 ? [] : [lanes[ActiveRenderLaneIndex].Label],
-            itemSource: retainedActiveEventSource);
+            itemSource: retainedActiveEventSource,
+            stepSignalSource: activeVoice is not null && templateSnapshot is not null && lanes.Count != 0
+                && lanes[ActiveRenderLaneIndex].Target is { } signalTarget
+                    ? EventStepSignalSources.Template(activeVoice.Id, templateSnapshot, signalTarget, instrument.TemplateLengthTicks) : null);
         SubVoiceVelocitySnapshot = new(
             revision,
             $"instrument-velocities:{instrument.Id.Value}:{projectionSuffix}",
@@ -3789,7 +3811,7 @@ public sealed class InstrumentWorkspaceViewModel(
             Add("Pitch Bend Range Semitones", state.PitchBendRangeSemitones);
             Add("Pitch Bend Range Cents", state.PitchBendRangeCents);
             foreach ((int number, int value) in state.Controllers.OrderBy(item => item.Key))
-                InitialStateEntries.Add(new(MidiControlChangeCatalog.Format(number), value.ToString(System.Globalization.CultureInfo.InvariantCulture), "SubVoice"));
+                InitialStateEntries.Add(new(MidiControlChangeCatalog.Format(number), MidiEditingValueDomain.ControllerDisplay(number, value).ToString(System.Globalization.CultureInfo.InvariantCulture), "SubVoice"));
             foreach ((int number, int value) in state.RegisteredParameters.OrderBy(item => item.Key))
                 InitialStateEntries.Add(new($"RPN {number}", value.ToString(System.Globalization.CultureInfo.InvariantCulture), "SubVoice"));
             foreach ((int number, int value) in state.NonRegisteredParameters.OrderBy(item => item.Key))
@@ -3813,7 +3835,7 @@ public sealed class InstrumentWorkspaceViewModel(
             Add("pitchRangeSemitones", "PITCH RANGE SEMITONES", state.PitchBendRangeSemitones);
             Add("pitchRangeCents", "PITCH RANGE CENTS", state.PitchBendRangeCents);
             foreach ((int number, int value) in state.Controllers.OrderBy(item => item.Key))
-                Add($"cc.{number}", MidiControlChangeCatalog.Format(number), value);
+                Add($"cc.{number}", MidiControlChangeCatalog.Format(number), MidiEditingValueDomain.ControllerDisplay(number, value));
             foreach ((int number, int value) in state.RegisteredParameters.OrderBy(item => item.Key))
                 Add($"rpn.{number}", $"RPN {number}", value);
             foreach ((int number, int value) in state.NonRegisteredParameters.OrderBy(item => item.Key))
@@ -3835,7 +3857,7 @@ public sealed class InstrumentWorkspaceViewModel(
             Add("pitchRangeSemitones", "PITCH RANGE SEMITONES", state.PitchBendRangeSemitones);
             Add("pitchRangeCents", "PITCH RANGE CENTS", state.PitchBendRangeCents);
             foreach ((int number, int value) in state.Controllers.OrderBy(item => item.Key))
-                Add($"cc.{number}", MidiControlChangeCatalog.Format(number), value);
+                Add($"cc.{number}", MidiControlChangeCatalog.Format(number), MidiEditingValueDomain.ControllerDisplay(number, value));
             foreach ((int number, int value) in state.RegisteredParameters.OrderBy(item => item.Key))
                 Add($"rpn.{number}", $"RPN {number}", value);
             foreach ((int number, int value) in state.NonRegisteredParameters.OrderBy(item => item.Key))
@@ -4013,6 +4035,13 @@ public sealed class InstrumentWorkspaceViewModel(
         _ => (0, 127)
     };
 
+    internal static (double Minimum, double Maximum) MidiEditingRange(MidiValueTarget target)
+    {
+        var (minimum, maximum) = MidiValueRange(target);
+        int offset = MidiEditingValueDomain.Offset(target);
+        return (minimum + offset, maximum + offset);
+    }
+
     internal static double DenormalizeMidiValue(MidiValueTarget target, double normalized)
     {
         (double minimum, double maximum) = MidiValueRange(target);
@@ -4149,7 +4178,7 @@ public sealed class SettingsWorkspaceViewModel()
             .Select(item => new PropertyField(
                 $"{prefix}.cc.{item.Key}",
                 MidiControlChangeCatalog.Format(item.Key),
-                item.Value.ToString())));
+                MidiEditingValueDomain.ControllerDisplay(item.Key, item.Value).ToString())));
         fields.AddRange(state.RegisteredParameters.OrderBy(item => item.Key)
             .Select(item => new PropertyField($"{prefix}.rpn.{item.Key}", $"RPN {item.Key}", item.Value.ToString())));
         fields.AddRange(state.NonRegisteredParameters.OrderBy(item => item.Key)

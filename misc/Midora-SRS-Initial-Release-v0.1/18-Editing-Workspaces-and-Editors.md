@@ -251,11 +251,32 @@ Logical Segment、MIDI Segment 与 SubVoice 共享左侧 owner-data 对象列表
 列表按 local tick 和确定性同 tick 顺序合并当前 owner 的所有音符和非音符事件：Logical 包含全部参数 Lane point，MIDI 包含 Channel Event 与 Opaque SysEx/Meta，SubVoice 包含 Template Note/MIDI Event。音符每个对象一行，不拆 NoteOn/NoteOff；展示 Tick、Gate/Length、Key、Velocity，内部 Stable ID 不显示。
 
 完整显式 Instrument Change 在 List 合并为一个特殊行，不再重复列出其 raw 成员。行选择映射到全部实际成员，原始 Lane 仍可独立编辑成员；解组后剩余 raw 恢复普通行。包装数与成员消息数是不同口径，不相加虚增事件总数。混合 Note/Event/Instrument Change 选择使用显式类型子菜单，不能将包装伪装成单 scalar Event 批量编辑。
-Value 列按正式事件类型显示数值，不拼接无意义的 `Number · Value` 前缀；CC、RPN/NRPN、Polyphonic Key Pressure 的目标编号必须在 Type/Target 中保留。Bank 的 MSB/LSB 存在性与 Pitch Bend Range 的复合值不得丢失。这里只调整格式，不改变 raw 值域或现行 Program 的显示编号。
+Value 列按正式事件类型显示数值，不拼接无意义的 `Number · Value` 前缀；CC、RPN/NRPN、Polyphonic Key Pressure 的目标编号必须在 Type/Target 中保留。Bank 的 MSB/LSB 存在性与 Pitch Bend Range 的复合值不得丢失。指定 CC 的友好显示按 §18.2.9 执行；不改变 Project raw 值域或现行 Program 的显示编号。
 
 列表与图形共用 Selection。单击、Ctrl toggle、Shift 冻结 ordinal 范围及拖动范围遵循 §20.3；双击只针对被双击对象打开 `Properties...`。`Locate` 定位到对象，事件必须自动打开 Lanes 并选择对应 Lane。右键目标在打开时冻结；无效/旧修订后台结果不能恢复旧选区。Opaque payload 仅可读，不得作为普通数值点执行表达式工具。
 
 隐藏列表不得扫描或建立索引；显示时只创建可见行，排序/选区解析在可取消的有界后台任务完成。允许使用可回收的临时 scalar 排序目录，但不得建立百万项 WPF 控件、全量行字符串或第二份常驻对象数组。列表隐藏、Tab 卸载、owner 改变及 Project 关闭必须停止旧请求；图形编辑不得依赖列表目录是否已经生成。
+---
+### 18.2.9 指定 CC 的编辑显示域
+
+CC10 与 CC71～78 的外侧显示／数值编辑统一为 `display = raw - 64`，范围 `−64..63`，中性值为 0。适用图形标尺、坐标、值提示、对象列表、Properties、Initial State／Reset Defaults，以及该 target 的 Batch Edit／Batch Create；提交时恰好一次编码为 `raw = display + 64`。普通入口不额外显示 raw 数字，也不提供 raw/display 切换。
+
+绝对值和工具的初始／递推值使用显示域；移动 delta、比例 factor 本身不做偏移，factor 作用于显示值。Generator 反馈保留显示值，到正式写入才转换。混合 CC 属性编辑按每个对象的实际目标分别编码，不能以第一个目标替代全部对象。其他 CC、Bank/Program、Note、时间与目标身份不偏移，Logical Parameter 自有范围和 Pitch Bend 在 §18.2.7 定义的既有契约不变。
+
+Project、Value Curve 数据、Project Mapping Function／内置 Step／共享 accumulator／Context、canonical、MIDI 和音频保持 raw 域。CC Value Curve 属性的外侧数值遵循同一显示换算，但插值／离散化不变；Envelope 和 Mapping 不做友好域换算。原项目音乐继续原样读取。工具表达式／Preset 的新数值版本和旧契约拒绝见 §20.4.13。
+
+Help 必须给出同一 CC10 的对照：raw96 显示32，Batch `=p0*0.5` 得显示16／raw80；Project Mapping `value*0.5` 或 Multiply 0.5 得 raw48／显示−16。不能宣称两者使用相同值域。
+
+### 18.2.10 事件与参数辅助阶梯线
+
+MIDI Segment、Logical Segment、SubVoice 除 Vel.／Inst. 外的全部 Lane 默认显示可关闭的辅助线，线在点和选择图形下层；数值点之间水平延续前值，在事件 Tick 竖直跳变，不增加音乐事件、不线性插值声音、不参与命中／选择或编辑。线表达显式记录的位置及自身前驱，不能据此推断某命令或事件会持续影响发声。
+
+仅查询当前 owner、当前正式 target 的显式点；可见左界前有自身记录时接入最近前驱，否则从首个显式点起线。相同 Tick 的首末值遵循正式顺序，不用 Stable ID 或查询枚举次序替代。不得借用共享 Root／Usage 的其他 Track、相邻 Segment、Initial State 或 defaults。Segment crop 外的源记录可显示但须弱化，与可听范围区分；SubVoice 的辅助线显示止于 Template End。
+
+适用于 Logical Parameter Step、全部 CC（包括 Bank／RPN／NRPN selector、Data Entry、increment/decrement、CC120～127）、Bank／Program、Pitch Bend、pressure、SubVoice 的 typed RPN/NRPN 与 Pitch Bend Range，以及 Imported Meta／SysEx。无数值的 opaque 记录沿用其既有事件点的固定 y，辅助线不得解释 payload 或虚构 MIDI 状态。Vel. 保持原柱形展示，Inst. 保持包装点展示，二者不增加本辅助层。既有 Value Curve／Envelope 插值与绘制语义不改变。
+
+密集点可按设备列聚合 first/last/min/max，但原点、命中和正式顺序不得删改。使用范围指纹、前驱依赖及有界异步摘要／瓦片，不得在 UI 帧内扫描整个 owner 或另建全量点数组；仅改前驱时也须使依赖它的可见线更新。点／选择工作优先，开关不重建音乐索引；关闭线、换目标／修订、卸载时取消过期任务，迟到结果不得串 owner 或恢复旧线。开关统一保存于程序级 Appearance（§17.2.2），对当前及后续全部适用 Lane 生效，不提供逐 Lane 工具栏开关，不进入 Project、Undo、Modified 或 canonical。
+
 ---
 ## 18.3 Event Instrument Editor 总体框架
 ### 18.3.1 布局

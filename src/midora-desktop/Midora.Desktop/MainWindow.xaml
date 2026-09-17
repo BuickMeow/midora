@@ -951,7 +951,7 @@
                                               StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
                                               LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" OperationStepTicks="{Binding EventLaneEditorSettings.EffectiveOperationStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"
                                               DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" OperationUsesBars="{Binding EventLaneEditorSettings.EffectiveOperationUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
-                                              ValueAxisMinimum="{Binding ActiveValueMinimum}" ValueAxisMaximum="{Binding ActiveValueMaximum}" ValueAxisIntegral="{Binding ActiveValueIntegral}"
+                                              ValueAxisMinimum="{Binding ActiveValueAxisMinimum}" ValueAxisMaximum="{Binding ActiveValueAxisMaximum}" ValueAxisIntegral="{Binding ActiveValueIntegral}"
                                               EditCursorTick="{Binding EditCursorTick}" RangeStartTick="0" RangeEndTick="{Binding TemplateLengthTicks}" CanExtendEventCreationRange="True"
                                               ItemInvoked="OnTimelineItemInvoked" ItemEditCompleted="OnTimelineItemEditCompleted" BackgroundInvoked="OnTimelineBackgroundInvoked" LaneHeaderInvoked="OnTimelineLaneHeaderInvoked"
                                               EventPointEditCompleted="OnTimelineEventPointEditCompleted"

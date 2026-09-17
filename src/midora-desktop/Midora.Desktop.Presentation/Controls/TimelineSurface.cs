@@ -862,6 +862,7 @@ public sealed partial class TimelineSurface : Control
         CancelPendingRightGesture(cancelDelayedMenu: true);
 
         _rasterRequestCancellation.Cancel();
+        CancelStepSignalWork();
         _selectionRasterRequestCancellation.Cancel();
         _exactPrefetchCancellation.Cancel();
         _rulerPrefetchCancellation.Cancel();
@@ -1495,6 +1496,7 @@ public sealed partial class TimelineSurface : Control
 
     private void ResetRasterRequests(bool scheduleArrangementWarmup)
     {
+        CancelStepSignalWork();
         _conductorLabelRequests.Clear();
         _rasterRequestCancellation.Cancel();
         _rasterRequestCancellation.Dispose();
@@ -1555,6 +1557,7 @@ public sealed partial class TimelineSurface : Control
 
     private void RestartPendingRasterWork()
     {
+        CancelStepSignalWork();
         _conductorLabelRequests.Clear();
         _rasterRequestCancellation.Cancel();
         _rasterRequestCancellation.Dispose();
@@ -2052,14 +2055,13 @@ public sealed partial class TimelineSurface : Control
             }
             else if (SurfaceMode == TimelineSurfaceMode.EventLanes)
             {
-                DrawEventPointTiles(
-                    drawingContext,
-                    viewport,
-                    info,
-                    text,
-                    border,
-                    laneHeaderWidth,
-                    rulerHeight);
+                // Schedule authoritative points first; auxiliary work must not delay
+                // cold point tiles. Compose the signal below the unchanged points.
+                DrawingGroup points = new();
+                using (DrawingContext pointContext = points.Open())
+                    DrawEventPointTiles(pointContext, viewport, info, text, border, laneHeaderWidth, rulerHeight);
+                DrawStepSignal(drawingContext, viewport, laneHeaderWidth, rulerHeight);
+                drawingContext.DrawDrawing(points);
             }
             else if (SurfaceMode == TimelineSurfaceMode.Conductor && snapshot.ConductorSource is not null)
             {
@@ -5116,9 +5118,7 @@ public sealed partial class TimelineSurface : Control
         {
             return;
         }
-        CancellationToken cancellationToken = IsSelectionDependentRasterLayer(key.Layer)
-            ? _selectionRasterRequestCancellation.Token
-            : _rasterRequestCancellation.Token;
+        CancellationToken cancellationToken = GetRasterRequestToken(key.Layer);
         bool accepted = TimelineRasterCache.Shared.Request(
             key,
             factory,
@@ -5128,7 +5128,7 @@ public sealed partial class TimelineSurface : Control
                 _requestedRasterKeys.Remove(key);
                 if (!_backgroundWorkSuspended
                     && Snapshot is TimelineRenderSnapshot snapshot
-                    && string.Equals(snapshot.ProjectionKey, key.ProjectionKey, StringComparison.Ordinal))
+                    && MatchesRasterProjection(snapshot, key))
                 {
                     QueueRasterInvalidation();
                 }
@@ -5844,11 +5844,13 @@ public sealed partial class TimelineSurface : Control
             PublishPreparedTileFingerprint(key, fingerprint);
             return true;
         }
-        if (_backgroundWorkSuspended || !_pendingTileFingerprints.Add(key)) return false;
+        // Auxiliary lines never grow an unbounded second preparation queue or
+        // get ahead of the point/selection requests already waiting here.
+        if (_backgroundWorkSuspended
+            || key.Layer == TimelineRasterLayer.EventSignal && _pendingTileFingerprints.Count >= 64
+            || !_pendingTileFingerprints.Add(key)) return false;
 
-        CancellationToken cancellationToken = IsSelectionDependentRasterLayer(key.Layer)
-            ? _selectionRasterRequestCancellation.Token
-            : _rasterRequestCancellation.Token;
+        CancellationToken cancellationToken = GetRasterRequestToken(key.Layer);
         _ = Task.Run(async () =>
         {
             bool entered = false;

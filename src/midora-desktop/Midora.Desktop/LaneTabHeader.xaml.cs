@@ -115,6 +115,7 @@ public partial class LaneTabHeader : UserControl
             var surface = ActiveSurface;
             if (surface is not null)
             {
+                Host?.BindEventLaneLines(surface);
                 if (restore) surface.RestoreValueViewport(_state.Axis(key));
                 _restoreAxisKey = null;
                 Coordinates.SetBinding(TextBlock.TextProperty, new Binding(nameof(TimelineSurface.PointerPositionText)) { Source = surface });

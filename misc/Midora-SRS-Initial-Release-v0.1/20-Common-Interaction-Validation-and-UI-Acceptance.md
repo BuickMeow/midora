@@ -395,20 +395,20 @@ Result type: finite double
 
 ```text
 midora.tool.batch-note/v1
-midora.tool.batch-event/v1
+midora.tool.batch-event/v2
 midora.tool.note-split/v1
 midora.tool.generate-note/v1
-midora.tool.generate-event/v1
+midora.tool.generate-event/v2
 ```
 
 变量 schema 固定为：
 
 ```text
 midora.tool.batch-note/v1  : v0/v1, k0/k1, g0/g1, t0/t1, tr
-midora.tool.batch-event/v1 : p0/p1, t0/t1, tr
+midora.tool.batch-event/v2 : p0/p1, t0/t1, tr
 midora.tool.note-split/v1  : i, tr
 midora.tool.generate-note/v1  : i, v0/v1, k0/k1, g0/g1, t0/t1, tr
-midora.tool.generate-event/v1 : i, p0/p1, t0/t1, tr
+midora.tool.generate-event/v2 : i, p0/p1, t0/t1, tr
 ```
 
 Batch profile 中 `*0` 表示该字段编辑前的值，`*1` 表示同一对象中经依赖图求得的新值，`tr` 是相对本次冻结 Selection 最小 tick 的编辑前相对位置。Note Split 中 `i` 和 `tr` 只有第 20.4.15 节定义的刀序号/上一刀位置语义，不得引入 Batch Edit 字段或其他隐式变量。
@@ -416,6 +416,8 @@ Batch profile 中 `*0` 表示该字段编辑前的值，`*1` 表示同一对象�
 Profile ID/version、变量 schema、取整/值域契约与白名单是一个整体兼容边界；任一部分改变必须使用新 profile version。这些 profile 不是 Mapping Function ABI v3，也不进入 Project 或 `.midora`。
 
 Tool Preset 保存在 `<ProgramRoot>\Data\Presets` 的对应工具分类中，每个文件必须包含 `presetSchemaVersion`、`expressionProfileId/version`、`toolKind` 和数值格式契约。加载本机或外部 Preset 时必须用当前 profile 重新执行完整语法、API、依赖和资源上限验证；不得因为 JSON 可成功反序列化就直接执行。Preset 不进入 Project、Undo/Redo 或 canonical fingerprint。
+
+Event Batch／Generator 当前 profile 与 numeric contract 均为 v2；变量名称不变，指定 CC 的 p0/p1、Initial 与递推结果改用 §18.2.9 显示域。Note／Split profile 与 numeric contract 仍为 v1，Mapping ABI v3 不变。旧 Event Preset 不承诺结果兼容，加载时不能静默作为 v2 执行；应保留文件、提示不兼容并要求按新域重新确认／保存。当前 Batch Preset schema 2 包含 profile 与 numeric contract，旧 Note Preset 可在完整重验证后读取。恶意、损坏、重复／未知字段、超资源预算的文件不得绕过当前校验。
 
 ### 20.4.14 Note Humanize
 

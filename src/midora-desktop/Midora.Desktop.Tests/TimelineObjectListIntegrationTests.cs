@@ -90,6 +90,7 @@ public static partial class TimelineObjectListIntegrationTests
             Assert.Empty(session.Document!.History);
             Assert.False(session.Document.IsModified);
             VerifyBlankPreRollInput(window, session, content, instrument);
+            VerifyTemplateMarkersAndCompileFeedback(window, session, content, instrument);
             VerifyCopyPitchDesktopAdapters(window, session, content);
         }
         finally

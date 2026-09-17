@@ -214,6 +214,53 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
         : Persistence?.CurrentProjectPath is null
             ? Document!.IsModified ? "Modified · Unsaved" : "Unsaved"
             : Document!.IsModified ? "Modified" : "Saved";
+    private long _nextCompilationProgressRefresh;
+    private string _compileButtonText = "Compile";
+    private bool _isCompiling;
+    public string CompileButtonText => _compileButtonText;
+    public bool IsCompiling => _isCompiling;
+    public void RefreshCompilationProgress(bool force = false)
+    {
+        long now = Environment.TickCount64;
+        if (!force && now < _nextCompilationProgressRefresh) return;
+        _nextCompilationProgressRefresh = now + 100;
+        CompilationProgressSnapshot? progress = _context?.Compilation.CurrentCompilationProgress;
+        if (_isCompiling != (progress is not null))
+        {
+            _isCompiling = progress is not null;
+            Raise(nameof(IsCompiling));
+        }
+        string text = FormatCompilationProgress(progress);
+        if (_compileButtonText == text) return;
+        _compileButtonText = text;
+        Raise(nameof(CompileButtonText));
+    }
+
+    internal static string FormatCompilationProgress(CompilationProgressSnapshot? progress)
+    {
+        if (progress is null) return "Compile";
+        string phase = progress.Phase switch
+        {
+            CompilationPhase.PreparingSnapshot => "Snapshot",
+            CompilationPhase.Validating => "Validating",
+            CompilationPhase.FreezingConductor => "Conductor",
+            CompilationPhase.LogicalTracks => "Logical tracks",
+            CompilationPhase.OverlapPolicies => "Overlap policies",
+            CompilationPhase.MidiRoots => "MIDI roots",
+            CompilationPhase.MidiMetadata => "MIDI metadata",
+            CompilationPhase.CheckingOverlaps => "Checking overlaps",
+            CompilationPhase.AllocatingChannels => "Allocating channels",
+            CompilationPhase.LogicalInstances => "Logical instances",
+            CompilationPhase.SortingLogicalEvents => "Sorting events",
+            CompilationPhase.ApplyingRange => "Applying range",
+            CompilationPhase.PublishingMidi => "MIDI projection",
+            CompilationPhase.Fingerprinting => "Fingerprint",
+            CompilationPhase.PreparingAudio => "Audio projection",
+            _ => "Working"
+        };
+        return progress.Percent is int percent ? $"Compile · {phase} {percent}%" : $"Compile · {phase}";
+    }
+
     public string CompileState => _context is null
         ? "Not Compiled"
         : _context.Compilation.CompilationState switch
@@ -3103,6 +3150,7 @@ public sealed partial class DesktopSessionController : ObservableObject, IAsyncD
     private void RefreshCompilationProperties()
     {
         Raise(nameof(CompileState));
+        RefreshCompilationProgress(force: true);
         Raise(nameof(CanPlayback));
         Raise(nameof(CanTogglePlayback));
         Raise(nameof(PrimaryTransportAction));

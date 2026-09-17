@@ -35,6 +35,8 @@ Playing 时，单击 Ruler 按播放系统规则跳转。
 Ctrl+左单击只改变蓝色 Edit Cursor，不 Seek、不清选；tick 使用所在 Project / Segment local / SubVoice template 上下文并按当前操作 Snap 定位。Ctrl 按下和指针起点在 Pointer Down 冻结；移动超过既有 drag threshold 时不作为该单击，也不降级为 Time Range。只读 All Tracks 保留其独立导航规则，不获得编辑游标。
 初版不支持 Scrubbing；拖动 Ruler 不连续试听。
 上述 Time Range 拖选不适用于 SubVoice 的任一 ruler，也不适用于 Logical/MIDI Segment 的底部 Velocity/Event/Parameter ruler；这些位置不创建时间范围。SubVoice 的右键 Time Range 命令亦禁用，对象框选和列表范围选择不受影响。
+
+低水平缩放下，时间标尺标签必须以全局 0 / 全局一基小节序号确定抽样相位，不得从当前可视左边界重新贪心抽样。保持缩放平移时，仍在可视范围内的标签不能换成另一套序列。Segment 使用 Project tick offset 与正式拍号图，包含变拍号和截短小节；极密拍号变化允许进一步按全局锚定位置限密。只改变标签显示密度，不改变 Snap、音乐时间、网格语义或已经正确的普通 Tick 尺分支；极端 Tick 运算有界且不得按所有隐藏小节逐个遍历。
 ### 20.1.4 Grid 与 Snap
 每个 tick 时间线同时具有相互独立的：
 ```text

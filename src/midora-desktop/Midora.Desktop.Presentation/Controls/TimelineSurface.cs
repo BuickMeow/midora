@@ -441,7 +441,8 @@ public sealed partial class TimelineSurface : Control
         nameof(RangeEndTick),
         typeof(long?),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender,
+            static (d, _) => ((TimelineSurface)d).RefreshTemplateMarkerPreview()));
 
     public static readonly DependencyProperty TimeRangeStartTickProperty = DependencyProperty.Register(
         nameof(TimeRangeStartTick),
@@ -845,6 +846,7 @@ public sealed partial class TimelineSurface : Control
     private void OnSurfaceUnloaded(object sender, RoutedEventArgs args)
     {
         _selectionToolIcons?.Clear();
+        _templateMarkerCaps?.Clear();
         CancelSelectionActionAvailability();
         StopEditAutoScroll();
         ClearCapturedInteraction();
@@ -1773,6 +1775,22 @@ public sealed partial class TimelineSurface : Control
         return Math.Clamp((int)baseValue, 0, surface.ComputeMaximumFirstLane());
     }
 
+    public bool TryGetPianoVerticalFit(out double laneHeight)
+    {
+        laneHeight = 0;
+        double contentHeight = ActualHeight - GetRulerHeight();
+        if (SurfaceMode != TimelineSurfaceMode.PianoRoll || !double.IsFinite(contentHeight) || contentHeight <= 0) return false;
+        laneHeight = CalculatePianoVerticalFit(contentHeight, VisualTreeHelper.GetDpi(this).DpiScaleY);
+        return true;
+    }
+
+    public static double CalculatePianoVerticalFit(double contentHeight, double dpiScaleY)
+    {
+        if (!double.IsFinite(contentHeight) || contentHeight <= 0) throw new ArgumentOutOfRangeException(nameof(contentHeight));
+        if (!double.IsFinite(dpiScaleY) || dpiScaleY <= 0) throw new ArgumentOutOfRangeException(nameof(dpiScaleY));
+        return Math.Clamp(Math.Floor(contentHeight * dpiScaleY / 128), MinimumPianoLaneHeight, MaximumPianoLaneHeight) / dpiScaleY;
+    }
+
     private static object CoerceLaneHeight(DependencyObject dependencyObject, object baseValue)
     {
         TimelineSurface surface = (TimelineSurface)dependencyObject;
@@ -2173,6 +2191,7 @@ public sealed partial class TimelineSurface : Control
             DrawValueGrid(drawingContext, text, laneHeaderWidth, rulerHeight, drawLabels: true);
         }
         DrawRulerOverview(drawingContext, viewport, text, warning, laneHeaderWidth, rulerHeight);
+        DrawTemplateMarkerHandles(drawingContext, viewport);
         DrawMarquee(drawingContext, viewport, info);
         DrawSelectionFloatingTool(
             drawingContext,
@@ -2217,6 +2236,7 @@ public sealed partial class TimelineSurface : Control
         Point point = InteractionPosition(e);
         ContextTargetPosition = null;
         ContextTargetHasObject = null;
+        if (BeginTemplateMarkerDrag(e)) { e.Handled = true; return; }
         if (SurfaceMode == TimelineSurfaceMode.PianoRoll
             && e.ChangedButton == MouseButton.Right
             && point.X >= 0
@@ -3224,6 +3244,13 @@ public sealed partial class TimelineSurface : Control
     private void HandleTimelineMouseMove(MouseEventArgs e)
     {
         Point point = InteractionPosition(e);
+        if (UpdateTemplateMarkerDrag(point)) { e.Handled = true; return; }
+        if (!IsMouseCaptured && CanEdit && HitTemplateMarker(point) is { } marker)
+        {
+            Cursor = (marker is TemplateTimelineMarker.LoopStart or TemplateTimelineMarker.LoopEnd) && !TemplateLoopEditingEnabled
+                ? Cursors.Arrow : Cursors.SizeWE;
+            return;
+        }
         UpdateSelectionToolTip(point);
         if (_selectionActionPress is not null) { _hoverPoint = point; InvalidateVisual(); return; }
         if (_pendingConductorPress is { } pendingConductor)
@@ -3630,6 +3657,12 @@ public sealed partial class TimelineSurface : Control
 
     private void HandleTimelineMouseUp(MouseButtonEventArgs e)
     {
+        if (_templateMarkerDrag is not null)
+        {
+            if (e.ChangedButton == MouseButton.Left) FinishTemplateMarkerDrag(InteractionPosition(e));
+            e.Handled = true;
+            return;
+        }
         StopEditAutoScroll();
         if (e.ChangedButton == MouseButton.Left && _selectionActionPress is int actionIndex)
         {
@@ -3953,6 +3986,7 @@ public sealed partial class TimelineSurface : Control
 
     private void ClearCapturedInteraction()
     {
+        CancelTemplateMarkerDrag();
         _selectionActionPress = null;
         if (_pendingConductorPress is not null) CancelConductorHit();
         if (_notePlacementStartTick is not null)
@@ -4035,6 +4069,7 @@ public sealed partial class TimelineSurface : Control
 
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
+        if (_templateMarkerDrag is not null) { e.Handled = true; return; }
         base.OnMouseWheel(e);
         if (IsSelectionFloatingToolEnabled && _selectionToolBounds.Contains(InteractionPosition(e))
             && _selectionToolContentHeight > _selectionToolBounds.Height)
@@ -4170,6 +4205,8 @@ public sealed partial class TimelineSurface : Control
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && _templateMarkerDrag is not null)
+        { CancelTemplateMarkerDrag(); e.Handled = true; return; }
         if (e.Key == Key.Escape && _pendingConductorPress is not null)
         {
             CancelConductorHit();
@@ -9214,9 +9251,9 @@ public sealed partial class TimelineSurface : Control
                 new Point(8, 5));
         }
 
-        TimelineGridPresentation.BuildBarGridLines(viewport.StartTick, viewport.EndTick,
+        TimelineGridPresentation.BuildBarRulerLines(viewport.StartTick, viewport.EndTick,
             timeSignatureMap, _gridLines, TimelineTickMath.CeilingDistance(88 / viewport.PixelsPerTick),
-            ProjectTickOffset, includeBeats: false);
+            ProjectTickOffset);
         foreach (TimelineGridLine line in _gridLines)
         {
             long localBarTick = line.Tick;

@@ -394,10 +394,17 @@ A user event at tick 0 may override the corresponding Initial State.
 同一 SubVoice Section 的 `Initial State` 子页还必须提供该 SubVoice 的 Name、Root Note inherited/override 与全部现有 Initial State target 的精确编辑。添加新的 CC/RPN/NRPN target 使用显式选择器；空值表示删除该 Initial State override。提交失败恢复最后合法值。
 ### 18.4.4 Template 与 Root Note
 Template Length 属于 Event Instrument，不是每条 SubVoice 独立长度。
+SubVoice 主钢琴卷帘的顶部时间尺在 Template Length 位置提供窄拖动手柄，并在旁边以同款蓝色显示 `Template <Tick>`（例如 `Template 192`）；标签复用 Loop/Pre-Roll 的低缩放合并布局，合并后仍保留各自颜色。按下时冻结原长度、Snap 和当前内容/Loop/Pre-Roll 的合法最小长度；只对 delta 吸附，新长度不得小于该下界。达到下界时停止缩短，显示实际生效的新长度和 delta，不因继续向左拖报错，不裁剪/删除事件，不移动 Loop/Pre-Roll。Template 标签在拖动时同步预览值，取消后恢复；下界摘要绑定当前修订，拖动期间不得全扫内容。松开时复用正式长度命令重新验证并一次提交，Undo/Redo 沿用正式历史。Escape、失捕获、切换 owner 或修订过期不提交。手柄优先于该命中区域的普通尺导航，不影响尺的其余区域；标签不增加命中区域。
 可视模板末端不是 SubVoice 普通事件的创建上界。单击、Shift 单点、左键 Free/Line/Horizontal 绘线、批量创建、粘贴、复制拖动，以及已有事件 Move/Properties 等正式入口，创建或移到模板外的点必须在同一原子命令中把 Template Length 扩至至少 `tick + 1`；原有 Value Curve 点创建遵循同一边界但不转换为离散事件。所有打开的同 Definition 视图随成功提交刷新；一次 Undo 同时恢复内容与旧模板长度，Redo 恢复结果。负 tick、溢出、取消、过期 owner/revision 或资源失败不得部分发布。不要为扩模板重建已删除的可选 Mapping；Initial State 无 tick，不参与扩长。Logical/Pure MIDI Segment 的 crop 和合法编辑边界不由此改变。
 Configurations 的 Template 区必须提供 `Pre-Roll Ticks` 非负整数编辑，显示范围 `0..当前 Template Length`、默认 0。Configuration 输入留空或仅含空白时，提交前静默将输入框及待提交值归为 `0`；原正式值已为 `0` 时不产生 History edit。提交只在 `0 <= value <= Template Length` 时通过一个正式原子 Definition 命令生效；非空非法输入仍拒绝并恢复打开/提交前的合法值，不进行 Clamp。Properties Dialog 同时修改 Template Length、Pre-Roll Ticks、Loop 边界与 Per-Note Instance Isolation 时，必须按最终 draft 一次验证并作为一个 History edit 提交。帮助文本须说明 Logical Note start 是 Gate anchor、模板 origin 会提前，并提示实例 origin 越过 Segment 左边界将导致编译 Error。
 SubVoice 显示 Root Note 的 inherited / override 状态和 Effective Value。
-Loop 区域可以只读显示，但在 Lifecycle Editor 中编辑。
+Loop 除 Lifecycle Editor 外，也可通过 SubVoice 主钢琴卷帘顶部时间尺编辑。
+
+顶部时间尺为 Loop Start、Loop End 和已启用的 Pre-Roll 各提供与模板尾同款的双向拖动手柄：Loop 为黄色，Pre-Roll 为紫色，模板尾保持蓝色。四种手柄的圆角矩形须平滑抗锯齿，平移和不同 DPI 下不得因逐边硬取整而丢失圆角像素；该显示处理不得改变 Tick、命中范围、竖线或其他 Timeline 内容的像素规则。拖动冻结 owner/revision/Snap，只量化 delta，不反复提交 Domain；Loop Start 不超过 End−1（缺 End 时为 Template Length−1），Loop End 不小于 Start+1（缺 Start 时为 1），两端均限制在模板内；Pre-Roll 为 `0..Template Length`。达到边界时饱和，预览同时更新三个 panel 的语义覆盖层，松开一次正式命令。取消或过期零提交。重合/低缩放相邻手柄仍须能分别命中，可错开 cap 并用连线指向准确 Tick；不得移动正式坐标。
+
+右键任意手柄使用通用主题菜单：`Delete`、`Set Value…`。模板尾 Delete 禁用；Pre-Roll Delete 还原为 0 并隐藏其手柄；Loop Delete 只清该端，另一端保留，沿用不完整 Loop 可编辑但编译 Error 的合同。Set Value 弹窗只有一个 Tick 输入框，初始化当前精确整数并全选，显式 OK/Cancel；OK 沿用正式字段验证，非法输入显示原因且保留弹窗和输入，不 Clamp、不部分提交。未开启 Per-Note Instance Isolation 时仍遵守 Loop 编辑限制。
+
+SubVoice 主钢琴卷帘顶部时间尺空处菜单增加 `Add Loop Start+End` 和 `Add Pre-Roll Point`。前者不弹配置窗，直接以一个原子命令置为 `[0, Template Length]`；即使未开启隔离仍显示为可用，点击后明确提示需先启用 Per-Note Instance Isolation，不隐式修改隔离。后者使用右键处实际 local tick（不额外 Snap），越出 `[0,L]` 时取合法模板中点（长度为 1 时取 1）。0 仍代表未启用 Pre-Roll，不引入新“存在”字段。操作失败必须显式报错，不崩溃或留下半完成状态。全局编辑锁仍适用。
 
 SubVoice piano roll、Velocity 与 Event Lane 使用同一 local tick 变换绘制只读语义覆盖层：`[0, Pre-Roll Ticks)` 压暗；Loop Start/End 各自为贯穿 panel 的黄色 device-pixel 对齐竖线。仅最上方 piano ruler 显示 Pre-Roll/Loop 的 Tick 标签和完整 Loop 范围带；Pre-Roll 文本为紫色，Loop 文本与范围带仍为黄色，低缩放合并标签时也必须保留各自颜色。单端 Loop 只画存在的端点，不虚构另一端或合法范围。覆盖层不截获输入，配置变化不得使 Note/Event 内容瓦片失效。
 ### 18.4.5 Lane 生命周期
@@ -740,6 +747,8 @@ Segment 映射为 target local tick → Project absolute tick → source Segment
 ### 18.11.2 All Tracks
 
 Arrangement 在水平 Zoom In 右边、同组提供相同 LayerDiagonalRegular 图标按钮，直接打开独立 `All Tracks` Tab，不弹菜单。其顶部控件沿用钢琴卷帘工具栏的样式和高度。只有只读钢琴卷帘与导航控件，没有 Lanes；不得改变任何编辑工作区的选择。
+
+首次有效布局自动垂直适配：扣除时间尺等非内容区域，以 `N=max(3,floor(contentDeviceHeight/128))` 得到整数设备像素/key（仍遵守共同最大缩放），从最高键开始尽量展示完整 128 键；不足 384 device pixels 时保留 3px 下限并允许滚动。零高度布局等待，不将 DIP 当 device pixel 二次转换。初始化归属 Workspace，切 Tab、重建视图或 resize 不覆盖后续手调状态；将来存在有效恢复值时优先恢复，不执行初开默认。Raw/Compiled 共享这条规则。
 
 Raw 叠加 Project 暴露音符。按 2026-09-08 的用户更正，Compiled 是混合只读显示：Logical Track 从成功的完整 Canonical Compiled Result 展开；Pure MIDI Track 直接复用当前源音符快照、暴露范围和颜色，不为它重新建立整曲 FIFO 显示索引。Logical 展开仍按 Port/Channel/Key FIFO 配对 NoteOn/NoteOff，颜色使用 NoteOn 的正式 source Track identity，不从 Channel/名称反推。Pure MIDI 的源 Gate 不宣称等于跨轨道共享 Channel 的最终 MIDI 流配对时长；这只是显示投影，不改变 canonical、播放或导出。
 

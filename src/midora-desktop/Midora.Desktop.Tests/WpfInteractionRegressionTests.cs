@@ -1576,14 +1576,16 @@ public sealed partial class WpfInteractionRegressionTests
         {
             XElement button = document.Descendants(presentation + "Button").Single(element =>
                 string.Equals(
-                    (string?)element.Element(presentation + "TextBlock")?.Attribute("Text"),
+                    (string?)element.Attribute("AutomationProperties.Name"),
                     command,
                     StringComparison.Ordinal));
+            Assert.Equal(command == "Compile" ? "{Binding CompileButtonText}" : command,
+                (string?)button.Element(presentation + "TextBlock")?.Attribute("Text"));
             Assert.Equal(
                 "{StaticResource Button.CommandBarText}",
                 (string?)button.Attribute("Style"));
             Assert.Equal(
-                "{StaticResource Text.CommandBarButton}",
+                command == "Compile" ? "{StaticResource Text.CompileCommandBarButton}" : "{StaticResource Text.CommandBarButton}",
                 (string?)button.Element(presentation + "TextBlock")?.Attribute("Style"));
         }
     }

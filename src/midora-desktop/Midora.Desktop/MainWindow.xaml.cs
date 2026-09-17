@@ -709,6 +709,7 @@ public partial class MainWindow : Window
 
     private void OnPlaybackTimerTick(object? sender, EventArgs e)
     {
+        _session.RefreshCompilationProgress();
         long now = Environment.TickCount64;
         if (now >= _nextProjectRuntimeInformationRefresh)
         {
@@ -1505,6 +1506,7 @@ public partial class MainWindow : Window
         Point contextPoint = menu.Tag is TimelineSelectionAction
             ? new Point(surface.LaneHeaderWidth + 8, surface.TimelineRulerHeight + 8)
             : surface.ContextTargetPosition ?? Mouse.GetPosition(surface);
+        if (menu.Tag is not TimelineSelectionAction && PopulateTemplateMarkerMenu(menu, surface, contextPoint)) return;
         double headerWidth = surface.LaneHeaderWidth;
         bool isLaneHeader = contextPoint.X < headerWidth;
         if (surface.SurfaceMode == TimelineSurfaceMode.Arrangement && menu.Tag is not TimelineSelectionAction)

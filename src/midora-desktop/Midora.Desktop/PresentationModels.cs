@@ -3369,6 +3369,10 @@ public sealed class InstrumentWorkspaceViewModel(
     public long PreRollTicks { get => _preRollTicks; private set => Set(ref _preRollTicks, value); }
     public long? LoopEndTick { get => _loopEndTick; private set => Set(ref _loopEndTick, value); }
     public long TemplateLengthTicks { get => _templateLengthTicks; private set => Set(ref _templateLengthTicks, Math.Max(1, value)); }
+    private long? _minimumTemplateLength;
+    private long _templateEditRevision;
+    public long? MinimumTemplateLength { get => _minimumTemplateLength; private set => Set(ref _minimumTemplateLength, value); }
+    public long TemplateEditRevision { get => _templateEditRevision; private set => Set(ref _templateEditRevision, value); }
     public int ActiveRootPitch { get => _activeRootPitch; private set => Set(ref _activeRootPitch, Math.Clamp(value, 0, 127)); }
     public long ScenarioGateLengthTicks { get => _scenarioGateLengthTicks; set => Set(ref _scenarioGateLengthTicks, Math.Max(1, value)); }
     public int ScenarioPitch { get => _scenarioPitch; set => Set(ref _scenarioPitch, Math.Clamp(value, 0, 127)); }
@@ -3506,6 +3510,10 @@ public sealed class InstrumentWorkspaceViewModel(
         LoopStartTick = instrument.LoopStartTick;
         LoopEndTick = instrument.LoopEndTick;
         TemplateLengthTicks = instrument.TemplateLengthTicks;
+        TemplateEditRevision = revision;
+        try { MinimumTemplateLength = ProjectDomainEditCommands.GetMinimumTemplateLength(instrument); }
+        catch (Exception error) when (error is InvalidOperationException or OverflowException)
+        { MinimumTemplateLength = null; } // Invalid draft remains editable in Configurations; no unsafe drag handle.
         for (int index = 0; index < instrument.SubVoices.Count; index++)
         {
             SubVoice voice = instrument.SubVoices[index];

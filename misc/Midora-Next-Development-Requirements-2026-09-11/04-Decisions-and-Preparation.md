@@ -202,7 +202,7 @@ Properties：SettingsCogMultipleRegular
 
 **补充问答：** 2026-09-14 归纳（非改写用户原答）：SubVoice 模板长度手柄达到合法最小长度时停止缩小，显示实际生效的 delta，不报错。最小长度受内容、Loop、Pre-Roll 等正式约束影响。
 
-**确认状态：** 已确认；以本项用户回答及上述归纳为准，尚未实施。
+**确认状态：** 已确认；2026-09-17 A4b 已实施且用户明确验收通过，见 [实施报告](../Midora-A4b-Template-Timeline-Feedback-2026-09-17.md)。原答不变。
 
 ### D-UI06 — 编译百分比
 
@@ -216,7 +216,7 @@ Properties：SettingsCogMultipleRegular
 
 **补充问答：** 2026-09-14 归纳（非改写用户原答）：有可靠 total 才显示百分比，否则显示阶段；不为计量额外全量预扫描。用户允许在实测有不可接受的编译时间倒退时放弃此需求。
 
-**确认状态：** 已确认；以本项用户回答及上述归纳为准，尚未实施。
+**确认状态：** 已确认；2026-09-17 A4b 已实施且用户明确验收通过，开销测量与限制见 [实施报告](../Midora-A4b-Template-Timeline-Feedback-2026-09-17.md)。原答不变。
 
 ### D-UI07 — All Tracks 首次适配与小窗口
 
@@ -230,7 +230,7 @@ Properties：SettingsCogMultipleRegular
 
 **补充问答：** 2026-09-14 归纳（非改写用户原答）：改为 ≥3 device pixels/key；首次有效布局取最接近完整显示 128 键的整数高度，小窗口保留 3px 下限并允许滚动，不再要求 ≥4。
 
-**确认状态：** 已确认；以本项用户回答及上述归纳为准，尚未实施。
+**确认状态：** 已确认；2026-09-17 A4b 已实施且用户明确验收通过，见 [实施报告](../Midora-A4b-Template-Timeline-Feedback-2026-09-17.md)。原答不变。
 
 ### D-UI08.a — 播放中 SoundFont 快捷入口
 

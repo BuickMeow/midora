@@ -92,6 +92,7 @@ public static partial class TimelineObjectListIntegrationTests
             VerifyBlankPreRollInput(window, session, content, instrument);
             VerifyTemplateMarkersAndCompileFeedback(window, session, content, instrument);
             VerifyCopyPitchDesktopAdapters(window, session, content);
+            VerifyB1Restoration(window, session, content);
         }
         finally
         {

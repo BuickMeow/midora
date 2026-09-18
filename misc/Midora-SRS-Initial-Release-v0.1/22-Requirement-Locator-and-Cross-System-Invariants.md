@@ -133,6 +133,8 @@
 | INV-121 | CC10／71～78 的外侧图形、列表、Properties、适用 Initial/Reset State 和 Batch/Generator 使用 raw−64 的显示域，提交一次反变换；delta/factor 不偏移，Generator 反馈保持显示域。Project/Mapping 全链/Context/canonical/文件/音频仍 raw；其他 target 及 PB 既有契约不变。Event 工具 profile/numeric contract v2，旧 Event Preset 不静默重解释，保留原文件并明确不兼容。 |
 | INV-122 | 三宿主除 Vel./Inst. 外全部 Lane 的辅助阶梯线，由程序级 Appearance 全局开关控制、默认启用。只连接自身 owner/target 显式点与自身前驱，正式同 Tick order 不以 ID 替代；不补 Initial/default、不跨 owner，不参与命中或编辑。包含 Bank-PC/协议命令/opaque，opaque 沿用点的固定 y、不解释 payload，线不声明 MIDI 状态持续；Value Curve/Envelope 不变。crop 外弱化，SubVoice 线止于模板末尾；设备列聚合与范围缓存必须有界、异步、可取消，迟到任务不得串目标或覆盖新修订，点/选择优先。不设逐 Lane 开关，不进入 Project/Undo/Modified，不因此重建 Worker。 |
 
+| INV-123 | B1 编辑器会话状态按正式 Track profile 与 Segment 局部描述划分；SubVoice 以 Definition + SubVoice ID 独立，不与 Usage/Root/其他 Track 共享。只共享偏好，不共享 TPQN/拍号/参考时间解析上下文。关闭页签只留有界纯值，不留 VM/音乐页/选择/任务；删除 owner 释放其自身描述，Undo 不自动复活或重开。新状态不进入音乐 Modified/Undo/canonical、Onion revision 或现行文件 schema；显式 Arrangement 导航优先于局部位置恢复。迟到 Lane 目录须校验 owner/代次，未知不能当删除，普通状态同步不扫描音乐对象。 |
+
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

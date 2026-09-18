@@ -245,7 +245,7 @@ Logical 与 Pure MIDI Segment Editor 的水平滚动 extent 必须同时覆盖�
 
 ### 18.2.8 三种钢琴卷帘的 Timeline 对象列表
 
-Logical Segment、MIDI Segment 与 SubVoice 共享左侧 owner-data 对象列表，开关位于 `Lanes` 左侧、默认隐藏。显隐、宽度与滚动位置仅属于 Workspace Session，不进入 Project、Undo、Modified 或文件格式。
+Logical Segment、MIDI Segment 与 SubVoice 共享左侧 owner-data 对象列表实现，开关位于 `Lanes` 左侧、默认隐藏。B1 的显隐/宽度按 Track 共享（SubVoice 独立），行位置按 Segment/SubVoice 局部记忆；只捕获标量，不保留 source/factory/分页请求，不进入音乐 Project、Undo、Modified 或新增文件字段。
 新建列表状态的默认宽度为 400 DIP；用户已经调整的宽度在同一会话隐藏/重开时保留，不因新默认值被覆盖，继续使用既有 240～700 DIP 范围。
 
 列表按 local tick 和确定性同 tick 顺序合并当前 owner 的所有音符和非音符事件：Logical 包含全部参数 Lane point，MIDI 包含 Channel Event 与 Opaque SysEx/Meta，SubVoice 包含 Template Note/MIDI Event。音符每个对象一行，不拆 NoteOn/NoteOff；展示 Tick、Gate/Length、Key、Velocity，内部 Stable ID 不显示。
@@ -370,7 +370,7 @@ Initial State
 - Bank/Program 使用程序级 Catalog 名称与数值回退；不得隐式扫描 SoundFont；
 - Program 统一显示 0～127，与正式 MIDI 值一致。
 
-SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll Grid / Snap、默认 Note 长度和默认 velocity。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
+SubVoice Timeline 按 Definition ID + SubVoice ID 独立记忆编辑偏好、缩放、位置、Lane/List；不与绑定的 Logical Track 或其他 SubVoice 共用 profile，具体归属按 §20.1.4。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
 
 从 Velocity 切换到事件 target Tab 后，键盘焦点必须在布局更新后进入对应 Timeline Surface，不得停留在 Tab 头、目录或下拉框；因此 `D` / `S` / `E`、Space 及其他焦点敏感 Workspace 快捷键必须立即可用。Inst. 将焦点交给自身包装编辑区。
 SubVoice `Add Event` 成功后必须按稳定 MIDI target 显示并激活新 Lane、打开下部事件区，并在布局完成后把焦点交回对应 Surface；不得仅依赖列表下标，也不得在绑定列表尚未刷新时查找新 Lane 并放弃导航。此后 `A` 操作该事件视图的 Snap，不是上方 piano roll 的独立 Snap。取消、失败、旧 Workspace 或已失效导航不能改变当前 Lane/选择或抢回焦点。添加空 Lane 本身不延长模板。
@@ -760,5 +760,5 @@ All Tracks 在 Raw/Compiled 下均显示绝对播放指针，并遵守全局 Fol
 
 来源查询、分页读取、密集列聚合和 Logical compiled FIFO 索引均在有界后台执行；WPF 线程不得为绘制全量枚举音符。来源分块局部失效，洋葱皮使用独立缓存身份，不污染已验收的普通 Note/Selection/Velocity/Event 缓存。允许每 Key 一行的只读占用缓存，垂直缩放/滚动复用；不得使其成为领域数据或编辑命中来源。Raw/Compiled 可复用未改变的 Pure MIDI 来源快照与相同内容块缓存。缓存必须有明确预算及取消、Workspace/Project 关闭后的释放时机。
 
-配置复用 §16.7.5 的 Format 3 presentation schema 2：目标、手选来源、sourceMode、enable、opacity、默认 Raw/Compiled 随显式 Save / Save Copy 保存，不增加 Undo、不设置音乐 Modified、不引发关闭保存提示。来源顺序在保存快照中按当前正式顺序过滤、排序。删除引用在会话中 dormant，Undo 恢复同身份时重新生效；保存过滤仍悬空的引用但不破坏会话内 Undo 恢复。Duplicate Track/SubVoice 复制该目标配置，Definition 深复制重映射内部 SubVoice 引用；视图配置本身不随音乐 Undo 回退。损坏隔离沿用 §16.33，不阻止音乐加载。
+配置复用 §16.7.5 的 Format 3 presentation schema 2：目标、手选来源、sourceMode、enable、opacity、默认 Raw/Compiled 随显式 Save / Save Copy 保存，不增加 Undo、不设置音乐 Modified、不引发关闭保存提示。来源顺序在保存快照中按当前正式顺序过滤、排序。删除来源时，仍存活目标的来源引用在会话中 dormant，Undo 恢复同身份时重新生效；保存过滤仍悬空的来源引用但不破坏该会话恢复。删除目标自身时立即释放其配置，不保留目标自身的 dormant profile，音乐 Undo 不复活该配置或自动重开 Tab。Duplicate Track/SubVoice 复制该目标配置，Definition 深复制重映射内部 SubVoice 引用；视图配置本身不随音乐 Undo 回退。损坏隔离沿用 §16.33，不阻止音乐加载。
 ---

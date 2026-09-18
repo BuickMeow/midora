@@ -44,7 +44,9 @@ Display Grid Subdivision
 Operation Subdivision
 Snap Enabled
 ```
-Arrangement 使用独立设置；所有 Segment Editor 与所有 SubVoice piano roll 在同一 Project 会话内共用另一套设置。两套设置均不进入 `.midora`、Application Preferences 或 Project Undo；关闭或替换 Project 后恢复默认值：Display Grid `1/4`、Operation `1/16`、Snap Enabled。
+Arrangement 使用独立设置。Logical/MIDI Segment 的通用编辑偏好按正式 Track ID 共享，不按 Usage/Root 或全 Project 共享；每个 SubVoice 按 Definition ID + SubVoice ID 独立。只共享设置值，不共享 TPQN、有效拍号、参考时间等解析上下文。Piano 与底部事件区的 Snap enabled/subdivision 各自独立。现行默认 Grid 为 Bar-only 且显示，Segment/SubVoice 的 Operation 为 `1/16`、Snap enabled，默认 Note 长度为 TPQN、Velocity 为 100。Arrangement 的 Operation 初值继续为 `1/8`。
+
+B1 会话记忆还包括 Track 的横向缩放、纵向 key 高度、主 ToolMode、独立 ValueTraceShape、Lanes 显隐/最后有效高度及 List 显隐/宽度；每个 Segment 独立记忆滚动位置、活动 Lane、Lane 顺序/显隐/纵轴和 List 行位置。SubVoice 独立拥有上述全部适用状态。关闭 Tab 释放 VM/资源而保留纯描述；删除 owner 清除其自身描述，Undo 不自动重开或恢复已删除描述。普通切页/重开保留位置，显式导航按 §18.2.2 优先。纯状态不进入音乐 Modified/Undo/编译或 canonical，不触发全源重建。B1 不新增文件字段；关闭或替换 Project 清除新增记忆，后续 B2/B3 的跨重启扩展另行实施。
 
 分数相对于全音符：`1/1 = 4 × TPQ`、`1/2 = 2 × TPQ`、`1/4 = TPQ`。实际 tick 步长统一为：
 ```text
@@ -83,7 +85,7 @@ Split
 Erase
 ```
 只在支持的编辑器中显示。
-Current Tool 不跨应用重启保存；新 Workspace 默认 Select。
+Current Tool 在 B1 不跨应用重启保存；尚无会话记忆的 owner 默认 Select，有记忆时使用 Track/SubVoice profile，不因关闭重开 Tab 重置。主区与底部仍共享主 ToolMode，绘线形态独立记忆。
 
 Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的工具按钮必须互斥，且始终恰有一个激活；再次点击当前工具不得清空工具状态。上述直接编辑视图中的工具语义固定为：
 

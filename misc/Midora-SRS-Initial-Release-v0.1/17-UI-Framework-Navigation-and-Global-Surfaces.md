@@ -175,13 +175,15 @@ Search queries and filters
 Tree expansion
 Active subpage
 Workspace-local lane height and focus history
-Workspace-local lower editor visibility and height
+Track-shared lower editor visibility and last nonzero height; independent per SubVoice
 Arrangement Grid / Snap session settings
-Shared Segment and SubVoice piano-roll Grid / Snap session settings
+Track-shared Segment preferences; per-SubVoice independent preferences; Piano/Event Snap separate
 Default Segment creation length
-Shared piano-roll default Note length and velocity
+Track/SubVoice piano-roll default Note length and velocity
 ```
 关闭或替换 Project 后清除，不跨应用重启恢复。
+
+B1 的轻量会话记忆按 §20.1.4 区分共享 profile 与 Segment/SubVoice 局部描述，普通关闭 Tab 不清除描述，但必须释放 VM、页、位图及任务。无内容持有的纯值冻结边界不等于已经写入项目文件；现行 presentation schema 2 的 Onion/All Tracks 能力保持不变。Selection、Time Range、手势、浮动选区工具位置、焦点历史、Undo 和草稿不进入这些描述。
 
 状态栏 transient message 必须提供直接“已读”操作；该操作只清除当前 transient message，不清除 Diagnostics、不修改 Project，也不创建 Undo。
 ### 17.2.4 Transient Interaction State

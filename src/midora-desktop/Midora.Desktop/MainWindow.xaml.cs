@@ -4073,7 +4073,7 @@ public partial class MainWindow : Window
         if (_session.Project is not null)
         {
             _session.ArrangementEditorSettings.Reset(true, _session.Project.TicksPerQuarterNote);
-            _session.PianoRollEditorSettings.Reset(false, _session.Project.TicksPerQuarterNote);
+            _session.ResetPianoEditorPreferences();
         }
         _preferences = _preferences with
         {

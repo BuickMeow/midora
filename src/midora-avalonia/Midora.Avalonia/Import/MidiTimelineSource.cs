@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using Midora.Avalonia.Editing;
 using Midora.Avalonia.Presentation.Rendering;
 using Midora.Domain;
 
@@ -35,6 +36,7 @@ public sealed class MidiTimelineSource :
     ];
 
     private readonly ImportedMidiProject _project;
+    private readonly EditableMidiProject? _liveProject;
     private readonly long _segmentTicks;
     private readonly long _timelineTicks;
     private readonly int _segmentCount;
@@ -46,13 +48,18 @@ public sealed class MidiTimelineSource :
     private readonly ArrangementLaneDescriptor[] _laneDescriptors;
     private readonly string[] _trackNames;
     private readonly SegmentPreviewSource _overviewPreview;
-    private readonly ConcurrentDictionary<MidoraId, SegmentPreviewSource> _segmentPreviews = [];
+    private readonly ulong _contentFingerprint;
+    private ConcurrentDictionary<MidoraId, SegmentPreviewSource> _segmentPreviews = [];
+    private long _segmentPreviewsVersion = long.MinValue;
+    private SegmentPreviewSource? _liveOverviewPreview;
+    private long _liveOverviewVersion = long.MinValue;
     private readonly ConcurrentDictionary<int, TrackTimelineSource> _trackSources = [];
 
     public MidiTimelineSource(
         ImportedMidiProject project,
         int? previewTrackIndex = null,
-        int barsPerSegment = DefaultBarsPerSegment)
+        int barsPerSegment = DefaultBarsPerSegment,
+        EditableMidiProject? liveProject = null)
     {
         _project = project ?? throw new ArgumentNullException(nameof(project));
         ArgumentOutOfRangeException.ThrowIfLessThan(project.TicksPerQuarterNote, 1);
@@ -62,6 +69,13 @@ public sealed class MidiTimelineSource :
         {
             throw new ArgumentOutOfRangeException(nameof(previewTrackIndex));
         }
+        if (liveProject is { } live && live.TrackCount != project.Tracks.Count)
+        {
+            throw new ArgumentException(
+                "A live project must expose the same tracks as its imported source.",
+                nameof(liveProject));
+        }
+        _liveProject = liveProject;
 
         BarsPerSegment = barsPerSegment;
         _segmentTicks = checked((long)barsPerSegment * BeatsPerBar * project.TicksPerQuarterNote);
@@ -200,16 +214,19 @@ public sealed class MidiTimelineSource :
         _itemsById = itemsById;
         _bucketsByLane = buckets;
         MaximumEndTick = Math.Max(1, maximumEndTick);
-        ContentFingerprint = TimelineContentFingerprint.ForRenderItems(materialized);
+        _contentFingerprint = TimelineContentFingerprint.ForRenderItems(materialized);
     }
 
     public ImportedMidiProject Project => _project;
+    public EditableMidiProject? LiveProject => _liveProject;
     public int TrackCount => _project.Tracks.Count;
     public int PreviewTrackIndex { get; }
     public int BarsPerSegment { get; }
     public long Count => _items.Length;
     public long MaximumEndTick { get; }
-    public ulong ContentFingerprint { get; }
+    public ulong ContentFingerprint => _liveProject is { } live
+        ? TimelineContentFingerprint.Combine(_contentFingerprint, unchecked((ulong)live.Version))
+        : _contentFingerprint;
     public IReadOnlyList<ArrangementLaneDescriptor> LaneDescriptors => _laneDescriptors;
     public IReadOnlyList<string> TrackNames => _trackNames;
 
@@ -273,22 +290,22 @@ public sealed class MidiTimelineSource :
         }
     }
 
-    public bool HasNoteContent => _overviewPreview.HasNoteContent;
-    public bool HasEventContent => _overviewPreview.HasEventContent;
-    public ulong NoteContentFingerprint => _overviewPreview.NoteContentFingerprint;
-    public ulong EventContentFingerprint => _overviewPreview.EventContentFingerprint;
+    public bool HasNoteContent => OverviewPreview.HasNoteContent;
+    public bool HasEventContent => OverviewPreview.HasEventContent;
+    public ulong NoteContentFingerprint => OverviewPreview.NoteContentFingerprint;
+    public ulong EventContentFingerprint => OverviewPreview.EventContentFingerprint;
 
     public void QueryNotes(
         double normalizedStart,
         double normalizedEnd,
         List<TimelineSegmentPreviewNote> destination) =>
-        _overviewPreview.QueryNotes(normalizedStart, normalizedEnd, destination);
+        OverviewPreview.QueryNotes(normalizedStart, normalizedEnd, destination);
 
     public void QueryEvents(
         double normalizedStart,
         double normalizedEnd,
         List<TimelineSegmentPreviewEvent> destination) =>
-        _overviewPreview.QueryEvents(normalizedStart, normalizedEnd, destination);
+        OverviewPreview.QueryEvents(normalizedStart, normalizedEnd, destination);
 
     public ITimelineSegmentPreviewSource GetPreviewSource(TimelineRenderItem segment)
     {
@@ -314,6 +331,10 @@ public sealed class MidiTimelineSource :
                 "The Segment item does not belong to this MIDI source.",
                 nameof(segment));
         }
+        if (_liveProject is { } live)
+        {
+            return GetLivePreview(live, segment.Id, (int)trackIndex, startTick, endTick);
+        }
         return _segmentPreviews.GetOrAdd(
             segment.Id,
             _ => new SegmentPreviewSource(
@@ -321,6 +342,54 @@ public sealed class MidiTimelineSource :
                 endTick,
                 _project.Tracks[(int)trackIndex].Notes,
                 _project.Tracks[(int)trackIndex].Events));
+    }
+
+    private SegmentPreviewSource GetLivePreview(
+        EditableMidiProject live,
+        MidoraId segmentId,
+        int trackIndex,
+        long startTick,
+        long endTick)
+    {
+        long version = live.Version;
+        if (_segmentPreviewsVersion != version)
+        {
+            _segmentPreviews = [];
+            _segmentPreviewsVersion = version;
+        }
+        return _segmentPreviews.GetOrAdd(
+            segmentId,
+            _ => SegmentPreviewSource.ForLiveTrack(
+                startTick,
+                endTick,
+                live.Tracks[trackIndex],
+                version));
+    }
+
+    private SegmentPreviewSource OverviewPreview
+    {
+        get
+        {
+            if (_liveProject is not { } live) return _overviewPreview;
+            long version = live.Version;
+            if (_liveOverviewPreview is { } cached && _liveOverviewVersion == version)
+            {
+                return cached;
+            }
+            int trackIndex = PreviewTrackIndex >= 0
+                ? PreviewTrackIndex
+                : FindFirstContentTrack(live);
+            SegmentPreviewSource preview = trackIndex >= 0
+                ? SegmentPreviewSource.ForLiveTrack(
+                    0,
+                    _timelineTicks,
+                    live.Tracks[trackIndex],
+                    version)
+                : SegmentPreviewSource.Empty;
+            _liveOverviewPreview = preview;
+            _liveOverviewVersion = version;
+            return preview;
+        }
     }
 
     private void VisitRange(
@@ -357,6 +426,16 @@ public sealed class MidiTimelineSource :
         for (int index = 0; index < project.Tracks.Count; index++)
         {
             ImportedMidiTrack track = project.Tracks[index];
+            if (track.Notes.Count != 0 || track.Events.Count != 0) return index;
+        }
+        return -1;
+    }
+
+    private static int FindFirstContentTrack(EditableMidiProject project)
+    {
+        for (int index = 0; index < project.TrackCount; index++)
+        {
+            EditableMidiTrack track = project.Tracks[index];
             if (track.Notes.Count != 0 || track.Events.Count != 0) return index;
         }
         return -1;
@@ -660,7 +739,8 @@ public sealed class MidiTimelineSource :
             long startTick,
             long endTick,
             IEnumerable<ImportedMidiNote> notes,
-            IEnumerable<ImportedMidiEvent> events)
+            IEnumerable<ImportedMidiEvent> events,
+            ulong? fingerprintSalt = null)
         {
             ArgumentNullException.ThrowIfNull(notes);
             ArgumentNullException.ThrowIfNull(events);
@@ -707,8 +787,61 @@ public sealed class MidiTimelineSource :
 
             HasNoteContent = _notes.Length != 0;
             HasEventContent = _events.Length != 0;
-            NoteContentFingerprint = TimelineContentFingerprint.ForSegmentPreviewNotes(_notes);
-            EventContentFingerprint = TimelineContentFingerprint.ForSegmentPreviewEvents(_events);
+            ulong noteFingerprint = TimelineContentFingerprint.ForSegmentPreviewNotes(_notes);
+            ulong eventFingerprint = TimelineContentFingerprint.ForSegmentPreviewEvents(_events);
+            if (fingerprintSalt is { } salt)
+            {
+                noteFingerprint = TimelineContentFingerprint.Combine(noteFingerprint, salt);
+                eventFingerprint = TimelineContentFingerprint.Combine(eventFingerprint, salt);
+            }
+            NoteContentFingerprint = noteFingerprint;
+            EventContentFingerprint = eventFingerprint;
+        }
+
+        public static SegmentPreviewSource ForLiveTrack(
+            long startTick,
+            long endTick,
+            EditableMidiTrack track,
+            long version)
+        {
+            ArgumentNullException.ThrowIfNull(track);
+            return new SegmentPreviewSource(
+                startTick,
+                endTick,
+                EnumerateNotes(track.Notes),
+                EnumerateEvents(track.Events),
+                unchecked((ulong)version));
+        }
+
+        private static IEnumerable<ImportedMidiNote> EnumerateNotes(
+            IReadOnlyList<EditableMidiNote> notes)
+        {
+            for (int index = 0; index < notes.Count; index++)
+            {
+                EditableMidiNote note = notes[index];
+                yield return new ImportedMidiNote(
+                    note.StartTick,
+                    note.EndTick,
+                    note.Key,
+                    note.Velocity,
+                    note.NoteOffVelocity,
+                    note.Channel);
+            }
+        }
+
+        private static IEnumerable<ImportedMidiEvent> EnumerateEvents(
+            IReadOnlyList<EditableMidiEvent> events)
+        {
+            for (int index = 0; index < events.Count; index++)
+            {
+                EditableMidiEvent value = events[index];
+                yield return new ImportedMidiEvent(
+                    value.Tick,
+                    value.Channel,
+                    value.Kind,
+                    value.Data1,
+                    value.Data2);
+            }
         }
 
         public bool HasNoteContent { get; }

@@ -78,9 +78,16 @@ public sealed class EditableMidiProject
         return value != 0 ? value : left.Id.CompareTo(right.Id);
     };
 
+    private static readonly Comparison<MidoraId> IdOrder = static (left, right) =>
+        left.CompareTo(right);
+
     private readonly List<EditableMidiTrack> _tracks;
     private readonly List<IEditCommand> _undoStack = [];
     private readonly List<IEditCommand> _redoStack = [];
+    private readonly List<EditableMidiTrack> _transactionTracks = [];
+    private IEditCommand? _transactionCommand;
+    private bool _transactionChanged;
+    private int _transactionDepth;
     private long _nextId = 1;
 
     public EditableMidiProject(ImportedMidiProject source)
@@ -192,7 +199,8 @@ public sealed class EditableMidiProject
         ArgumentNullException.ThrowIfNull(ids);
         EditableMidiTrack track = GetTrack(trackIndex);
         if (ids.Count == 0 || tickDelta == 0 && keyDelta == 0) return;
-        HashSet<MidoraId> targets = new(ids);
+        MidoraId[] targetIds = CanonicalizeTargetIds(ids);
+        HashSet<MidoraId> targets = new(targetIds);
         List<NoteMutation> mutations = [];
         foreach (EditableMidiNote note in track.Notes)
         {
@@ -209,7 +217,11 @@ public sealed class EditableMidiProject
                 ClampKey(note.Key, keyDelta)));
         }
         if (mutations.Count == 0) return;
-        Execute(track, new NoteMutationCommand(track, mutations));
+        Execute(track, new NoteMutationCommand(
+            track,
+            mutations,
+            NoteMutationKind.Transform,
+            targetIds));
     }
 
     public void ResizeNote(int trackIndex, MidoraId id, long newStartTick, long newEndTick)
@@ -222,7 +234,9 @@ public sealed class EditableMidiProject
         if (note.StartTick == start && note.EndTick == end) return;
         Execute(track, new NoteMutationCommand(
             track,
-            [new NoteMutation(note, note.StartTick, note.EndTick, note.Key, start, end, note.Key)]));
+            [new NoteMutation(note, note.StartTick, note.EndTick, note.Key, start, end, note.Key)],
+            NoteMutationKind.Resize,
+            [id]));
     }
 
     public void SetVelocity(int trackIndex, IReadOnlyCollection<MidoraId> ids, int velocity)
@@ -231,7 +245,8 @@ public sealed class EditableMidiProject
         EditableMidiTrack track = GetTrack(trackIndex);
         if (ids.Count == 0) return;
         int clamped = Math.Clamp(velocity, 1, 127);
-        HashSet<MidoraId> targets = new(ids);
+        MidoraId[] targetIds = CanonicalizeTargetIds(ids);
+        HashSet<MidoraId> targets = new(targetIds);
         List<NoteVelocityMutation> mutations = [];
         foreach (EditableMidiNote note in track.Notes)
         {
@@ -241,7 +256,7 @@ public sealed class EditableMidiProject
             }
         }
         if (mutations.Count == 0) return;
-        Execute(track, new SetVelocityCommand(track, mutations));
+        Execute(track, new SetVelocityCommand(track, mutations, targetIds));
     }
 
     public bool SplitNote(int trackIndex, MidoraId id, long tick)
@@ -288,8 +303,48 @@ public sealed class EditableMidiProject
         Execute(track, new RemoveEventsCommand(track, removed));
     }
 
+    public void TransformEvents(
+        int trackIndex,
+        IReadOnlyCollection<MidoraId> ids,
+        long tickDelta)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        EditableMidiTrack track = GetTrack(trackIndex);
+        if (ids.Count == 0 || tickDelta == 0) return;
+        MidoraId[] targetIds = CanonicalizeTargetIds(ids);
+        HashSet<MidoraId> targets = new(targetIds);
+        List<EventTickMutation> mutations = [];
+        foreach (EditableMidiEvent value in track.Events)
+        {
+            if (!targets.Contains(value.Id)) continue;
+            long tick = Math.Min(ClampTickAdd(value.Tick, tickDelta), long.MaxValue - 1);
+            mutations.Add(new EventTickMutation(value, value.Tick, tick));
+        }
+        if (mutations.Count == 0) return;
+        Execute(track, new EventMutationCommand(track, mutations, targetIds));
+    }
+
+    public void BeginTransaction()
+    {
+        if (_transactionDepth == 0)
+        {
+            _transactionCommand = null;
+            _transactionChanged = false;
+            _transactionTracks.Clear();
+        }
+        _transactionDepth++;
+    }
+
+    public void EndTransaction()
+    {
+        if (_transactionDepth == 0) return;
+        _transactionDepth--;
+        if (_transactionDepth == 0) CommitTransaction();
+    }
+
     public void Undo()
     {
+        CloseOpenTransaction();
         if (_undoStack.Count == 0) return;
         IEditCommand command = _undoStack[^1];
         _undoStack.RemoveAt(_undoStack.Count - 1);
@@ -300,6 +355,7 @@ public sealed class EditableMidiProject
 
     public void Redo()
     {
+        CloseOpenTransaction();
         if (_redoStack.Count == 0) return;
         IEditCommand command = _redoStack[^1];
         _redoStack.RemoveAt(_redoStack.Count - 1);
@@ -311,10 +367,63 @@ public sealed class EditableMidiProject
     private void Execute(EditableMidiTrack track, IEditCommand command)
     {
         command.Redo();
+        if (_transactionDepth > 0)
+        {
+            if (_transactionCommand is ICoalescableEditCommand current
+                && command is ICoalescableEditCommand next
+                && current.TryCoalesce(next))
+            {
+                MarkTransactionChanged(track);
+                return;
+            }
+
+            PushCommand(command);
+            _transactionCommand = command;
+            MarkTransactionChanged(track);
+            return;
+        }
+
+        PushCommand(command);
+        NotifyChanged(track);
+    }
+
+    private void PushCommand(IEditCommand command)
+    {
         _undoStack.Add(command);
         if (_undoStack.Count > MaximumHistoryEntries) _undoStack.RemoveAt(0);
         _redoStack.Clear();
-        NotifyChanged(track);
+    }
+
+    private void MarkTransactionChanged(EditableMidiTrack track)
+    {
+        _transactionChanged = true;
+        if (!_transactionTracks.Contains(track)) _transactionTracks.Add(track);
+    }
+
+    private void CloseOpenTransaction()
+    {
+        if (_transactionDepth == 0) return;
+        _transactionDepth = 0;
+        CommitTransaction();
+    }
+
+    private void CommitTransaction()
+    {
+        _transactionCommand = null;
+        if (!_transactionChanged)
+        {
+            _transactionTracks.Clear();
+            return;
+        }
+
+        _transactionChanged = false;
+        for (int i = 0; i < _transactionTracks.Count; i++)
+        {
+            _transactionTracks[i].Version++;
+        }
+        _transactionTracks.Clear();
+        Version++;
+        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     private void NotifyChanged(EditableMidiTrack track)
@@ -382,6 +491,24 @@ public sealed class EditableMidiProject
         return value > 127 ? 127 : (int)value;
     }
 
+    private static MidoraId[] CanonicalizeTargetIds(IReadOnlyCollection<MidoraId> ids)
+    {
+        HashSet<MidoraId> unique = new(ids);
+        MidoraId[] canonical = [.. unique];
+        Array.Sort(canonical, IdOrder);
+        return canonical;
+    }
+
+    private static bool IdsEqual(MidoraId[] left, MidoraId[] right)
+    {
+        if (left.Length != right.Length) return false;
+        for (int i = 0; i < left.Length; i++)
+        {
+            if (left[i] != right[i]) return false;
+        }
+        return true;
+    }
+
     private interface IEditCommand
     {
         EditableMidiTrack Track { get; }
@@ -389,6 +516,11 @@ public sealed class EditableMidiProject
         void Undo();
 
         void Redo();
+    }
+
+    private interface ICoalescableEditCommand : IEditCommand
+    {
+        bool TryCoalesce(ICoalescableEditCommand next);
     }
 
     private readonly record struct NoteMutation(
@@ -404,6 +536,11 @@ public sealed class EditableMidiProject
         EditableMidiNote Note,
         int OldVelocity,
         int NewVelocity);
+
+    private readonly record struct EventTickMutation(
+        EditableMidiEvent Event,
+        long OldTick,
+        long NewTick);
 
     private sealed class AddNoteCommand : IEditCommand
     {
@@ -450,14 +587,29 @@ public sealed class EditableMidiProject
         }
     }
 
-    private sealed class NoteMutationCommand : IEditCommand
+    private enum NoteMutationKind
     {
-        private readonly NoteMutation[] _mutations;
+        Transform,
+        Resize
+    }
 
-        public NoteMutationCommand(EditableMidiTrack track, List<NoteMutation> mutations)
+    private sealed class NoteMutationCommand : ICoalescableEditCommand
+    {
+        private readonly List<NoteMutation> _mutations;
+        private readonly MidoraId[] _targetIds;
+        private readonly NoteMutationKind _kind;
+        private Dictionary<EditableMidiNote, int>? _mutationIndex;
+
+        public NoteMutationCommand(
+            EditableMidiTrack track,
+            List<NoteMutation> mutations,
+            NoteMutationKind kind,
+            MidoraId[] targetIds)
         {
             Track = track;
-            _mutations = [.. mutations];
+            _mutations = mutations;
+            _kind = kind;
+            _targetIds = targetIds;
         }
 
         public EditableMidiTrack Track { get; }
@@ -483,16 +635,68 @@ public sealed class EditableMidiProject
             }
             SortNotes(Track);
         }
+
+        public bool TryCoalesce(ICoalescableEditCommand next)
+        {
+            if (next is not NoteMutationCommand other
+                || _kind != other._kind
+                || !ReferenceEquals(Track, other.Track)
+                || !IdsEqual(_targetIds, other._targetIds))
+            {
+                return false;
+            }
+
+            Dictionary<EditableMidiNote, int> index = GetMutationIndex();
+            foreach (NoteMutation incoming in other._mutations)
+            {
+                if (index.TryGetValue(incoming.Note, out int position))
+                {
+                    _mutations[position] = _mutations[position] with
+                    {
+                        NewStartTick = incoming.NewStartTick,
+                        NewEndTick = incoming.NewEndTick,
+                        NewKey = incoming.NewKey
+                    };
+                }
+                else
+                {
+                    index[incoming.Note] = _mutations.Count;
+                    _mutations.Add(incoming);
+                }
+            }
+
+            return true;
+        }
+
+        private Dictionary<EditableMidiNote, int> GetMutationIndex()
+        {
+            if (_mutationIndex is null)
+            {
+                _mutationIndex = new Dictionary<EditableMidiNote, int>(_mutations.Count);
+                for (int i = 0; i < _mutations.Count; i++)
+                {
+                    _mutationIndex[_mutations[i].Note] = i;
+                }
+            }
+
+            return _mutationIndex;
+        }
     }
 
-    private sealed class SetVelocityCommand : IEditCommand
+    private sealed class SetVelocityCommand : ICoalescableEditCommand
     {
-        private readonly NoteVelocityMutation[] _mutations;
+        private readonly List<NoteVelocityMutation> _mutations;
+        private readonly MidoraId[] _targetIds;
+        private Dictionary<EditableMidiNote, int>? _mutationIndex;
 
-        public SetVelocityCommand(EditableMidiTrack track, List<NoteVelocityMutation> mutations)
+        public SetVelocityCommand(
+            EditableMidiTrack track,
+            List<NoteVelocityMutation> mutations,
+            MidoraId[] targetIds)
         {
             Track = track;
-            _mutations = [.. mutations];
+            _mutations = mutations;
+            _targetIds = targetIds;
         }
 
         public EditableMidiTrack Track { get; }
@@ -511,6 +715,49 @@ public sealed class EditableMidiProject
             {
                 mutation.Note.Velocity = mutation.OldVelocity;
             }
+        }
+
+        public bool TryCoalesce(ICoalescableEditCommand next)
+        {
+            if (next is not SetVelocityCommand other
+                || !ReferenceEquals(Track, other.Track)
+                || !IdsEqual(_targetIds, other._targetIds))
+            {
+                return false;
+            }
+
+            Dictionary<EditableMidiNote, int> index = GetMutationIndex();
+            foreach (NoteVelocityMutation incoming in other._mutations)
+            {
+                if (index.TryGetValue(incoming.Note, out int position))
+                {
+                    _mutations[position] = _mutations[position] with
+                    {
+                        NewVelocity = incoming.NewVelocity
+                    };
+                }
+                else
+                {
+                    index[incoming.Note] = _mutations.Count;
+                    _mutations.Add(incoming);
+                }
+            }
+
+            return true;
+        }
+
+        private Dictionary<EditableMidiNote, int> GetMutationIndex()
+        {
+            if (_mutationIndex is null)
+            {
+                _mutationIndex = new Dictionary<EditableMidiNote, int>(_mutations.Count);
+                for (int i = 0; i < _mutations.Count; i++)
+                {
+                    _mutationIndex[_mutations[i].Note] = i;
+                }
+            }
+
+            return _mutationIndex;
         }
     }
 
@@ -552,11 +799,11 @@ public sealed class EditableMidiProject
         }
     }
 
-    private sealed class SetEventValueCommand : IEditCommand
+    private sealed class SetEventValueCommand : ICoalescableEditCommand
     {
         private readonly EditableMidiEvent _event;
         private readonly int _oldData2;
-        private readonly int _newData2;
+        private int _newData2;
 
         public SetEventValueCommand(
             EditableMidiTrack track,
@@ -575,6 +822,19 @@ public sealed class EditableMidiProject
         public void Redo() => _event.Data2 = _newData2;
 
         public void Undo() => _event.Data2 = _oldData2;
+
+        public bool TryCoalesce(ICoalescableEditCommand next)
+        {
+            if (next is not SetEventValueCommand other
+                || !ReferenceEquals(Track, other.Track)
+                || !ReferenceEquals(_event, other._event))
+            {
+                return false;
+            }
+
+            _newData2 = other._newData2;
+            return true;
+        }
     }
 
     private sealed class RemoveEventsCommand : IEditCommand
@@ -598,6 +858,86 @@ public sealed class EditableMidiProject
         {
             Track.Events.AddRange(_events);
             SortEvents(Track);
+        }
+    }
+
+    private sealed class EventMutationCommand : ICoalescableEditCommand
+    {
+        private readonly List<EventTickMutation> _mutations;
+        private readonly MidoraId[] _targetIds;
+        private Dictionary<EditableMidiEvent, int>? _mutationIndex;
+
+        public EventMutationCommand(
+            EditableMidiTrack track,
+            List<EventTickMutation> mutations,
+            MidoraId[] targetIds)
+        {
+            Track = track;
+            _mutations = mutations;
+            _targetIds = targetIds;
+        }
+
+        public EditableMidiTrack Track { get; }
+
+        public void Redo()
+        {
+            foreach (EventTickMutation mutation in _mutations)
+            {
+                mutation.Event.Tick = mutation.NewTick;
+            }
+            SortEvents(Track);
+        }
+
+        public void Undo()
+        {
+            foreach (EventTickMutation mutation in _mutations)
+            {
+                mutation.Event.Tick = mutation.OldTick;
+            }
+            SortEvents(Track);
+        }
+
+        public bool TryCoalesce(ICoalescableEditCommand next)
+        {
+            if (next is not EventMutationCommand other
+                || !ReferenceEquals(Track, other.Track)
+                || !IdsEqual(_targetIds, other._targetIds))
+            {
+                return false;
+            }
+
+            Dictionary<EditableMidiEvent, int> index = GetMutationIndex();
+            foreach (EventTickMutation incoming in other._mutations)
+            {
+                if (index.TryGetValue(incoming.Event, out int position))
+                {
+                    _mutations[position] = _mutations[position] with
+                    {
+                        NewTick = incoming.NewTick
+                    };
+                }
+                else
+                {
+                    index[incoming.Event] = _mutations.Count;
+                    _mutations.Add(incoming);
+                }
+            }
+
+            return true;
+        }
+
+        private Dictionary<EditableMidiEvent, int> GetMutationIndex()
+        {
+            if (_mutationIndex is null)
+            {
+                _mutationIndex = new Dictionary<EditableMidiEvent, int>(_mutations.Count);
+                for (int i = 0; i < _mutations.Count; i++)
+                {
+                    _mutationIndex[_mutations[i].Event] = i;
+                }
+            }
+
+            return _mutationIndex;
         }
     }
 }

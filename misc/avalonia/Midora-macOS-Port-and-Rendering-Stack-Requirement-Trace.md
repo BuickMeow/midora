@@ -413,3 +413,10 @@
 - `MidiTrackView` 接入可编辑工程与工具（Select/Draw/Erase/Split、S/D/E 快捷键、macOS ⌘Z/⇧⌘Z）、`Edited` 事件与 Undo/Redo；会话持有 `EditableMidiProject`，打开音轨工作区时绑定，编辑即标记 Modified；Edit 菜单 Undo/Redo 路由到活动编辑器。
 - 验证：构建 0 警告 0 错误；shell 冒烟新增真实编辑脚本（AddNote → Transform → Undo → Redo → SetVelocity → 活动编辑器 Undo/Redo）failures=0。
 - **已知缺口**：一次拖动会按增量产生多条 Undo 记录（事务尚未合并命令）；Event tick 平移未进入 Undo；Arrangement 的 Segment preview 仍读导入快照，编辑后不刷新；Velocity/Event 编辑为单点命中，多选收集依赖可见项。
+
+### 2026-09-20（续）Slice E4：编辑事务合并与实时预览（已提交）
+
+- `EditableMidiProject` 增加 `BeginTransaction/EndTransaction`：同一事务内同类同对象集的 `TransformNotes`/`SetVelocity`/`SetEventValue`/`ResizeNote` 合并为一条 Undo 命令（保留首个旧值、以最后新值覆盖），通知与 Version 在事务提交时各触发一次；`Undo/Redo` 会先关闭打开的事务。新增可撤销的 `TransformEvents`。
+- `EditableMidiEditHost` 转发事务并改用 `TransformEvents`；事件拖动现在可撤销且触发 `Changed`。
+- `MidiTimelineSource` 支持 `liveProject` 叠加：Arrangement 的 Segment preview 与总览按 `liveProject.Version` 读取当前可编辑轨道内容；`ArrangementView.SetSource(..., preserveView: true)` 让编辑后刷新不重置 zoom/选择；会话在 `Changed` 时刷新 Arrangement 并标记 Modified。
+- 验证：构建 0 警告 0 错误；冒烟新增「两次增量拖动合并且一次 Undo 回到起点」断言，failures=0。

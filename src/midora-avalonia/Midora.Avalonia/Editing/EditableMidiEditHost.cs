@@ -111,11 +111,7 @@ public sealed class EditableMidiEditHost : ITimelineEditHost
 
         if (eventIds is not null)
         {
-            foreach (MidoraId id in eventIds)
-            {
-                EditableMidiEvent value = _eventsById![id];
-                value.Tick = ClampTickAdd(value.Tick, tickDelta);
-            }
+            _project.TransformEvents(_trackIndex, eventIds, tickDelta);
         }
     }
 
@@ -197,13 +193,9 @@ public sealed class EditableMidiEditHost : ITimelineEditHost
         }
     }
 
-    public void BeginEditTransaction()
-    {
-    }
+    public void BeginEditTransaction() => _project.BeginTransaction();
 
-    public void EndEditTransaction()
-    {
-    }
+    public void EndEditTransaction() => _project.EndTransaction();
 
     private void EnsureLookups()
     {
@@ -236,11 +228,4 @@ public sealed class EditableMidiEditHost : ITimelineEditHost
 
     private static int RoundToInt(double value) =>
         (int)Math.Round(Math.Clamp(value, 0d, 127d), MidpointRounding.AwayFromZero);
-
-    private static long ClampTickAdd(long tick, long delta)
-    {
-        Int128 value = (Int128)tick + delta;
-        if (value < 0) return 0;
-        return value > long.MaxValue ? long.MaxValue : (long)value;
-    }
 }

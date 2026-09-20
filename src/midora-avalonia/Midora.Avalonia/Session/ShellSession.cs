@@ -319,22 +319,42 @@ public sealed class ShellSession : INotifyPropertyChanged
     /// Replaces the current project with a real imported SMF project and shows it in the
     /// Arrangement workspace.
     /// </summary>
-    public void CreateProjectFromMidi(string name, MidiTimelineSource source)
+    public void CreateProjectFromMidi(string name, ImportedMidiProject project)
     {
         CreateProject(name);
-        _midiSource = source;
-        _editableProject = new EditableMidiProject(source.Project);
+        _editableProject = new EditableMidiProject(project);
+        _editableProject.Changed += (_, _) =>
+        {
+            MarkModified();
+            RefreshArrangementSource();
+        };
+        _midiSource = new MidiTimelineSource(project, liveProject: _editableProject);
         ApplyArrangementSource();
 
-        if (source.Project.Conductor.FirstOrDefault(
+        if (project.Conductor.FirstOrDefault(
                 conductorEvent => conductorEvent.Kind == ImportedConductorKind.Tempo) is { Value: > 0 } tempo)
         {
             TempoText = $"{tempo.Value:0.00} BPM";
         }
 
         StatusText =
-            $"Imported '{source.Project.SourceFileName}' · {source.Project.Tracks.Count} track(s) · " +
-            $"{source.Project.TicksPerQuarterNote} TPQN · {source.Project.MaximumEndTick} ticks.";
+            $"Imported '{project.SourceFileName}' · {project.Tracks.Count} track(s) · " +
+            $"{project.TicksPerQuarterNote} TPQN · {project.MaximumEndTick} ticks.";
+    }
+
+    private void RefreshArrangementSource()
+    {
+        if (_arrangementView is null || _midiSource is null)
+        {
+            return;
+        }
+
+        _arrangementView.SetSource(
+            _midiSource,
+            _midiSource.Project.TicksPerQuarterNote,
+            _midiSource.TrackNames,
+            segment => _midiSource.GetPreviewSource(segment),
+            preserveView: true);
     }
 
     private void ApplyArrangementSource()

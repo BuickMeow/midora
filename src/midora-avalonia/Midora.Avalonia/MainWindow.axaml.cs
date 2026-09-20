@@ -150,10 +150,9 @@ public partial class MainWindow : Window
         try
         {
             var project = ImportedMidiProject.Parse(path);
-            var source = new MidiTimelineSource(project);
             Session.CreateProjectFromMidi(
                 System.IO.Path.GetFileNameWithoutExtension(files[0].Name),
-                source);
+                project);
         }
         catch (Exception ex)
         {
@@ -435,7 +434,7 @@ public partial class MainWindow : Window
                 var imported = ImportedMidiProject.Parse(midiPath);
                 Session.CreateProjectFromMidi(
                     System.IO.Path.GetFileNameWithoutExtension(midiPath),
-                    new MidiTimelineSource(imported));
+                    imported);
                 if (!Session.HasProject || Session.Workspaces.Count == 0)
                 {
                     failures.Add("midi-import: imported project did not open a workspace");
@@ -479,6 +478,26 @@ public partial class MainWindow : Window
             }
 
             Session.RedoActive();
+        });
+        Step("coalesced-drag-undo", () =>
+        {
+            if (Session.EditableProject is not { } editable)
+            {
+                return;
+            }
+
+            var note = editable.AddNote(0, 480, 62, 240, 100);
+            editable.BeginTransaction();
+            editable.TransformNotes(0, [note.Id], 120, 1);
+            editable.TransformNotes(0, [note.Id], 120, 1);
+            editable.EndTransaction();
+            editable.Undo();
+            var restored = editable.Tracks[0].Notes.FirstOrDefault(candidate => candidate.Id == note.Id);
+            if (restored is null || restored.StartTick != 480 || restored.Key != 62)
+            {
+                throw new InvalidOperationException(
+                    $"Coalesced undo mismatch: {restored?.StartTick}/{restored?.Key}.");
+            }
         });
         Step("open-diagnostics", () => Session.OpenWorkspace(WorkspaceKind.Diagnostics));
         Step("open-all-tracks", () => Session.OpenWorkspace(WorkspaceKind.AllTracks));

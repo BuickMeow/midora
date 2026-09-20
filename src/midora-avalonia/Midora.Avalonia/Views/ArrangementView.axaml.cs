@@ -53,30 +53,35 @@ public partial class ArrangementView : UserControl
         ITimelineRenderItemSource source,
         long ticksPerQuarterNote,
         IReadOnlyList<string> trackNames,
-        Func<TimelineRenderItem, ITimelineSegmentPreviewSource?>? previewProvider)
+        Func<TimelineRenderItem, ITimelineSegmentPreviewSource?>? previewProvider,
+        bool preserveView = false)
     {
         _source = source;
         _ticksPerQuarterNote = Math.Max(1, ticksPerQuarterNote);
         _trackNames = trackNames;
         _previewProvider = previewProvider;
-        ApplySource();
+        ApplySource(preserveView);
     }
 
     public void UseDemoSource() =>
         SetSource(_demo, 480, _demo.TrackNames, segment => _demo.GetPreviewSource(segment));
 
-    private void ApplySource()
+    private void ApplySource(bool preserveView = false)
     {
         long maximum = Math.Max(1, _source.MaximumEndTick);
         Timeline.TicksPerQuarterNote = _ticksPerQuarterNote;
         Timeline.PreviewProvider = _previewProvider;
         Timeline.TrackNames = lane =>
             lane >= 0 && lane < _trackNames.Count ? _trackNames[lane] : null;
-        Timeline.SelectedId = null;
-        Timeline.TickSpan = Math.Clamp(_ticksPerQuarterNote * 16L, 1, maximum);
+        if (!preserveView)
+        {
+            Timeline.StartTick = 0;
+            Timeline.SelectedId = null;
+            Timeline.TickSpan = Math.Clamp(_ticksPerQuarterNote * 16L, 1, maximum);
+        }
         Timeline.Source = _source;
         UpdateZoomText();
-        UpdateReadout(0);
+        UpdateReadout(preserveView ? Timeline.StartTick : 0);
     }
 
     private void OnZoomInClick(object? sender, RoutedEventArgs e) =>

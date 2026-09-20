@@ -373,3 +373,19 @@
 - **主窗口接线**：全部菜单与命令栏按钮接上会话命令；New/Open Project/Open MIDI 用 StorageProvider 建立会话；Save/Save Copy/Reset Playback/Undo 等用 `MessageDialog` 明示“尚未接线”；Preferences/Catalogs/About/MIDI Export/Audio Render/新建轨道对话框接上；工作区 Tab 可切换、关闭与前进后退；欢迎页按钮生效；状态栏/标题栏/项目名绑定。工具栏 Snap/Grid/Follow/Loop 为会话状态。
 - **验证**：构建 0 警告 0 错误；`--smoke-windows` 44/44；新增 `--smoke-shell`（建项目 → 开三个工作区 → 前后导航 → 播放/停止 → 标记修改 → 编译 → 关 Tab → 关项目）failures=0。
 - **诚实边界**：真实 Project/Domain、`.midora` 持久化、Undo/History、Selection/Clipboard、编译与导出实际执行均未接线，需 Slice C（呈现核心）与 Application 适配。
+
+### 2026-09-20（续）Slice C：呈现核心移植（已提交）
+
+- 新增 `src/midora-avalonia/Midora.Avalonia.Presentation`（`net10.0` + Avalonia 11.3.22，引用 `Midora.Domain`）。
+- 机械移植：`TimelineRenderModel`（2634 行，除命名空间零改动）、`TimelineRasterCache`（3171 行，`WriteableBitmap`/Avalonia Dispatcher/`DpiScale` 替换）、13 个 Rendering 文件、5 个 Interaction 文件、`WorkspaceState`（1015 行）。
+- 新增 shim：`PixelBufferBitmap`（Pbgra32 → `WriteableBitmap`）、`DpiScale`、`DispatcherShutdownState`（Avalonia 未公开 `HasShutdownStarted`）、`TimelineSurfaceModes`（把 WPF 内嵌在 `TimelineSurface.cs` 的三个枚举拆出）。
+- 差异记录：`CancelablePresentationDispatch.Post` 默认参数改为重载（Avalonia `DispatcherPriority` 非 const）；移除被相邻条件蕴含的 `Rect.IsEmpty` 守卫。
+- 验证：构建 0 警告 0 错误；`--smoke-windows`/`--smoke-shell` 通过。
+
+### 2026-09-20（续）Slice D：Arrangement 时间线第一版（已提交）
+
+- 新增 `Controls/TimelineSurface.cs`（约 1095 行，Arrangement-only 自绘控件）：bar 网格与顶部 ruler、lane 背景与名称、Segment 圆角矩形、Conductor 点、Note/Event、Segment preview 音符/事件线、hover/选中、编辑光标、marquee 选择、滚轮平移、Ctrl+滚轮缩放、指针 tick 读数事件。
+- 新增 `Rendering/DemoTimelineSource.cs`（约 502 行确定性演示工程：6 轨 × 8 Segment、512 个 Logical Note、64 个参数点、Conductor tempo/拍号/marker）。
+- `ArrangementView` 接入 surface 与演示数据（缩放按钮、tick 读数、选中提示）。
+- 验证：构建 0 警告 0 错误；shell 冒烟通过。
+- **与 WPF 的差异（诚实记录）**：本版是用移植后核心**新实现**的 Arrangement-only 第一版，尚未接线 tile raster cache、Piano Roll/Velocity/Event Lane/Conductor 模式、编辑手势与真实 Project 数据源；这些依赖 Slice E 的 Application/Domain 适配。

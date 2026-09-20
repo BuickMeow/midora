@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="using:Midora.Avalonia.Controls"
+             xmlns:presentation="using:Midora.Avalonia.Presentation.Controls"
              x:Class="Midora.Avalonia.Views.ArrangementView"
              x:CompileBindings="False">
   <Grid RowDefinitions="38,*,22" Background="{DynamicResource Brush.Surface.0}">
@@ -27,35 +28,21 @@
           <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}" />
         </Button>
         <TextBlock x:Name="ZoomText" Classes="caption" VerticalAlignment="Center" Margin="6,0,0,0" Text="100%" />
+        <Border Width="1" Height="18" Margin="8,0" Background="{DynamicResource Brush.Border}" />
+        <TextBlock x:Name="TickText" Classes="mono" VerticalAlignment="Center" Text="Bar 1.1.000" />
       </StackPanel>
     </Border>
 
-    <Grid Grid.Row="1" ColumnDefinitions="220,*">
-      <Border Background="{DynamicResource Brush.Surface.1}"
-              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,1,0">
-        <StackPanel Margin="10">
-          <TextBlock Classes="section" Text="Tracks" Margin="0,0,0,8" />
-          <TextBlock Classes="caption" Text="Conductor" Margin="0,0,0,4" />
-          <TextBlock Classes="caption" Text="No Logical / Pure MIDI tracks yet." TextWrapping="Wrap" />
-          <TextBlock Classes="caption" Margin="0,12,0,0"
-                     Text="Track headers and the shared arrangement timeline arrive with the presentation-core slice."
-                     TextWrapping="Wrap" />
-        </StackPanel>
-      </Border>
-      <Grid Grid.Column="1">
-        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
-          <TextBlock Text="Arrangement timeline" FontSize="16" FontWeight="SemiBold"
-                     HorizontalAlignment="Center" />
-          <TextBlock Classes="caption" HorizontalAlignment="Center"
-                     Text="Placeholder page. The canonical timeline surface is ported in Slice C/D." />
-        </StackPanel>
-      </Grid>
-    </Grid>
+    <presentation:TimelineSurface x:Name="Timeline"
+                                  Grid.Row="1"
+                                  LaneHeight="28"
+                                  TicksPerQuarterNote="480"
+                                  GridVisible="True" />
 
     <Border Grid.Row="2" Background="{DynamicResource Brush.Surface.1}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
       <TextBlock x:Name="HintText" Classes="caption" VerticalAlignment="Center" Margin="9,0"
-                 Text="Snap: 1/4 · Grid: bars · Pointer: —" />
+                 Text="Wheel: pan · Ctrl+wheel: zoom · Drag: select · Middle-drag: pan" />
     </Border>
   </Grid>
 </UserControl>

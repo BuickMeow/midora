@@ -1,0 +1,103 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.AboutDialog"
+        x:CompileBindings="False"
+        FontFamily="{DynamicResource Font.UI}"
+        Title="About Midora" Width="696" Height="473" MinWidth="560" MinHeight="390"
+        Background="{DynamicResource Brush.Surface.0}"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Window.Styles>
+    <Style Selector="TextBlock.metricheader">
+      <Setter Property="FontSize" Value="10" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Red.Hover}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextAlignment" Value="Right" />
+    </Style>
+    <Style Selector="TextBlock.metricname">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+    </Style>
+    <Style Selector="TextBlock.metricvalue">
+      <Setter Property="FontFamily" Value="{DynamicResource Font.Mono}" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextAlignment" Value="Right" />
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+    </Style>
+  </Window.Styles>
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="About Midora" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCloseClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="22,20" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock FontSize="20" FontWeight="SemiBold" Text="Midora" />
+          <TextBlock x:Name="VersionText" Margin="0,3,0,0"
+                     Foreground="{DynamicResource Brush.Text.Secondary}" />
+          <TextBlock Margin="0,3,0,0" Classes="caption"
+                     Text="Windows Desktop · .NET 10 · win-x64" />
+
+          <Border Height="1" Margin="0,18,0,16" Background="{DynamicResource Brush.Border}" />
+          <TextBlock Classes="section" Text="Runtime resources" />
+          <TextBlock Margin="0,4,0,12" Classes="caption"
+                     Text="Live values include the WPF process and every active audio Worker owned by this Midora instance."
+                     TextWrapping="Wrap" />
+
+          <Border Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+            <Grid Margin="12,9" ColumnDefinitions="*,90,120,120" RowDefinitions="24,30,30,30">
+              <TextBlock Grid.Column="1" Classes="metricheader" Text="CPU" />
+              <TextBlock Grid.Column="2" Classes="metricheader" Text="WORKING SET" />
+              <TextBlock Grid.Column="3" Classes="metricheader" Text="PRIVATE MEMORY" />
+
+              <TextBlock Grid.Row="1" Classes="metricname" Text="Midora" />
+              <TextBlock x:Name="MainCpuText" Grid.Row="1" Grid.Column="1" Classes="metricvalue" />
+              <TextBlock x:Name="MainWorkingSetText" Grid.Row="1" Grid.Column="2" Classes="metricvalue" />
+              <TextBlock x:Name="MainPrivateMemoryText" Grid.Row="1" Grid.Column="3" Classes="metricvalue" />
+
+              <TextBlock x:Name="WorkerNameText" Grid.Row="2" Classes="metricname" />
+              <TextBlock x:Name="WorkerCpuText" Grid.Row="2" Grid.Column="1" Classes="metricvalue" />
+              <TextBlock x:Name="WorkerWorkingSetText" Grid.Row="2" Grid.Column="2" Classes="metricvalue" />
+              <TextBlock x:Name="WorkerPrivateMemoryText" Grid.Row="2" Grid.Column="3" Classes="metricvalue" />
+
+              <Border Grid.Row="3" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top"
+                      Background="{DynamicResource Brush.Border}" />
+              <TextBlock Grid.Row="3" FontWeight="SemiBold" VerticalAlignment="Center" Text="Combined" />
+              <TextBlock x:Name="CombinedCpuText" Grid.Row="3" Grid.Column="1" Classes="metricvalue"
+                         FontWeight="SemiBold" />
+              <TextBlock x:Name="CombinedWorkingSetText" Grid.Row="3" Grid.Column="2" Classes="metricvalue"
+                         FontWeight="SemiBold" />
+              <TextBlock x:Name="CombinedPrivateMemoryText" Grid.Row="3" Grid.Column="3" Classes="metricvalue"
+                         FontWeight="SemiBold" />
+            </Grid>
+          </Border>
+          <TextBlock Margin="0,7,0,0" Classes="caption"
+                     Text="CPU is normalized to the total capacity of all logical processors." />
+
+          <TextBlock Margin="0,18,0,0" Classes="caption"
+                     Text="Copyright (c) 2026 Midora contributors" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Button Classes="primary" Width="112" HorizontalAlignment="Right" Content="Close"
+                IsCancel="True" Click="OnCloseClick" />
+      </Border>
+    </Grid>
+  </Border>
+</Window>

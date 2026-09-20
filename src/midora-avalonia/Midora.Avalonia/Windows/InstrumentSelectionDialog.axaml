@@ -1,0 +1,103 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.InstrumentSelectionDialog"
+        x:CompileBindings="False"
+        Title="Select Instrument" Width="900" Height="760" MinWidth="730" MinHeight="650"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,Auto,*,Auto,120,Auto,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}"
+            PointerPressed="OnTitleBarPointerPressed">
+        <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Select Instrument" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <Grid Grid.Row="1" Margin="16,12" RowDefinitions="Auto,Auto" ColumnDefinitions="*,*,*">
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Classes="caption" Text="BANK MSB · 0–127" />
+          <TextBox x:Name="MsbBox" Margin="0,5,0,0" TextChanged="OnValueChanged" />
+          <CheckBox x:Name="MsbOverride" Margin="0,5,0,0" Content="Override inherited MSB"
+                    Click="OnOverrideChanged" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Margin="0,0,12,0">
+          <TextBlock Classes="caption" Text="BANK LSB · 0–127" />
+          <TextBox x:Name="LsbBox" Margin="0,5,0,0" TextChanged="OnValueChanged" />
+          <CheckBox x:Name="LsbOverride" Margin="0,5,0,0" Content="Override inherited LSB"
+                    Click="OnOverrideChanged" />
+        </StackPanel>
+        <StackPanel Grid.Column="2">
+          <TextBlock Classes="caption" Text="PROGRAM · 0–127" />
+          <TextBox x:Name="ProgramBox" Margin="0,5,0,0" TextChanged="OnValueChanged" />
+          <CheckBox x:Name="ProgramOverride" Margin="0,5,0,0" Content="Override inherited Program"
+                    Click="OnOverrideChanged" />
+        </StackPanel>
+        <StackPanel x:Name="TimelineTickRow" Grid.Row="1" Grid.ColumnSpan="3" IsVisible="False"
+                    Orientation="Horizontal" Margin="0,10,0,0">
+          <TextBlock Margin="0,0,12,0" VerticalAlignment="Center" Classes="caption" Text="TICK" />
+          <TextBox x:Name="TimelineTickBox" Width="210" />
+        </StackPanel>
+      </Grid>
+
+      <Grid Grid.Row="2" Margin="16,0,16,12" ColumnDefinitions="*,12,*">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" Classes="caption" Text="BANKS" />
+          <ListBox x:Name="BanksList" SelectionChanged="OnBankSelected" />
+        </DockPanel>
+        <DockPanel Grid.Column="2">
+          <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" Classes="caption"
+                     Text="PROGRAMS · Select a complete preset" />
+          <ListBox x:Name="ProgramsList" SelectionChanged="OnProgramSelected" />
+        </DockPanel>
+      </Grid>
+
+      <Border Grid.Row="3" Margin="16,0,16,10" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="4">
+        <StackPanel>
+          <WrapPanel>
+            <CheckBox x:Name="AutoBox" Margin="0,0,16,0" VerticalAlignment="Center"
+                      Content="Automatic preview" Click="OnPreviewToggle" />
+            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="Key" />
+            <TextBox x:Name="KeyBox" Width="60" Margin="0,0,12,0" TextChanged="OnPreviewTextChanged" />
+            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="Velocity" />
+            <TextBox x:Name="VelocityBox" Width="60" Margin="0,0,12,0" TextChanged="OnPreviewTextChanged" />
+            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="Gate (ms)" />
+            <TextBox x:Name="DurationBox" Width="85" TextChanged="OnPreviewTextChanged" />
+          </WrapPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Text="Preview mode" />
+            <ComboBox x:Name="ModeBox" Width="170" SelectionChanged="OnPreviewSelectionChanged" />
+            <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Classes="caption"
+                       Text="Preview only · does not change the track" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <ScrollViewer x:Name="KeyboardScroll" Grid.Row="4" Margin="16,0,16,8"
+                    HorizontalScrollBarVisibility="Visible" VerticalScrollBarVisibility="Disabled">
+        <Canvas x:Name="PreviewKeyboard" Width="2560" Height="90"
+                Background="{DynamicResource Brush.Segment.PianoOutside}" />
+      </ScrollViewer>
+
+      <TextBlock x:Name="StatusText" Grid.Row="5" Margin="16,0,16,8" MinHeight="18" MaxHeight="52"
+                 TextWrapping="Wrap" Classes="caption" />
+      <Border Grid.Row="6" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0" Padding="10">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Margin="0,0,7,0" Content="Cancel" Click="OnCancelClick" />
+          <Button x:Name="OkButton" Content="OK" Classes="primary" Click="OnOkClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

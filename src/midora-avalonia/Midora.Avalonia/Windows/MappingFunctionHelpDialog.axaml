@@ -1,0 +1,114 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.MappingFunctionHelpDialog"
+        x:CompileBindings="False"
+        Title="Mapping Function Help"
+        Width="780" Height="650" MinWidth="620" MinHeight="480" MaxHeight="820"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,64">
+
+      <!-- Custom title bar (WPF WindowChrome substitute). -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitleBarPointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Mapping Function Help" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCloseClick"
+                ToolTip.Tip="Close">
+          <controls:FluentIcon Classes="captionicon"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <!-- Scrolling help content. -->
+      <ScrollViewer Grid.Row="1" Padding="16,14"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Classes="section" Text="One bounded numeric expression" />
+          <TextBlock Margin="0,4,0,14" Classes="caption" TextWrapping="Wrap"
+                     Text="The result is converted to the Mapping Step's numeric target. Statements, assignments, loops, object creation, reflection, I/O, and arbitrary .NET calls are not available." />
+
+          <TextBlock Classes="section" Text="Inputs" />
+          <Grid Margin="0,8,0,14" ColumnDefinitions="150,*" RowDefinitions="Auto,Auto,Auto">
+            <TextBlock FontFamily="{DynamicResource Font.Mono}" Text="value" />
+            <TextBlock Grid.Column="1" Classes="caption" TextWrapping="Wrap"
+                       Text="The data-domain value entering this Mapping Step (not the friendly editor value). CC10/71–78 remain MIDI 0–127 here. Example: MIDI 96 is shown as 32; value*0.5 returns MIDI 48 (shown as -16). Batch Edit =p0*0.5 instead halves display 32 to 16." />
+            <TextBlock Grid.Row="1" FontFamily="{DynamicResource Font.Mono}" Text="context" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Classes="caption" TextWrapping="Wrap"
+                       Text="The bounded MappingContextV2 snapshot. Type context. and press Ctrl+Space to inspect its legal fields." />
+            <TextBlock Grid.Row="2" FontFamily="{DynamicResource Font.Mono}" Text="Math" />
+            <TextBlock Grid.Row="2" Grid.Column="1" Classes="caption" TextWrapping="Wrap"
+                       Text="The approved System.Math numeric methods and constants are implicitly imported. Use Sin(value) or Math.Sin(value); press Ctrl+Space for the exact allowlist." />
+          </Grid>
+
+          <TextBlock Classes="section" Text="Examples" />
+          <Border Margin="0,8,0,6" Padding="10,8"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock FontFamily="{DynamicResource Font.Mono}" Foreground="#DCDCAA" Text="value" />
+              <TextBlock Margin="0,4,0,0" Classes="caption" TextWrapping="Wrap"
+                         Text="Identity: preserve the incoming value." />
+            </StackPanel>
+          </Border>
+          <Border Margin="0,0,0,6" Padding="10,8"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock FontFamily="{DynamicResource Font.Mono}" Foreground="#DCDCAA"
+                         Text="Clamp(value * 1.25, 0, 127)" />
+              <TextBlock Margin="0,4,0,0" Classes="caption" TextWrapping="Wrap"
+                         Text="Scale and clamp a MIDI-range value without the optional Math. prefix." />
+            </StackPanel>
+          </Border>
+          <Border Margin="0,0,0,6" Padding="10,8"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock FontFamily="{DynamicResource Font.Mono}" Foreground="#DCDCAA"
+                         Text="context.TriggerVelocity * (value / 127.0)" />
+              <TextBlock Margin="0,4,0,0" Classes="caption" TextWrapping="Wrap"
+                         Text="Combine the source value with the current note's trigger velocity." />
+            </StackPanel>
+          </Border>
+          <Border Margin="0,0,0,14" Padding="10,8"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock FontFamily="{DynamicResource Font.Mono}" Foreground="#DCDCAA"
+                         TextWrapping="Wrap"
+                         Text="Round(Clamp(value + Sin(context.TemplateTick / 48.0) * 12, 0, 127))" />
+              <TextBlock Margin="0,4,0,0" Classes="caption" TextWrapping="Wrap"
+                         Text="Apply a bounded periodic offset using the source Template Event tick." />
+            </StackPanel>
+          </Border>
+
+          <TextBlock Classes="section" Text="Editing" />
+          <TextBlock Margin="0,6,0,0" Classes="caption" TextWrapping="Wrap"
+                     Text="Ctrl+Space opens completion. Matching parentheses are highlighted. Validate checks the exact formal Mapping ABI and allowlist. OK validates again and submits one atomic Project edit; Cancel discards the dialog contents." />
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Footer: WPF set DialogResult = true; Avalonia has no DialogResult, so closing is the confirm result. -->
+      <Border Grid.Row="2" Padding="12,11"
+              Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}"
+              BorderThickness="0,1,0,0">
+        <Button HorizontalAlignment="Right" Classes="primary" Width="112"
+                IsDefault="True" IsCancel="True" Content="OK" Click="OnCloseClick" />
+      </Border>
+    </Grid>
+  </Border>
+</Window>

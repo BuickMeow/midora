@@ -1,0 +1,79 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.MappingFunctionDialog"
+        x:CompileBindings="False"
+        Title="Mapping Function"
+        Width="720" Height="430" MinWidth="560" MinHeight="360" MaxHeight="760"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Window.Styles>
+    <!-- The WPF AvalonEdit editor is replaced by a monospace TextBox. -->
+    <Style Selector="TextBox.mono">
+      <Setter Property="FontFamily" Value="{DynamicResource Font.Mono}"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+    <Style Selector="TextBox#ExpressionEditor">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}"/>
+    </Style>
+    <Style Selector="TextBox#ExpressionEditor:pointerover">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}"/>
+    </Style>
+    <Style Selector="TextBox#ExpressionEditor:focus">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}"/>
+    </Style>
+  </Window.Styles>
+
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,64">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Name="TitleBarDragSurface" Background="Transparent" PointerPressed="OnTitlePointerPressed"/>
+        <TextBlock x:Name="TitleText" Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}"/>
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="14,12" HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Margin="0,0,0,12" Classes="muted" TextWrapping="Wrap"
+                     Text="Enter one bounded numeric expression. Context dependencies are inferred automatically; Ctrl+Space opens completion."/>
+          <TextBlock Margin="0,0,0,4" Classes="caption" Text="NAME"/>
+          <TextBox x:Name="NameBox" Margin="0,0,0,12" TextChanged="OnNameTextChanged"/>
+          <TextBlock Margin="0,0,0,4" Classes="caption" Text="EXPRESSION"/>
+          <TextBox x:Name="ExpressionEditor" Classes="mono"
+                   MinHeight="42" Padding="6,4"
+                   Background="{DynamicResource Brush.Surface.0}" Foreground="#D4D4D4"
+                   BorderThickness="1" CornerRadius="{DynamicResource Radius.Small}"
+                   AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                   TextChanged="OnExpressionTextChanged" KeyDown="OnExpressionKeyDown"/>
+          <WrapPanel Margin="0,12,0,10">
+            <Button Width="86" Margin="0,0,6,0" Content="Help" Click="OnHelpClick"/>
+          </WrapPanel>
+          <Border Padding="9,7" Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="{DynamicResource Radius.Small}">
+            <TextBlock x:Name="ValidationText" Classes="caption"
+                       Text="Not validated." TextWrapping="Wrap"
+                       Foreground="{DynamicResource Brush.Text.Tertiary}"/>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,11" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Width="90" HorizontalAlignment="Left" Content="Validate" Click="OnValidateClick"/>
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Margin="0,0,6,0" Width="112" IsCancel="True" Content="Cancel" Click="OnCancelClick"/>
+            <Button Classes="primary" Width="112" IsDefault="True" Content="OK" Click="OnOkClick"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,52 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.OnionSettingsDialog"
+        x:CompileBindings="False"
+        Title="Onion Skin Settings"
+        FontFamily="{DynamicResource Font.UI}"
+        Width="480" Height="244" MinWidth="420" MinHeight="244"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        KeyDown="OnDialogKeyDown">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,60">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Name="TitleBarDragSurface" Background="Transparent" PointerPressed="OnTitlePointerPressed"/>
+        <TextBlock Margin="12,0,48,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Onion Skin Settings"/>
+        <Button HorizontalAlignment="Right" Width="46" Height="36" Classes="caption close"
+                Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}"/>
+        </Button>
+      </Grid>
+
+      <StackPanel Grid.Row="1" Margin="14,12">
+        <TextBlock TextWrapping="Wrap" Classes="muted"
+                   Text="Adjust the opacity of read-only source notes. Choose sources and enable onion skin from the layer menu."/>
+        <Grid Margin="0,16,0,0" ColumnDefinitions="Auto,*,50">
+          <TextBlock VerticalAlignment="Center" Margin="0,0,12,0" Text="Opacity"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding OpacityPercent}"
+                  TickFrequency="1" IsSnapToTickEnabled="True"/>
+          <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right"
+                     Text="{Binding OpacityPercent, StringFormat='{}{0:0}%'}"/>
+        </Grid>
+      </StackPanel>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Content="Help" HorizontalAlignment="Left" Click="OnHelpClick"/>
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Width="112" IsCancel="True" Margin="0,0,6,0" Content="Cancel" Click="OnCancelClick"/>
+            <Button Classes="primary" Width="112" IsDefault="True" Content="OK" Click="OnAcceptClick"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,49 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.MidiStateEntryDialog"
+        x:CompileBindings="False"
+        Title="Add MIDI State Entry" Width="430" Height="370" MinHeight="370"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        CanResize="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,*,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}"
+            PointerPressed="OnTitleBarPointerPressed">
+        <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Add MIDI State Entry" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <StackPanel Grid.Row="1" Margin="18">
+        <TextBlock Classes="caption" TextWrapping="Wrap"
+                   Text="Adds one explicit CC, RPN, or NRPN state value. Clear the resulting field later to remove it." />
+        <TextBlock Margin="0,14,0,4" Classes="overline" Text="TARGET KIND" />
+        <ComboBox x:Name="KindBox" SelectionChanged="OnKindChanged" />
+        <TextBlock x:Name="NumberLabel" Margin="0,12,0,4" Classes="overline" Text="CONTROLLER" />
+        <ComboBox x:Name="ControllerBox" />
+        <TextBox x:Name="NumberBox" IsVisible="False" Text="1" />
+        <TextBlock Margin="0,12,0,4" Classes="overline" Text="VALUE" />
+        <TextBox x:Name="ValueBox" Text="0" />
+        <TextBlock x:Name="ValidationText" Margin="0,9,0,0"
+                   Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+      </StackPanel>
+
+      <Border Grid.Row="2" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Margin="0,0,7,0" Content="Cancel" Click="OnCancelClick" />
+          <Button Classes="primary" Content="Add" Click="OnAddClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

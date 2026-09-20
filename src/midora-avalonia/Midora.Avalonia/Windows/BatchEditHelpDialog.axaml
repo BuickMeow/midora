@@ -1,0 +1,278 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.BatchEditHelpDialog"
+        x:CompileBindings="False"
+        Title="Batch Edit Help"
+        Width="920" Height="740" MinWidth="700" MinHeight="520"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,58">
+
+      <!-- Custom title bar (WPF WindowChrome substitute). -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitleBarPointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Batch Edit Help" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCloseClick"
+                ToolTip.Tip="Close">
+          <controls:FluentIcon Classes="captionicon"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <!-- Scrolling help content. -->
+      <ScrollViewer Grid.Row="1" Padding="18,16"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+
+          <!-- Hero card. -->
+          <Border Margin="0,0,0,18" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <Grid ColumnDefinitions="4,*">
+              <Border Background="{DynamicResource Brush.Red}" CornerRadius="2" />
+              <StackPanel Grid.Column="1" Margin="14,1,4,2">
+                <TextBlock FontSize="19" FontWeight="SemiBold"
+                           Text="Shape many values with one operation" />
+                <TextBlock Margin="0,5,0,0" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                           Text="Each non-empty field is evaluated for every selected object. Start with a direct value or a one-step operation; use = only when you need variables, conditions, or System.Math." />
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <!-- 1. Input forms. -->
+          <TextBlock Classes="section" Margin="0,0,0,9" Text="1. Choose an input form" />
+          <Grid Margin="10,0,10,5" ColumnDefinitions="180,180,*">
+            <TextBlock Classes="overline" Foreground="{DynamicResource Brush.Text.Tertiary}" Text="INPUT" />
+            <TextBlock Grid.Column="1" Classes="overline"
+                       Foreground="{DynamicResource Brush.Text.Tertiary}" Text="MEANING" />
+            <TextBlock Grid.Column="2" Classes="overline"
+                       Foreground="{DynamicResource Brush.Text.Tertiary}" Text="EXAMPLE" />
+          </Grid>
+          <ItemsControl ItemsSource="{Binding InputModes}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,5" Padding="10,7"
+                        Background="{DynamicResource Brush.Surface.1}"
+                        BorderBrush="{DynamicResource Brush.Border}"
+                        BorderThickness="1" CornerRadius="3">
+                  <Grid ColumnDefinitions="180,180,*">
+                    <TextBlock VerticalAlignment="Center" Classes="mono" Foreground="#DCDCAA"
+                               TextWrapping="Wrap" Text="{Binding Input}" />
+                    <TextBlock Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center"
+                               Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                               Text="{Binding Meaning}" />
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                               Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                               Text="{Binding Example}" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Margin="10,5,10,0" Classes="caption" TextWrapping="Wrap"
+                     Text="For n%, *n, /n, +n, and -n, n must be a non-negative finite number and a divisor cannot be zero. Because -n means subtraction, use an expression such as =-100 when the target itself must be negative." />
+
+          <!-- 2. Expression editor + 3. Variables. -->
+          <Grid Margin="0,18,0,18" ColumnDefinitions="*,12,*">
+
+            <Border Padding="16"
+                    Background="{DynamicResource Brush.Surface.1}"
+                    BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="1" CornerRadius="5">
+              <StackPanel>
+                <TextBlock Classes="section" Margin="0,0,0,9" Text="2. Expression editor" />
+                <ItemsControl ItemsSource="{Binding Shortcuts}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,0,0,7" ColumnDefinitions="118,*">
+                        <Border Margin="0,0,9,0" Padding="8,5"
+                                Background="{DynamicResource Brush.Surface.0}"
+                                BorderBrush="{DynamicResource Brush.Border.Strong}"
+                                BorderThickness="1" CornerRadius="3">
+                          <TextBlock HorizontalAlignment="Center" Classes="mono" Foreground="#DCDCAA"
+                                     TextWrapping="Wrap" Text="{Binding Keys}" />
+                        </Border>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                   Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                                   Text="{Binding Action}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Border>
+
+            <Border Grid.Column="2" Padding="16"
+                    Background="{DynamicResource Brush.Surface.1}"
+                    BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="1" CornerRadius="5">
+              <StackPanel>
+                <TextBlock Classes="section" Margin="0,0,0,9" Text="3. Variables" />
+                <Grid Margin="0,0,0,5" ColumnDefinitions="102,*">
+                  <TextBlock Classes="mono" Foreground="#DCDCAA" Text="v0 / v1" />
+                  <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                             Text="Velocity before / after" />
+                </Grid>
+                <Grid Margin="0,0,0,5" ColumnDefinitions="102,*">
+                  <TextBlock Classes="mono" Foreground="#DCDCAA" Text="p0 / p1" />
+                  <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                             Text="Point value before / after" />
+                </Grid>
+                <Grid Margin="0,0,0,5" ColumnDefinitions="102,*">
+                  <TextBlock Classes="mono" Foreground="#DCDCAA" Text="k0 / k1" />
+                  <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                             Text="Key number before / after" />
+                </Grid>
+                <Grid Margin="0,0,0,5" ColumnDefinitions="102,*">
+                  <TextBlock Classes="mono" Foreground="#DCDCAA" Text="g0 / g1" />
+                  <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                             Text="Gate before / after" />
+                </Grid>
+                <Grid Margin="0,0,0,5" ColumnDefinitions="102,*">
+                  <TextBlock Classes="mono" Foreground="#DCDCAA" Text="t0 / t1" />
+                  <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                             Text="Tick before / after" />
+                </Grid>
+                <Grid Margin="0,0,0,8" ColumnDefinitions="102,*">
+                  <TextBlock Classes="mono" Foreground="#DCDCAA" Text="tr" />
+                  <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                             Text="Tick relative to the earliest selected object" />
+                </Grid>
+                <TextBlock Classes="caption" TextWrapping="Wrap"
+                           Text="0 means the original value; 1 means another field's calculated result. The current field cannot reference its own result, and cycles are rejected." />
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <!-- 4. System.Math functions. -->
+          <Border Margin="0,0,0,18" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock Classes="section" Margin="0,0,0,9" Text="4. Useful System.Math functions" />
+              <TextBlock Margin="0,0,0,9" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                         Text="Call functions directly or through Math., for example Clamp(...) and Math.Clamp(...). Completion lists every supported numeric overload." />
+              <ItemsControl ItemsSource="{Binding MathMembers}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Margin="0,0,7,7" Padding="7,2"
+                            Background="{DynamicResource Brush.Surface.3}"
+                            BorderBrush="{DynamicResource Brush.Border.Strong}"
+                            BorderThickness="1" CornerRadius="10">
+                      <TextBlock Classes="mono" Foreground="#DCDCAA" TextWrapping="Wrap"
+                                 Text="{Binding}" />
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Margin="0,2,0,0" Classes="caption" TextWrapping="Wrap"
+                         Text="Expressions also support +, -, *, /, %, comparisons, boolean logic, and condition ? valueWhenTrue : valueWhenFalse." />
+            </StackPanel>
+          </Border>
+
+          <!-- 5. Practical examples. -->
+          <TextBlock Classes="section" Margin="0,0,0,9"
+                     Text="5. Practical examples — easy to advanced" />
+          <ItemsControl ItemsSource="{Binding Examples}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,8" Padding="16"
+                        Background="{DynamicResource Brush.Surface.1}"
+                        BorderBrush="{DynamicResource Brush.Border}"
+                        BorderThickness="1" CornerRadius="5">
+                  <Grid ColumnDefinitions="48,*">
+                    <Border Width="34" Height="34" VerticalAlignment="Top"
+                            Background="{DynamicResource Brush.Red.Subtle}"
+                            BorderBrush="{DynamicResource Brush.Red.Dark}"
+                            BorderThickness="1" CornerRadius="17">
+                      <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                 FontFamily="{DynamicResource Font.Mono}" FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Brush.Red.Hover}"
+                                 Text="{Binding Number}" />
+                    </Border>
+                    <StackPanel Grid.Column="1">
+                      <TextBlock Classes="overline" Text="{Binding Level}" />
+                      <TextBlock Margin="0,2,0,7" FontWeight="SemiBold" FontSize="13"
+                                 Text="{Binding Title}" />
+                      <Grid ColumnDefinitions="94,*">
+                        <Border Margin="0,0,8,0" Padding="7,2"
+                                Background="{DynamicResource Brush.Surface.3}"
+                                BorderBrush="{DynamicResource Brush.Border.Strong}"
+                                BorderThickness="1" CornerRadius="10">
+                          <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                     Classes="caption" Text="{Binding Field}" />
+                        </Border>
+                        <Border Grid.Column="1" Padding="8,5"
+                                Background="{DynamicResource Brush.Surface.0}"
+                                BorderBrush="{DynamicResource Brush.Border.Strong}"
+                                BorderThickness="1" CornerRadius="3">
+                          <TextBlock Classes="mono" Foreground="#DCDCAA" TextWrapping="Wrap"
+                                     Text="{Binding Code}" />
+                        </Border>
+                      </Grid>
+                      <TextBlock Margin="0,7,0,0" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                                 Text="{Binding Explanation}" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- 6. Result handling. -->
+          <Border Margin="0,10,0,2" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock Classes="section" Margin="0,0,0,9" Text="6. Result handling" />
+              <ItemsControl ItemsSource="{Binding ResultRules}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="0,0,0,7" ColumnDefinitions="16,*">
+                      <Ellipse Width="5" Height="5" VerticalAlignment="Center"
+                               Fill="{DynamicResource Brush.Info}" />
+                      <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                                 Text="{Binding}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Border Margin="0,5,0,0" Padding="10,8"
+                      Background="{DynamicResource Brush.Info.Subtle}"
+                      BorderBrush="#28517A" BorderThickness="1" CornerRadius="3">
+                <TextBlock Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                           Text="Use Validate before Apply to catch syntax errors, unavailable variables, and circular result dependencies without changing the Project." />
+              </Border>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Footer. -->
+      <Border Grid.Row="2" Padding="12,10"
+              Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}"
+              BorderThickness="0,1,0,0">
+        <Button HorizontalAlignment="Right" Classes="primary" Width="112"
+                IsCancel="True" Content="Close" Click="OnCloseClick" />
+      </Border>
+    </Grid>
+  </Border>
+</Window>

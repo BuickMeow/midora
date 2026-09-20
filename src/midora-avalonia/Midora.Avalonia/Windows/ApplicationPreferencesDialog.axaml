@@ -1,0 +1,171 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.ApplicationPreferencesDialog"
+        x:CompileBindings="False"
+        Title="Application Preferences"
+        Width="760" Height="740" MinWidth="650" MinHeight="620"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,Auto,58">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}" PointerPressed="OnTitlePointerPressed">
+        <TextBlock Margin="12,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Application Preferences" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right"
+                Classes="caption close" ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                 Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <TabControl x:Name="PreferencesTabs" Grid.Row="1" Margin="12,10,12,0">
+        <TabItem Header="Audio">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <Border Padding="10">
+              <StackPanel>
+                <TextBlock Classes="section" Text="Playback" />
+                <TextBlock Margin="0,5,0,14" Classes="caption" TextWrapping="Wrap"
+                           Text="These settings apply to every Project and can change only while playback is stopped." />
+                <Grid ColumnDefinitions="*,12,*,12,*">
+                  <StackPanel>
+                    <TextBlock Classes="overline" Text="MASTER VOLUME (dB)" />
+                    <TextBox x:Name="PlaybackMasterVolumeBox" Margin="0,5,0,0" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Classes="overline" Text="STOP CURSOR BEHAVIOR" />
+                    <ComboBox x:Name="StopCursorBox" Margin="0,5,0,0" />
+                  </StackPanel>
+                  <CheckBox x:Name="PlaybackLimiterBox" Grid.Column="4" Margin="0,22,0,0"
+                            VerticalAlignment="Top" Content="Limiter enabled" />
+                </Grid>
+
+                <Border Height="1" Margin="0,18" Background="{DynamicResource Brush.Border}" />
+
+                <TextBlock Classes="section" Text="Realtime Audio" />
+                <TextBlock Margin="0,5,0,14" Classes="caption" TextWrapping="Wrap"
+                           Text="Changes that affect the audio host rebuild the persistent Worker when settings are applied." />
+                <TextBlock Classes="overline" Text="PLAYBACK OUTPUT DEVICE" />
+                <ComboBox x:Name="DeviceBox" Margin="0,5,0,0" />
+                <TextBlock x:Name="DeviceStatusText" Margin="0,5,0,14" Classes="caption" TextWrapping="Wrap" />
+                <Grid ColumnDefinitions="*,12,*,12,*">
+                  <StackPanel>
+                    <TextBlock Classes="overline" Text="RENDER-AHEAD (ms)" />
+                    <TextBox x:Name="RenderAheadBox" Margin="0,5,0,0" />
+                    <TextBlock Margin="0,5,0,0" Classes="caption" Text="20–2,000" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Classes="overline" Text="DEVICE REQUEST (ms)" />
+                    <TextBox x:Name="DeviceRequestBox" Margin="0,5,0,0" />
+                    <TextBlock Margin="0,5,0,0" Classes="caption" Text="5–200" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="4">
+                    <TextBlock Classes="overline" Text="MAX VOICES / CHANNEL" />
+                    <TextBox x:Name="VoicesBox" Margin="0,5,0,0" />
+                    <TextBlock Margin="0,5,0,0" Classes="caption" Text="1–16,777,216" />
+                  </StackPanel>
+                </Grid>
+
+                <Border Height="1" Margin="0,18" Background="{DynamicResource Brush.Border}" />
+
+                <TextBlock Classes="section" Text="Audio Cache" />
+                <TextBlock Margin="0,5,0,14" Classes="caption" TextWrapping="Wrap"
+                           Text="Session and transient recovery data remain runtime state." />
+                <TextBlock Classes="overline" Text="MAXIMUM REUSABLE CACHE (GiB)" />
+                <TextBox x:Name="CacheQuotaBox" Width="190" Margin="0,5,0,0" HorizontalAlignment="Left" />
+                <TextBlock Margin="0,5,0,0" Classes="caption" Text="0 disables reusable audio-cache retention." />
+              </StackPanel>
+            </Border>
+          </ScrollViewer>
+        </TabItem>
+
+        <TabItem Header="SoundFonts">
+          <Grid Margin="10" RowDefinitions="Auto,Auto,*">
+            <TextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="All Projects use the enabled SF2/SFZ files below. Order defines BASSMIDI priority. SFZ requires a target Bank MSB, Bank LSB, and Program." />
+            <StackPanel Grid.Row="1" Margin="0,12,0,8" Orientation="Horizontal">
+              <Button Width="82" Margin="0,0,7,0" Content="Add…" Click="OnAddSoundFontsClick" />
+              <Button Width="82" Margin="0,0,7,0" Content="Remove" Click="OnRemoveSoundFontClick" />
+              <Button Width="72" Margin="0,0,7,0" Content="Up" Click="OnMoveSoundFontUpClick" />
+              <Button Width="72" Content="Down" Click="OnMoveSoundFontDownClick" />
+              <TextBlock x:Name="SoundFontCountText" Margin="12,0,0,0" VerticalAlignment="Center" Classes="caption" />
+            </StackPanel>
+            <ListBox x:Name="SoundFontListBox" Grid.Row="2" SelectionMode="Single"
+                     ItemsSource="{Binding SoundFonts}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="2,5" ColumnDefinitions="Auto,10,*,12,Auto">
+                    <CheckBox VerticalAlignment="Center" IsChecked="{Binding Enabled, Mode=TwoWay}" />
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                      <TextBlock FontWeight="SemiBold" Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Classes="caption" Text="{Binding FullPath}" TextTrimming="CharacterEllipsis"
+                                 ToolTip.Tip="{Binding FullPath}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="4" Width="272">
+                      <CheckBox Content="Target mapping" IsChecked="{Binding HasTarget, Mode=TwoWay}"
+                                IsEnabled="{Binding TargetOptional}" />
+                      <Grid Margin="0,5,0,0" ColumnDefinitions="*,7,*,7,*" IsEnabled="{Binding HasTarget}">
+                        <StackPanel>
+                          <TextBlock Classes="overline" Text="BANK MSB" />
+                          <TextBox Margin="0,3,0,0" Text="{Binding BankMsbText, Mode=TwoWay}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                          <TextBlock Classes="overline" Text="BANK LSB" />
+                          <TextBox Margin="0,3,0,0" Text="{Binding BankLsbText, Mode=TwoWay}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="4">
+                          <TextBlock Classes="overline" Text="PROGRAM" />
+                          <TextBox Margin="0,3,0,0" Text="{Binding ProgramText, Mode=TwoWay}" />
+                        </StackPanel>
+                      </Grid>
+                      <TextBlock Margin="0,5,0,0" Classes="caption" Text="{Binding ResolvedTargetText}"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </TabItem>
+
+        <TabItem Header="Appearance">
+          <StackPanel Margin="10">
+            <TextBlock Classes="section" Text="Appearance" />
+            <TextBlock Margin="0,14,0,0" Classes="overline" Text="EVENT LANES" />
+            <CheckBox x:Name="EventLaneLinesBox" Margin="0,8,0,0" Content="Show event lane lines" />
+            <TextBlock Margin="0,5,0,18" Classes="caption" TextWrapping="Wrap"
+                       Text="Show position guide lines in every event lane except Vel. and Inst. Lines are visual guides, not a promise of held MIDI state." />
+            <TextBlock Classes="overline" Text="LANGUAGE" />
+            <ComboBox x:Name="LanguageBox" Width="240" Margin="0,5,0,0" HorizontalAlignment="Left" />
+            <TextBlock Margin="0,5,0,0" Classes="caption" Text="English is the only language available in this release." />
+          </StackPanel>
+        </TabItem>
+      </TabControl>
+
+      <Border x:Name="ValidationBorder" Grid.Row="2" Margin="18,8" Padding="9"
+              Background="{DynamicResource Brush.Red.Subtle}"
+              BorderBrush="{DynamicResource Brush.Red}"
+              BorderThickness="1" CornerRadius="3" IsVisible="False">
+        <TextBlock x:Name="ValidationText" Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+      </Border>
+
+      <Border Grid.Row="3" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Width="132" HorizontalAlignment="Left" Content="Restore Defaults" Click="OnRestoreDefaultsClick" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Width="112" Margin="0,0,7,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+            <Button Classes="primary" Width="112" Content="Apply" IsDefault="True" Click="OnApplyClick" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

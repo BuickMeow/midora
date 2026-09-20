@@ -1,0 +1,69 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.ScaleSelectionDialog"
+        x:CompileBindings="False"
+        Title="Scale Selection"
+        Width="470" Height="330" MinWidth="430" MinHeight="300"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,60">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}" PointerPressed="OnTitlePointerPressed">
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Scale Selection" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <Grid Grid.Row="1" Margin="14,12"
+            ColumnDefinitions="150,*,54"
+            RowDefinitions="Auto,10,Auto,10,Auto,10,Auto,*">
+
+        <TextBlock VerticalAlignment="Center" Text="Current Length" />
+        <TextBox x:Name="CurrentLengthBox" Grid.Column="1" IsReadOnly="True" />
+        <TextBlock Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" Text="Ticks" />
+
+        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Adjusted Length" />
+        <TextBox x:Name="AdjustedLengthBox" Grid.Row="2" Grid.Column="1" TextChanged="OnAdjustedLengthTextChanged" />
+        <TextBlock Grid.Row="2" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" Text="Ticks" />
+
+        <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="Factor" />
+        <Grid Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" ColumnDefinitions="118,10,*">
+          <ComboBox x:Name="FactorModeBox" SelectedIndex="0" SelectionChanged="OnFactorModeChanged">
+            <ComboBoxItem Content="Multiply" />
+            <ComboBoxItem Content="Divide" />
+          </ComboBox>
+          <TextBox x:Name="FactorBox" Grid.Column="2" Text="1.000" TextChanged="OnFactorChanged" />
+        </Grid>
+
+        <TextBlock x:Name="ScopeLabel" Grid.Row="6" VerticalAlignment="Center" Text="Scope" />
+        <ComboBox x:Name="ScopeBox" Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" SelectedIndex="0">
+          <ComboBoxItem Content="Exposed Content Only" />
+          <ComboBoxItem Content="Exposed Content and Segments" />
+        </ComboBox>
+
+        <TextBlock x:Name="ValidationText" Grid.Row="7" Grid.ColumnSpan="3" Margin="0,10,0,0"
+                   Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+      </Grid>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+          <Button Width="112" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+          <Button Classes="primary" Width="112" Content="Apply" IsDefault="True" Click="OnAcceptClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

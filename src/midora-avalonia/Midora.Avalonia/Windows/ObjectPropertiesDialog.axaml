@@ -1,0 +1,103 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.ObjectPropertiesDialog"
+        x:CompileBindings="False"
+        Title="Properties"
+        Width="520" Height="620" MinWidth="420" MinHeight="320" MaxHeight="820"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,Auto,*,Auto">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Properties" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <Border Grid.Row="1" Padding="18,14" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
+        <StackPanel>
+          <TextBlock FontSize="{DynamicResource FontSize.Title}" FontWeight="SemiBold"
+                     Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+          <TextBlock Margin="0,4,0,0" Classes="caption" Text="{Binding Context}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <ScrollViewer Grid.Row="2" Padding="18" VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+          <ItemsControl ItemsSource="{Binding Fields}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="0,0,0,10">
+                  <TextBlock Margin="0,0,0,4" Classes="caption" Text="{Binding Label}" />
+                  <Grid ColumnDefinitions="*,Auto,Auto">
+                    <TextBox Text="{Binding Value, Mode=TwoWay}" IsReadOnly="{Binding IsReadOnly}"
+                             IsVisible="{Binding IsTextVisible}" />
+                    <ComboBox ItemsSource="{Binding Choices}" DisplayMemberBinding="{Binding Label}"
+                              SelectedItem="{Binding SelectedChoice, Mode=TwoWay}"
+                              IsVisible="{Binding IsChoice}" IsEnabled="{Binding IsEditorEnabled}" />
+                    <CheckBox Content="Enabled" IsChecked="{Binding BooleanValue, Mode=TwoWay}"
+                              IsVisible="{Binding IsBoolean}" IsEnabled="{Binding IsEditorEnabled}" />
+                    <Button Grid.Column="1" Width="32" Height="30" Margin="6,0,0,0" Padding="0"
+                            Classes="ghost" Tag="{Binding}" IsEnabled="{Binding IsEditorEnabled}"
+                            IsVisible="{Binding CanActivateMixed}"
+                            ToolTip.Tip="Edit all selected objects as one value" Click="OnActivateMixedClick">
+                      <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Add20Regular}" />
+                    </Button>
+                    <Button Grid.Column="2" Width="32" Height="30" Margin="4,0,0,0" Padding="0"
+                            Classes="ghost" Tag="{Binding}" IsEnabled="{Binding IsEditorEnabled}"
+                            IsVisible="{Binding CanReset}"
+                            ToolTip.Tip="Restore original value" Click="OnResetFieldClick">
+                      <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.ArrowUndo20Regular}" />
+                    </Button>
+                  </Grid>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource Brush.Red.Hover}"
+                     Text="{Binding ErrorText}" IsVisible="{Binding HasError}" TextWrapping="Wrap" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="3" MinHeight="58" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Width="112" Margin="0,0,8,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+          <Button Width="112" Classes="primary" IsDefault="True" Content="OK" Click="OnConfirmClick" />
+        </StackPanel>
+      </Border>
+
+      <Border x:Name="PropertyTaskOverlay" Grid.RowSpan="4" ZIndex="1000"
+              IsVisible="False" Background="#E6101216" Focusable="True">
+        <Border Margin="24" Padding="20" VerticalAlignment="Center"
+                Background="{DynamicResource Brush.Surface.1}"
+                BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1" CornerRadius="4">
+          <StackPanel>
+            <TextBlock FontSize="{DynamicResource FontSize.Title}" FontWeight="SemiBold"
+                       Text="{Binding TaskName}" TextWrapping="Wrap" />
+            <TextBlock Margin="0,10,0,0" Classes="caption" Text="{Binding TaskDetail}" TextWrapping="Wrap" />
+            <ProgressBar Margin="0,18,0,0" Height="7" Minimum="0" Maximum="1" IsIndeterminate="True" />
+            <Button x:Name="PropertyTaskCancelButton" Content="Cancel" MinWidth="92"
+                    Margin="0,16,0,0" HorizontalAlignment="Right"
+                    IsEnabled="{Binding IsTaskCancelEnabled}" Click="OnCancelTaskClick" />
+          </StackPanel>
+        </Border>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

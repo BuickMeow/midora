@@ -1,0 +1,289 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.InstrumentCatalogDialog"
+        x:CompileBindings="False"
+        Title="Instrument Catalogs"
+        Width="1180" Height="780" MinWidth="960" MinHeight="650"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,Auto,*,Auto,58">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid x:Name="CatalogTitleBar" Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Instrument Catalogs" />
+        <Button x:Name="CatalogCloseButton" Width="46" Height="38" HorizontalAlignment="Right"
+                Classes="caption close" ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <Border x:Name="CatalogHeader" Grid.Row="1" Padding="16,11" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
+        <Grid ColumnDefinitions="Auto,18,*">
+          <CheckBox x:Name="GeneralMidiEnabledBox" VerticalAlignment="Center"
+                    Content="Enable built-in General MIDI names"
+                    Click="OnCatalogResolutionInputsChanged" />
+          <TextBlock Grid.Column="2" VerticalAlignment="Center" Classes="caption" TextWrapping="Wrap"
+                     Text="Display priority: User Override → enabled SoundFont order → User Profile order → General MIDI → numeric fallback. Names never change Project MIDI values." />
+        </Grid>
+      </Border>
+
+      <TabControl x:Name="CatalogTabs" Grid.Row="2" Margin="12,10,12,0"
+                  SelectionChanged="OnCatalogTabSelectionChanged">
+        <TabItem Header="Profiles">
+          <Grid Margin="8" ColumnDefinitions="300,8,330,8,*">
+
+            <Border Background="{DynamicResource Brush.Surface.1}" BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="1" CornerRadius="5" Padding="9">
+              <Grid RowDefinitions="Auto,Auto,*">
+                <TextBlock Classes="section" Text="Catalog Profiles" />
+                <WrapPanel Grid.Row="1" Margin="0,8,0,8">
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="New" Click="OnNewProfileClick" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Rename" Click="OnRenameProfileClick" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Delete" Click="OnDeleteProfileClick" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Up" Click="OnMoveProfileUpClick" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Down" Click="OnMoveProfileDownClick" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Import…" Click="OnImportProfileClick" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Export…" Click="OnExportProfileClick" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Scan SF2…" Click="OnScanSf2Click" />
+                  <Button Margin="0,0,5,5" Padding="9,4" Content="Rescan" Click="OnRescanSf2Click" />
+                </WrapPanel>
+                <ListBox x:Name="ProfileList" Grid.Row="2" SelectionChanged="OnProfileSelectionChanged">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="1,2" ColumnDefinitions="Auto,*">
+                        <CheckBox Margin="0,1,8,0" VerticalAlignment="Top" IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                  Click="OnCatalogResolutionInputsChanged" />
+                        <StackPanel Grid.Column="1">
+                          <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Classes="caption" Text="{Binding SourceLabel}" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Background="{DynamicResource Brush.Surface.1}"
+                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="5" Padding="9">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <Grid>
+                  <TextBlock Classes="section" Text="Banks" />
+                  <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                    <Button Margin="0,0,5,0" Padding="9,4" Content="New" Click="OnNewBankClick" />
+                    <Button Padding="9,4" Content="Delete" Click="OnDeleteBankClick" />
+                  </StackPanel>
+                </Grid>
+                <ListBox x:Name="BankList" Grid.Row="1" Margin="0,8,0,8"
+                         SelectionChanged="OnBankSelectionChanged" DisplayMemberBinding="{Binding DisplayText}" />
+                <Border Grid.Row="2" Padding="8" Background="{DynamicResource Brush.Surface.1}"
+                        BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+                  <StackPanel>
+                    <Grid ColumnDefinitions="*,8,*">
+                      <StackPanel>
+                        <TextBlock Classes="overline" Text="BANK MSB" />
+                        <TextBox x:Name="BankMsbBox" Margin="0,4,0,0" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="2">
+                        <TextBlock Classes="overline" Text="BANK LSB" />
+                        <TextBox x:Name="BankLsbBox" Margin="0,4,0,0" />
+                      </StackPanel>
+                    </Grid>
+                    <TextBlock Margin="0,8,0,0" Classes="overline" Text="DISPLAY NAME (OPTIONAL)" />
+                    <TextBox x:Name="BankNameBox" Margin="0,4,0,0" />
+                    <Button x:Name="ApplyBankButton" Margin="0,8,0,0" HorizontalAlignment="Right"
+                            Padding="12,4" Content="Apply Bank" Click="OnApplyBankClick" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="4" Background="{DynamicResource Brush.Surface.1}"
+                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="5" Padding="9">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <Grid>
+                  <TextBlock Classes="section" Text="Programs" />
+                  <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                    <Button Margin="0,0,5,0" Padding="9,4" Content="New" Click="OnNewProgramClick" />
+                    <Button Padding="9,4" Content="Delete" Click="OnDeleteProgramClick" />
+                  </StackPanel>
+                </Grid>
+                <ListBox x:Name="ProgramList" Grid.Row="1" Margin="0,8,0,8"
+                         SelectionChanged="OnProgramSelectionChanged" DisplayMemberBinding="{Binding DisplayText}" />
+                <Border Grid.Row="2" Padding="8" Background="{DynamicResource Brush.Surface.1}"
+                        BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+                  <StackPanel>
+                    <TextBlock Classes="overline" Text="PROGRAM" />
+                    <TextBox x:Name="ProgramNumberBox" Margin="0,4,0,0" />
+                    <TextBlock Margin="0,8,0,0" Classes="overline" Text="DISPLAY NAME" />
+                    <TextBox x:Name="ProgramNameBox" Margin="0,4,0,0" />
+                    <TextBlock Margin="0,8,0,0" Classes="overline" Text="EFFECTIVE CATALOG NAME" />
+                    <TextBlock x:Name="ResolvedProgramText" Margin="0,4,0,0" Classes="caption" TextWrapping="Wrap" />
+                    <Button x:Name="ApplyProgramButton" Margin="0,8,0,0" HorizontalAlignment="Right"
+                            Padding="12,4" Content="Apply Program" Click="OnApplyProgramClick" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+          </Grid>
+        </TabItem>
+
+        <TabItem Header="User Overrides">
+          <Grid Margin="8" ColumnDefinitions="*,12,390">
+            <Border Background="{DynamicResource Brush.Surface.1}" BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="1" CornerRadius="5" Padding="9">
+              <Grid RowDefinitions="Auto,*">
+                <Grid>
+                  <StackPanel>
+                    <TextBlock Classes="section" Text="Highest-priority Names" />
+                    <TextBlock Margin="0,3,120,0" Classes="caption" TextWrapping="Wrap"
+                               Text="An override applies to one exact Bank MSB / Bank LSB / Program address." />
+                  </StackPanel>
+                  <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                    <Button Margin="0,0,5,0" Padding="9,4" Content="New" Click="OnNewOverrideClick" />
+                    <Button Padding="9,4" Content="Delete" Click="OnDeleteOverrideClick" />
+                  </StackPanel>
+                </Grid>
+                <ListBox x:Name="OverrideList" Grid.Row="1" Margin="0,9,0,0"
+                         SelectionChanged="OnOverrideSelectionChanged" DisplayMemberBinding="{Binding DisplayText}" />
+              </Grid>
+            </Border>
+            <Border Grid.Column="2" Background="{DynamicResource Brush.Surface.1}"
+                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="5" Padding="12">
+              <StackPanel>
+                <TextBlock Classes="section" Text="Override Properties" />
+                <Grid Margin="0,12,0,0" ColumnDefinitions="*,8,*,8,*">
+                  <StackPanel>
+                    <TextBlock Classes="overline" Text="BANK MSB" />
+                    <TextBox x:Name="OverrideMsbBox" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Classes="overline" Text="BANK LSB" />
+                    <TextBox x:Name="OverrideLsbBox" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="4">
+                    <TextBlock Classes="overline" Text="PROGRAM" />
+                    <TextBox x:Name="OverrideProgramBox" Margin="0,4,0,0" />
+                  </StackPanel>
+                </Grid>
+                <TextBlock Margin="0,10,0,0" Classes="overline" Text="BANK DISPLAY NAME (OPTIONAL)" />
+                <TextBox x:Name="OverrideBankNameBox" Margin="0,4,0,0" />
+                <TextBlock Margin="0,10,0,0" Classes="overline" Text="PROGRAM DISPLAY NAME (OPTIONAL)" />
+                <TextBox x:Name="OverrideProgramNameBox" Margin="0,4,0,0" />
+                <Button Margin="0,12,0,0" HorizontalAlignment="Right" Padding="12,4"
+                        Content="Apply Override" Click="OnApplyOverrideClick" />
+              </StackPanel>
+            </Border>
+          </Grid>
+        </TabItem>
+      </TabControl>
+
+      <Border x:Name="ValidationBorder" Grid.Row="3" Margin="16,8,16,0" Padding="9"
+              Background="{DynamicResource Brush.Red.Subtle}" BorderBrush="{DynamicResource Brush.Red}"
+              BorderThickness="1" CornerRadius="3" IsVisible="False">
+        <TextBlock x:Name="ValidationText" Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+      </Border>
+
+      <Border x:Name="CatalogFooter" Grid.Row="4" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <TextBlock VerticalAlignment="Center" Classes="caption"
+                     Text="Changes remain a draft until OK. Catalog data never enters a Project." />
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Width="112" Margin="0,0,7,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+            <Button x:Name="CatalogOkButton" Width="112" Classes="primary" IsDefault="True"
+                    Content="OK" Click="OnOkClick" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Grid x:Name="ScanOverlay" Grid.RowSpan="5" ZIndex="100" IsVisible="False"
+            Background="#B8000000">
+        <Border Width="720" MaxHeight="610" Margin="24" Padding="14" VerticalAlignment="Center"
+                Background="{DynamicResource Brush.Surface.0}" BorderBrush="{DynamicResource Brush.Border.Strong}"
+                BorderThickness="1" CornerRadius="4">
+          <Grid RowDefinitions="Auto,Auto,*,Auto,Auto">
+            <TextBlock FontSize="{DynamicResource FontSize.Title}" FontWeight="SemiBold" Text="Scan SF2 Presets" />
+            <StackPanel Grid.Row="1" Margin="0,8,0,10">
+              <TextBlock x:Name="ScanSourceText" Classes="caption" TextWrapping="Wrap" />
+              <TextBlock Margin="0,9,0,0" Classes="overline" Text="PROFILE NAME" />
+              <TextBox x:Name="ScanProfileNameBox" Margin="0,4,0,0" />
+            </StackPanel>
+            <Grid x:Name="ScanMappingPanel" Grid.Row="2" RowDefinitions="Auto,*">
+              <Grid Margin="3,0,20,4" ColumnDefinitions="110,*,110,110">
+                <TextBlock Classes="overline" Text="RAW BANK" />
+                <TextBlock Grid.Column="1" Classes="overline" Text="PRESETS" />
+                <TextBlock Grid.Column="2" Classes="overline" Text="TARGET MSB" />
+                <TextBlock Grid.Column="3" Classes="overline" Text="TARGET LSB" />
+              </Grid>
+              <ListBox x:Name="ScanBankList" Grid.Row="1" MaxHeight="330">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="3,2" ColumnDefinitions="110,*,110,110">
+                      <TextBlock VerticalAlignment="Center" Text="{Binding RawBank}" />
+                      <TextBlock Grid.Column="1" VerticalAlignment="Center" Classes="caption"
+                                 Text="{Binding PresetCountText}" />
+                      <TextBox Grid.Column="2" Margin="3,0" Text="{Binding TargetMsbText, Mode=TwoWay}" />
+                      <TextBox Grid.Column="3" Margin="3,0" Text="{Binding TargetLsbText, Mode=TwoWay}" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
+            <TextBlock x:Name="ScanStatusText" Grid.Row="3" Margin="0,9,0,0" Classes="caption" TextWrapping="Wrap" />
+            <StackPanel Grid.Row="4" Margin="0,12,0,0" HorizontalAlignment="Right" Orientation="Horizontal">
+              <Button Width="112" Margin="0,0,7,0" Content="Cancel" Click="OnCancelScanClick" />
+              <Button x:Name="ApplyScanButton" Width="132" Classes="primary"
+                      Content="Import Snapshot" Click="OnApplyScanClick" />
+            </StackPanel>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <Grid x:Name="ImportOverlay" Grid.RowSpan="5" ZIndex="101" IsVisible="False"
+            Background="#B8000000">
+        <Border Width="760" MaxHeight="620" Margin="24" Padding="14" VerticalAlignment="Center"
+                Background="{DynamicResource Brush.Surface.0}" BorderBrush="{DynamicResource Brush.Border.Strong}"
+                BorderThickness="1" CornerRadius="4">
+          <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+            <TextBlock FontSize="{DynamicResource FontSize.Title}" FontWeight="SemiBold"
+                       Text="Import Catalog Profile" />
+            <TextBlock x:Name="ImportSourceText" Grid.Row="1" Margin="0,7,0,10"
+                       Classes="caption" TextWrapping="Wrap" />
+            <StackPanel Grid.Row="2">
+              <TextBlock Classes="overline" Text="REPLACE OR MERGE TARGET" />
+              <ComboBox x:Name="ImportTargetBox" Margin="0,4,0,8" DisplayMemberBinding="{Binding DisplayName}"
+                        SelectionChanged="OnImportTargetChanged" />
+              <TextBlock x:Name="ImportSummaryText" Classes="caption" TextWrapping="Wrap" />
+            </StackPanel>
+            <ListBox x:Name="ImportConflictList" Grid.Row="3" Margin="0,9,0,0" MaxHeight="310">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Margin="2,1" Text="{Binding DisplayText}" TextWrapping="Wrap" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <StackPanel Grid.Row="4" Margin="0,12,0,0" HorizontalAlignment="Right" Orientation="Horizontal">
+              <Button Width="112" Margin="0,0,7,0" Content="Cancel" Click="OnCancelImportClick" />
+              <Button x:Name="ReplaceImportedProfileButton" Width="132" Margin="0,0,7,0"
+                      Content="Replace Profile" Click="OnReplaceImportedProfileClick" />
+              <Button x:Name="MergeImportedProfileButton" Width="144" Classes="primary"
+                      Content="Apply Merge" Click="OnMergeImportedProfileClick" />
+            </StackPanel>
+          </Grid>
+        </Border>
+      </Grid>
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Midora.Avalonia</AssemblyName>
+    <RootNamespace>Midora.Avalonia</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- macOS-first port: override the repository-wide win-x64 RID until multi-RID publishing is designed. -->
+    <RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.22" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="..\..\..\assets\fonts\Sora\Sora-Light.ttf" Link="Assets\Fonts\Sora\Sora-Light.ttf" />
+    <AvaloniaResource Include="..\..\..\assets\fonts\Sora\Sora-Regular.ttf" Link="Assets\Fonts\Sora\Sora-Regular.ttf" />
+    <AvaloniaResource Include="..\..\..\assets\fonts\Sora\Sora-SemiBold.ttf" Link="Assets\Fonts\Sora\Sora-SemiBold.ttf" />
+    <AvaloniaResource Include="..\..\..\assets\fonts\Sora\Sora-Bold.ttf" Link="Assets\Fonts\Sora\Sora-Bold.ttf" />
+    <AvaloniaResource Include="..\..\..\assets\fonts\JetBrainsMono\JetBrainsMono-Regular.ttf" Link="Assets\Fonts\JetBrainsMono\JetBrainsMono-Regular.ttf" />
+    <AvaloniaResource Include="..\..\..\assets\fonts\JetBrainsMono\JetBrainsMono-SemiBold.ttf" Link="Assets\Fonts\JetBrainsMono\JetBrainsMono-SemiBold.ttf" />
+    <AvaloniaResource Include="..\..\..\assets\fonts\JetBrainsMono\JetBrainsMono-Bold.ttf" Link="Assets\Fonts\JetBrainsMono\JetBrainsMono-Bold.ttf" />
+    <AvaloniaResource Include="..\..\..\assets\midora-note-transparent-256x256.png" Link="Assets\midora-note-transparent-256x256.png" />
+  </ItemGroup>
+</Project>

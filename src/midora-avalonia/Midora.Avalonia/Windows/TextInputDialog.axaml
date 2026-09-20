@@ -1,0 +1,45 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.TextInputDialog"
+        x:CompileBindings="False"
+        FontFamily="{DynamicResource Font.UI}"
+        Width="420" Height="190" MinWidth="360" MinHeight="180"
+        Background="{DynamicResource Brush.Surface.0}"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False"
+                   Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                   TextTrimming="CharacterEllipsis" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="12,10">
+          <TextBlock Margin="0,0,0,6" Classes="muted" Text="{Binding Prompt}" TextWrapping="Wrap" />
+          <TextBox x:Name="ValueBox" Text="{Binding Value, Mode=TwoWay}" />
+          <TextBlock Margin="0,6,0,0" Text="{Binding ValidationError}"
+                     IsVisible="{Binding HasValidationError}"
+                     Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+        </StackPanel>
+      </ScrollViewer>
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Width="112" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+          <Button Classes="primary" Width="112" Content="OK" IsDefault="True" Click="OnAcceptClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

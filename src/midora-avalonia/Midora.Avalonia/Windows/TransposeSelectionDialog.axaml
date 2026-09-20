@@ -1,0 +1,49 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.TransposeSelectionDialog"
+        x:CompileBindings="False"
+        Title="Transpose Selection"
+        Width="390" Height="520" MinWidth="360" MinHeight="420"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,Auto,*,60">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}" PointerPressed="OnTitlePointerPressed">
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Transpose Selection" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <TextBlock Grid.Row="1" Margin="12,12,12,8" Classes="muted" TextWrapping="Wrap"
+                 Text="Choose a semitone interval. Notes outside MIDI Key 0–127 will be removed." />
+
+      <ListBox x:Name="IntervalList" Grid.Row="2" Margin="12,0" DoubleTapped="OnListDoubleTapped">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding Display}" />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <Border Grid.Row="3" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Width="112" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+          <Button Classes="primary" Width="112" Content="Apply" IsDefault="True" Click="OnAcceptClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

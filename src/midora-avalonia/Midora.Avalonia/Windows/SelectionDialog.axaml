@@ -1,0 +1,59 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.SelectionDialog"
+        x:CompileBindings="False"
+        Title="Selection"
+        Width="460" Height="310" MinWidth="400" MinHeight="260"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        KeyDown="OnDialogKeyDown">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,Auto,*,58">
+
+      <!-- Custom title bar (WPF WindowChrome substitute); title is bound from the Window like WPF. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False"
+                   Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                   TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <TextBlock Grid.Row="1" Margin="12,12,12,8" Classes="muted"
+                 Text="{Binding Prompt}" TextWrapping="Wrap" />
+
+      <ListBox x:Name="OptionsList" Grid.Row="2" Margin="12,0"
+               DoubleTapped="OnOptionsDoubleTapped"
+               PointerWheelChanged="OnOptionsPointerWheel">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <StackPanel>
+              <TextBlock FontWeight="SemiBold" Text="{Binding Display}" />
+              <TextBlock Classes="caption" Text="{Binding Description}" TextWrapping="Wrap" />
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <Border Grid.Row="3" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Width="112" Margin="0,0,6,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+          <Button Classes="primary" Width="112" IsDefault="True" Content="Select" Click="OnSelectClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

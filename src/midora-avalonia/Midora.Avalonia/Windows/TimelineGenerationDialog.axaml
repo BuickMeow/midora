@@ -1,0 +1,196 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.TimelineGenerationDialog"
+        x:CompileBindings="False"
+        Title="Batch Create"
+        Width="780" Height="700" MinWidth="620" MinHeight="460"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        KeyDown="OnDialogKeyDown">
+  <Window.Styles>
+    <!-- WPF BatchExpressionEditor expression chrome: default / hover / focus-within border. -->
+    <Style Selector="Border.expression">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
+    </Style>
+    <Style Selector="Border.expression:pointerover">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}" />
+    </Style>
+    <Style Selector="Border.expression:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
+    </Style>
+  </Window.Styles>
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,64">
+
+      <!-- Custom title bar (WPF WindowChrome substitute). -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock x:Name="TitleText" Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Batch Create" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer x:Name="ContentScroll" Grid.Row="1" Padding="16,13"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock x:Name="ContextText" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+          <Grid Margin="0,0,0,12" ColumnDefinitions="*,16,*">
+            <StackPanel>
+              <TextBlock Classes="caption" Text="BASE TICK" Margin="0,0,0,5" />
+              <TextBox x:Name="BaseTickBox" TextChanged="OnInputChanged"
+                       ToolTip.Tip="Defaults to the editing cursor. Expressions use relative Ticks from this origin." />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Classes="caption" Text="MAXIMUM CANDIDATES" Margin="0,0,0,5" />
+              <TextBox x:Name="MaximumCandidatesBox" Text="65535" TextChanged="OnInputChanged"
+                       ToolTip.Tip="1–16,777,216. Counts generated candidates before collisions, not retained objects." />
+            </StackPanel>
+          </Grid>
+
+          <Grid Margin="0,0,0,15" ColumnDefinitions="*,180">
+            <CheckBox x:Name="LimitRelativeTickBox" Content="Maximum Relative Start Tick" VerticalAlignment="Center"
+                      Checked="OnLimitChanged" Unchecked="OnLimitChanged" />
+            <TextBox x:Name="MaximumRelativeTickBox" Grid.Column="1" Text="0" IsEnabled="False"
+                     TextChanged="OnInputChanged"
+                     ToolTip.Tip="Inclusive limit. Stop before the first candidate whose rounded relative start exceeds it." />
+          </Grid>
+
+          <!-- WPF Card style: Surface.1 background, Border border, 1px, Radius.Medium, CardPadding. -->
+          <Border Margin="0,0,0,12"
+                  Padding="{DynamicResource Thickness.CardPadding}"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1"
+                  CornerRadius="{DynamicResource Radius.Medium}">
+            <StackPanel>
+              <Grid Margin="0,0,0,7" ColumnDefinitions="90,*,112">
+                <TextBlock Classes="caption" Text="FIELD" />
+                <TextBlock Grid.Column="1" Classes="caption" Text="EXPRESSION" />
+                <TextBlock Grid.Column="2" Margin="10,0,0,0" Classes="caption" Text="INITIAL" />
+              </Grid>
+
+              <Grid x:Name="VelocityRow" Margin="0,0,0,9" ColumnDefinitions="90,*,112">
+                <TextBlock VerticalAlignment="Top" Margin="0,9,8,0" Text="Velocity" />
+                <Border Grid.Column="1" Classes="expression" MinHeight="42"
+                        Background="{DynamicResource Brush.Surface.0}"
+                        BorderThickness="1" CornerRadius="3">
+                  <TextBox x:Name="VelocityBox" MinHeight="40" Padding="6,4"
+                           Classes="mono" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                           Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                           AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                           TextChanged="OnInputChanged" KeyDown="OnExpressionKeyDown" />
+                </Border>
+                <TextBox x:Name="InitialVelocityBox" Grid.Column="2" Margin="10,0,0,0" Text="1"
+                         VerticalAlignment="Top" TextChanged="OnInputChanged" />
+              </Grid>
+
+              <Grid x:Name="PointValueRow" Margin="0,0,0,9" ColumnDefinitions="90,*,112">
+                <TextBlock VerticalAlignment="Top" Margin="0,9,8,0" Text="Value" />
+                <Border Grid.Column="1" Classes="expression" MinHeight="42"
+                        Background="{DynamicResource Brush.Surface.0}"
+                        BorderThickness="1" CornerRadius="3">
+                  <TextBox x:Name="PointValueBox" MinHeight="40" Padding="6,4"
+                           Classes="mono" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                           Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                           AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                           TextChanged="OnInputChanged" KeyDown="OnExpressionKeyDown" />
+                </Border>
+                <TextBox x:Name="InitialValueBox" Grid.Column="2" Margin="10,0,0,0" Text="0"
+                         VerticalAlignment="Top" TextChanged="OnInputChanged" />
+              </Grid>
+
+              <Grid x:Name="KeyRow" Margin="0,0,0,9" ColumnDefinitions="90,*,112">
+                <TextBlock VerticalAlignment="Top" Margin="0,9,8,0" Text="Key" />
+                <Border Grid.Column="1" Classes="expression" MinHeight="42"
+                        Background="{DynamicResource Brush.Surface.0}"
+                        BorderThickness="1" CornerRadius="3">
+                  <TextBox x:Name="KeyBox" MinHeight="40" Padding="6,4"
+                           Classes="mono" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                           Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                           AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                           TextChanged="OnInputChanged" KeyDown="OnExpressionKeyDown" />
+                </Border>
+                <TextBox x:Name="InitialKeyBox" Grid.Column="2" Margin="10,0,0,0" Text="0"
+                         VerticalAlignment="Top" TextChanged="OnInputChanged" />
+              </Grid>
+
+              <Grid x:Name="GateRow" Margin="0,0,0,9" ColumnDefinitions="90,*,112">
+                <TextBlock VerticalAlignment="Top" Margin="0,9,8,0" Text="Gate" />
+                <Border Grid.Column="1" Classes="expression" MinHeight="42"
+                        Background="{DynamicResource Brush.Surface.0}"
+                        BorderThickness="1" CornerRadius="3">
+                  <TextBox x:Name="GateBox" MinHeight="40" Padding="6,4"
+                           Classes="mono" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                           Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                           AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                           TextChanged="OnInputChanged" KeyDown="OnExpressionKeyDown" />
+                </Border>
+                <TextBox x:Name="InitialGateBox" Grid.Column="2" Margin="10,0,0,0" Text="1"
+                         VerticalAlignment="Top" TextChanged="OnInputChanged" />
+              </Grid>
+
+              <Grid Margin="0,0,0,10" ColumnDefinitions="90,*,112">
+                <TextBlock VerticalAlignment="Top" Margin="0,9,8,0" Text="Tick" />
+                <Border Grid.Column="1" Classes="expression" MinHeight="42"
+                        Background="{DynamicResource Brush.Surface.0}"
+                        BorderThickness="1" CornerRadius="3">
+                  <TextBox x:Name="TickBox" MinHeight="40" Padding="6,4"
+                           Classes="mono" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                           Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                           AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                           TextChanged="OnInputChanged" KeyDown="OnExpressionKeyDown" />
+                </Border>
+                <TextBox x:Name="InitialTickBox" Grid.Column="2" Margin="10,0,0,0" Text="0"
+                         VerticalAlignment="Top" TextChanged="OnInputChanged" />
+              </Grid>
+
+              <CheckBox x:Name="CreateInitialBox" Content="Create first object from initial values"
+                        Checked="OnInputChanged" Unchecked="OnInputChanged"
+                        ToolTip.Tip="Off: evaluate candidate 0. On: Initial directly creates candidate 0; expressions begin at i=1." />
+            </StackPanel>
+          </Border>
+
+          <TextBlock Classes="muted" TextWrapping="Wrap" Margin="0,0,0,12"
+                     Text="Leave an expression blank to reuse the previous value. Every non-empty expression must start with =. Initial values are normalized for this target. Ctrl+Space opens completion." />
+
+          <WrapPanel Margin="0,0,0,6">
+            <Button Width="86" Margin="0,0,6,6" Content="Help" Click="OnHelpClick" />
+            <Button Width="96" Margin="0,0,6,6" Content="Presets…" Click="OnPresetsClick" />
+            <Button Width="112" Margin="0,0,6,6" Content="Save Preset…" Click="OnSavePresetClick" />
+          </WrapPanel>
+
+          <Border Padding="9,7" Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+            <TextBlock x:Name="ValidationText" Classes="caption"
+                       Foreground="{DynamicResource Brush.Text.Tertiary}"
+                       Text="Not validated." TextWrapping="Wrap" />
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,11" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Width="90" HorizontalAlignment="Left" Content="Validate" Click="OnValidateClick" />
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Width="112" Margin="0,0,6,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+            <Button Classes="primary" Width="112" IsDefault="True" Content="Create" Click="OnCreateClick" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

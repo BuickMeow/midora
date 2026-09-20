@@ -1,0 +1,61 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.TrackPropertiesDialog"
+        x:CompileBindings="False"
+        Title="Track Properties"
+        Width="480" Height="336" MinWidth="440" MinHeight="320" MaxHeight="620"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}"
+            PointerPressed="OnTitleBarPointerPressed">
+        <TextBlock x:Name="TitleText" Margin="11,0,44,0" VerticalAlignment="Center"
+                   FontWeight="SemiBold" Text="Track Properties" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="18,16" HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Margin="0,0,0,4" Classes="caption" Text="NAME" />
+          <TextBox x:Name="NameTextBox" Margin="0,0,0,14" />
+          <CheckBox x:Name="UseInstrumentColorCheckBox" Margin="0,0,0,14"
+                    Content="Use Event Instrument color" Click="OnUseInstrumentColorClick" />
+          <TextBlock Margin="0,0,0,4" Classes="caption" Text="COLOR" />
+          <Button x:Name="SelectColorButton" Height="34" HorizontalContentAlignment="Stretch"
+                  Classes="ghost" Click="OnSelectColorClick">
+            <Grid ColumnDefinitions="Auto,*">
+              <Border Width="18" Height="18" Margin="1,0,10,0" VerticalAlignment="Center"
+                      BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1"
+                      CornerRadius="2">
+                <Rectangle x:Name="ColorSwatch" Margin="2" />
+              </Border>
+              <TextBlock x:Name="ColorText" Grid.Column="1" VerticalAlignment="Center" />
+            </Grid>
+          </Button>
+          <TextBlock x:Name="ColorHintText" Margin="0,6,0,0" Classes="caption" TextWrapping="Wrap" />
+          <TextBlock x:Name="ErrorTextBlock" Margin="0,10,0,0"
+                     Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+          <Button Margin="0,0,6,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+          <Button IsDefault="True" Classes="primary" Content="OK" Click="OnConfirmClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

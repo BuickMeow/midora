@@ -1,0 +1,44 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.MessageDialog"
+        x:CompileBindings="False"
+        FontFamily="{DynamicResource Font.UI}"
+        Width="520" MinWidth="420" MinHeight="150" MaxHeight="640"
+        SizeToContent="Height"
+        Background="{DynamicResource Brush.Surface.0}"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,Auto,60">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False"
+                   Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                   TextTrimming="CharacterEllipsis" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCloseClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+      <Grid Grid.Row="1" Margin="18,18,20,18" ColumnDefinitions="28,*">
+        <controls:FluentIcon x:Name="MessageIcon" Width="22" Height="22"
+                             HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <ScrollViewer Grid.Column="1" MaxHeight="440" Margin="12,0,0,0"
+                      HorizontalScrollBarVisibility="Disabled" VerticalAlignment="Center"
+                      VerticalScrollBarVisibility="Auto">
+          <TextBlock x:Name="MessageText" VerticalAlignment="Center" TextAlignment="Left" TextWrapping="Wrap" />
+        </ScrollViewer>
+      </Grid>
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel x:Name="ButtonPanel" HorizontalAlignment="Right" VerticalAlignment="Center"
+                    Orientation="Horizontal" />
+      </Border>
+    </Grid>
+  </Border>
+</Window>

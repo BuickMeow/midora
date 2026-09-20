@@ -1,0 +1,148 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.MappingFunctionCodeEditor"
+        x:CompileBindings="False"
+        Title="Mapping Function Code Editor"
+        Width="720" Height="430" MinWidth="560" MinHeight="360" MaxHeight="760"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Window.Styles>
+    <!-- WPF Border.Style triggers: default / hover / keyboard-focus-within border. -->
+    <Style Selector="Border#CodeChrome">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
+    </Style>
+    <Style Selector="Border#CodeChrome:pointerover">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}" />
+    </Style>
+    <Style Selector="Border#CodeChrome:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
+    </Style>
+  </Window.Styles>
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,64">
+
+      <!-- Custom title bar (WPF WindowChrome substitute). The WPF control had no title bar. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitleBarPointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Mapping Function Code Editor" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCloseClick"
+                ToolTip.Tip="Close">
+          <controls:FluentIcon Classes="captionicon"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <!-- Editor layout, mirroring the hosting Mapping Function dialog. -->
+      <ScrollViewer Grid.Row="1" Padding="14,12"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Margin="0,0,0,12" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                     Text="Enter one bounded numeric expression. Context dependencies are inferred automatically; Ctrl+Space opens completion." />
+
+          <TextBlock Margin="0,0,0,4" Classes="caption" Text="NAME" />
+          <TextBox x:Name="NameBox" Margin="0,0,0,12" Text="Velocity Scale" />
+
+          <TextBlock Margin="0,0,0,4" Classes="caption" Text="EXPRESSION" />
+
+          <!-- AvalonEdit TextEditor replaced by a monospace TextBox inside the WPF chrome. -->
+          <Border x:Name="CodeChrome" MinHeight="42"
+                  Background="{DynamicResource Brush.Surface.0}"
+                  BorderThickness="1" CornerRadius="3">
+            <TextBox x:Name="CodeBox" MinHeight="40" Padding="6,4"
+                     Classes="mono" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                     Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                     AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                     KeyDown="OnEditorKeyDown"
+                     Text="Round(Clamp(value + Sin(context.TemplateTick / 48.0) * 12, 0, 127))" />
+          </Border>
+
+          <!-- Hosting dialog toolbar. -->
+          <WrapPanel Margin="0,12,0,10">
+            <Button Width="86" Margin="0,0,6,0" Content="Help" />
+            <Button Content="Show completion" Click="OnShowCompletionClick"
+                    ToolTip.Tip="Demo trigger for the WPF caret-anchored completion popup" />
+          </WrapPanel>
+
+          <!-- Hosting dialog result bar plus the WPF CaretStatus readout. -->
+          <Grid ColumnDefinitions="*,Auto">
+            <Border Padding="9,7"
+                    Background="{DynamicResource Brush.Surface.1}"
+                    BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="1" CornerRadius="3">
+              <TextBlock Classes="caption" TextWrapping="Wrap"
+                         Text="Validated: expression accepted by the formal Mapping ABI v3 and its allowlist." />
+            </Border>
+            <TextBlock x:Name="CaretStatusText" Grid.Column="1" Classes="caption"
+                       VerticalAlignment="Center" Margin="10,0,0,0" Text="Ln 1, Col 1" />
+          </Grid>
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Completion popup, preserving the WPF ListBox + signature panel structure. -->
+      <Popup x:Name="CompletionPopup" IsOpen="False" Placement="BottomEdgeAlignedLeft"
+             IsLightDismissEnabled="True" HorizontalOffset="0" VerticalOffset="2">
+        <Border MinWidth="500" MaxWidth="800" MaxHeight="320"
+                Background="{DynamicResource Brush.Surface.2}"
+                BorderBrush="{DynamicResource Brush.Border.Strong}"
+                BorderThickness="1" CornerRadius="4">
+          <DockPanel LastChildFill="True">
+            <Border x:Name="SignaturePanel" DockPanel.Dock="Bottom" Padding="8,6"
+                    Background="{DynamicResource Brush.Surface.0}"
+                    BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="0,1,0,0">
+              <TextBlock x:Name="SignatureText" FontFamily="{DynamicResource Font.Mono}"
+                         FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
+                         TextWrapping="Wrap" />
+            </Border>
+            <ListBox x:Name="CompletionList" Focusable="False" MaxHeight="245"
+                     Background="{DynamicResource Brush.Surface.2}" BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     SelectionChanged="OnCompletionSelectionChanged"
+                     DoubleTapped="OnCompletionDoubleTapped">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="3,1" ColumnDefinitions="175,92,*">
+                    <TextBlock FontFamily="{DynamicResource Font.Mono}"
+                               Foreground="{DynamicResource Brush.Text.Primary}"
+                               Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="1" Margin="8,0"
+                               Foreground="{DynamicResource Brush.Info}"
+                               Text="{Binding Kind}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="2"
+                               Foreground="{DynamicResource Brush.Text.Tertiary}"
+                               Text="{Binding Description}" TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+        </Border>
+      </Popup>
+
+      <!-- Footer buttons, mirroring the hosting Mapping Function dialog. -->
+      <Border Grid.Row="2" Padding="12,11"
+              Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}"
+              BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Width="90" HorizontalAlignment="Left" Content="Validate" />
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Width="112" Margin="0,0,6,0" IsCancel="True" Content="Cancel"
+                    Click="OnCloseClick" />
+            <Button Classes="primary" Width="112" IsDefault="True" Content="OK"
+                    Click="OnCloseClick" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

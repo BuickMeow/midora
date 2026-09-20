@@ -1,0 +1,70 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.NewProjectDialog"
+        x:CompileBindings="False"
+        Title="New Project"
+        Width="720" Height="520" MinWidth="680" MinHeight="460"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,58">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}" PointerPressed="OnTitlePointerPressed">
+        <TextBlock Margin="12,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="New Project" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right"
+                Classes="caption close" ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                 Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <Border Padding="18">
+          <Grid ColumnDefinitions="*,14,*">
+            <StackPanel>
+              <TextBlock Classes="overline" Text="GENERAL" />
+              <TextBlock Margin="0,10,0,4" Classes="caption" Text="PROJECT NAME" />
+              <TextBox x:Name="ProjectNameBox" Text="Untitled Project" />
+              <TextBlock Margin="0,10,0,4" Classes="caption" Text="TICKS PER QUARTER NOTE" />
+              <TextBox x:Name="TpqBox" Text="192" TextInput="OnIntegerTextInput" />
+              <TextBlock Margin="0,10,0,4" Classes="caption" Text="PROJECT VERSION" />
+              <TextBox x:Name="VersionBox" />
+              <TextBlock Margin="0,10,0,4" Classes="caption" Text="AUTHOR / TEAM" />
+              <TextBox x:Name="AuthorBox" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="2">
+              <TextBlock Classes="overline" Text="CREATION" />
+              <CheckBox x:Name="SaveNowCheck" Margin="0,12,0,0" Content="Save Project immediately"
+                        Checked="OnSaveNowChanged" Unchecked="OnSaveNowChanged" />
+              <TextBlock Margin="0,12,0,4" Classes="caption" Text="TARGET FILE" />
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBox x:Name="PathBox" IsReadOnly="True" />
+                <Button x:Name="BrowseButton" Grid.Column="1" MinWidth="104" Margin="6,0,0,0"
+                        Content="Browse…" Click="OnBrowseClick" />
+              </Grid>
+              <TextBlock x:Name="ValidationText" Margin="0,12,0,0"
+                         Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
+        </Border>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button Width="112" Margin="0,0,7,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+          <Button Classes="primary" Width="112" Content="Create" IsDefault="True" Click="OnCreateClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

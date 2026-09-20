@@ -1,0 +1,70 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.NewRawMidiTrackDialog"
+        x:CompileBindings="False"
+        Title="New Raw MIDI Track" Width="490" Height="570" MinWidth="440" MinHeight="500"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,*,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}"
+            PointerPressed="OnTitleBarPointerPressed">
+        <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="New Raw MIDI Track" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="18" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Classes="overline" Text="TRACK NAME" />
+          <TextBox x:Name="TrackNameBox" Margin="0,5,0,14" Text="MIDI Track" />
+
+          <TextBlock Classes="overline" Text="EXISTING FIXED ROUTE" />
+          <ComboBox x:Name="ExistingRouteBox" Margin="0,5,0,14"
+                    SelectionChanged="OnExistingRouteChanged" />
+
+          <TextBlock Classes="overline" Text="ROUTING MODE" />
+          <ComboBox x:Name="RoutingModeBox" Margin="0,5,0,14"
+                    SelectionChanged="OnRoutingModeChanged" />
+
+          <Grid x:Name="FixedRoutePanel" Margin="0,0,0,14" ColumnDefinitions="*,12,*">
+            <StackPanel>
+              <TextBlock Classes="overline" Text="PORT" />
+              <ComboBox x:Name="PortBox" Margin="0,5,0,0" SelectionChanged="OnFixedCoordinateChanged" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Classes="overline" Text="CHANNEL" />
+              <ComboBox x:Name="ChannelBox" Margin="0,5,0,0" SelectionChanged="OnFixedCoordinateChanged" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Classes="overline" Text="CHANNEL MODE" />
+          <ComboBox x:Name="ChannelModeBox" Margin="0,5,0,0" />
+
+          <TextBlock x:Name="MatchedRouteText" Margin="0,7,0,0" Classes="caption" TextWrapping="Wrap" />
+          <TextBlock Margin="0,8,0,0" Classes="caption" TextWrapping="Wrap"
+                     Text="Selecting an existing route joins that shared Fixed Port.Channel. A new Auto route is shown only through its Track, not as a separate Arrangement row." />
+          <TextBlock x:Name="ErrorText" Margin="0,12,0,0"
+                     Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Margin="0,0,6,0" Content="Cancel" Click="OnCancelClick" />
+          <Button Classes="primary" Content="Create" Click="OnCreateClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

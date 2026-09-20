@@ -1,0 +1,59 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.NewLogicalTrackWithInstrumentDialog"
+        x:CompileBindings="False"
+        Title="New Logical Track with Instrument" Width="520" Height="500"
+        MinWidth="460" MinHeight="420"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Window.Styles>
+    <Style Selector="ListBox.transparentDisabled">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBox.transparentDisabled:disabled">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+  </Window.Styles>
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,*,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}"
+            PointerPressed="OnTitleBarPointerPressed">
+        <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="New Logical Track with Instrument" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="18" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <RadioButton x:Name="NewInstrumentRadio" GroupName="Source" IsChecked="True"
+                       IsCheckedChanged="OnSourceChanged" Content="New Event Instrument" />
+          <TextBlock Margin="22,8,0,0" Classes="overline" Text="INSTRUMENT NAME" />
+          <TextBox x:Name="NewInstrumentNameBox" Margin="22,5,0,16" Text="Event Instrument" />
+          <RadioButton x:Name="ExistingInstrumentRadio" GroupName="Source"
+                       IsCheckedChanged="OnSourceChanged" Content="Use Existing Event Instrument" />
+          <ListBox x:Name="ExistingInstrumentList" Margin="22,8,0,0" Height="210"
+                   Classes="transparentDisabled" PointerPressed="OnOptionsPointerPressed" />
+          <TextBlock x:Name="ErrorText" Margin="0,12,0,0"
+                     Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Margin="0,0,6,0" Content="Cancel" Click="OnCancelClick" />
+          <Button Classes="primary" Content="Create" Click="OnCreateClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

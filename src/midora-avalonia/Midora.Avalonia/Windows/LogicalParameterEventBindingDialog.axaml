@@ -1,0 +1,149 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.LogicalParameterEventBindingDialog"
+        x:CompileBindings="False"
+        Title="Add Event Binding"
+        Width="720" Height="770" MinWidth="620" MinHeight="650"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,Auto,*,58">
+
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Name="TitleBarDragSurface" Background="Transparent" PointerPressed="OnTitlePointerPressed"/>
+        <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Add Event Binding"/>
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}"/>
+        </Button>
+      </Grid>
+
+      <Border Grid.Row="1" Padding="18,13" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
+        <StackPanel>
+          <TextBlock FontSize="{DynamicResource FontSize.Title}" FontWeight="SemiBold"
+                     Text="Logical Parameter → MIDI Event"/>
+          <TextBlock Margin="0,4,0,0" Classes="caption" TextWrapping="Wrap"
+                     Text="Create one Integer Logical Parameter, bind it to the chosen event on every selected SubVoice, and add missing empty lanes without creating Tick 0 events."/>
+        </StackPanel>
+      </Border>
+
+      <ScrollViewer Grid.Row="2" Padding="18" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Classes="overline" Text="PARAMETER NAME"/>
+          <TextBox x:Name="NameBox" Margin="0,5,0,14" TextChanged="OnNameChanged"/>
+
+          <TextBlock Classes="overline" Text="TARGET EVENT KIND"/>
+          <ComboBox x:Name="KindBox" Margin="0,5,0,12" SelectionChanged="OnTargetChanged"/>
+
+          <StackPanel x:Name="ControllerRow" Margin="0,0,0,12">
+            <TextBlock Classes="overline" Text="CONTROLLER"/>
+            <ComboBox x:Name="ControllerBox" Margin="0,5,0,0" DisplayMemberBinding="{Binding DisplayName}"
+                      SelectionChanged="OnTargetChanged"/>
+          </StackPanel>
+          <StackPanel x:Name="RpnRow" Margin="0,0,0,12" IsVisible="False">
+            <TextBlock Classes="overline" Text="RPN NUMBER"/>
+            <TextBox x:Name="RpnBox" Margin="0,5,0,0" Text="0" TextChanged="OnTargetTextChanged"/>
+          </StackPanel>
+          <StackPanel x:Name="NrpnRow" Margin="0,0,0,12" IsVisible="False">
+            <TextBlock Classes="overline" Text="NRPN NUMBER"/>
+            <TextBox x:Name="NrpnBox" Margin="0,5,0,0" Text="0" TextChanged="OnTargetTextChanged"/>
+          </StackPanel>
+
+          <Grid Margin="0,0,0,14" ColumnDefinitions="*,12,*">
+            <StackPanel>
+              <TextBlock Classes="overline" Text="TARGET SUBVOICES"/>
+              <ComboBox x:Name="ScopeBox" Margin="0,5,0,0" DisplayMemberBinding="{Binding Label}"
+                        SelectionChanged="OnScopeChanged"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Classes="overline" Text="EXISTING TARGET MAPPINGS"/>
+              <!-- WPF disabled the Append ComboBoxItem via ItemContainerStyle; here disabled
+                   choices are guarded in code-behind on SelectionChanged. -->
+              <ComboBox x:Name="ConflictBox" Margin="0,5,0,0" DisplayMemberBinding="{Binding Label}"
+                        SelectionChanged="OnConflictChanged"/>
+            </StackPanel>
+          </Grid>
+
+          <Border x:Name="SubVoiceSelectionPanel" Margin="0,0,0,14" Padding="9"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="{DynamicResource Radius.Medium}">
+            <StackPanel>
+              <TextBlock x:Name="SubVoiceSelectionHint" Margin="0,0,0,7" Classes="caption"/>
+              <ScrollViewer MaxHeight="150" HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Auto" Background="Transparent">
+                <ItemsControl x:Name="SubVoiceList">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <CheckBox Margin="2" Content="{Binding Name}"
+                                IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Classes="overline" Text="OPERATION"/>
+          <ComboBox x:Name="OperationBox" Margin="0,5,0,8" SelectionChanged="OnOperationChanged"/>
+          <TextBlock x:Name="OperationHelpText" Margin="0,0,0,12" Classes="caption" TextWrapping="Wrap"/>
+
+          <Grid Margin="0,0,0,12" ColumnDefinitions="*,12,*">
+            <StackPanel>
+              <TextBlock Classes="overline" Text="SOURCE MINIMUM"/>
+              <TextBox x:Name="SourceMinimumBox" Margin="0,5,0,0"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Classes="overline" Text="SOURCE MAXIMUM"/>
+              <TextBox x:Name="SourceMaximumBox" Margin="0,5,0,0"/>
+            </StackPanel>
+          </Grid>
+
+          <Grid x:Name="FactorRangePanel" Margin="0,0,0,8" IsVisible="False" ColumnDefinitions="*,12,*">
+            <StackPanel>
+              <TextBlock Classes="overline" Text="FACTOR MINIMUM"/>
+              <TextBox x:Name="FactorMinimumBox" Margin="0,5,0,0" Text="0"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Classes="overline" Text="FACTOR MAXIMUM"/>
+              <TextBox x:Name="FactorMaximumBox" Margin="0,5,0,0" Text="2"/>
+            </StackPanel>
+          </Grid>
+
+          <Border Margin="0,7,0,0" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="{DynamicResource Radius.Small}">
+            <StackPanel>
+              <TextBlock x:Name="SummaryText" Classes="caption" TextWrapping="Wrap"/>
+              <TextBlock Margin="0,10,0,4" Classes="overline"
+                         Text="EXISTING EXACT-TARGET EXECUTION ORDER"/>
+              <ListBox x:Name="ExistingMappingOrderList" MaxHeight="132"
+                       ScrollViewer.VerticalScrollBarVisibility="Auto">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Margin="2,1" Classes="caption" Text="{Binding}" TextWrapping="Wrap"/>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </StackPanel>
+          </Border>
+          <TextBlock x:Name="ValidationText" Margin="0,10,0,0" TextWrapping="Wrap"
+                     Foreground="{DynamicResource Brush.Red.Hover}"/>
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="3" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Margin="0,0,7,0" Width="112" IsCancel="True" Content="Cancel" Click="OnCancelClick"/>
+          <Button Classes="primary" Width="112" IsDefault="True" Content="OK" Click="OnOkClick"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

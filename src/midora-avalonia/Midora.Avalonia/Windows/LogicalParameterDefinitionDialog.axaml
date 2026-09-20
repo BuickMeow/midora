@@ -1,0 +1,128 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.LogicalParameterDefinitionDialog"
+        x:CompileBindings="False"
+        Title="Logical Parameter Properties"
+        Width="720" Height="720" MinWidth="620" MinHeight="600"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="38,Auto,*,Auto">
+
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Name="TitleBarDragSurface" Background="Transparent" PointerPressed="OnTitlePointerPressed"/>
+        <TextBlock x:Name="WindowTitleText" Margin="12,0,50,0" VerticalAlignment="Center"
+                   FontWeight="SemiBold" Text="Logical Parameter Properties"
+                   TextTrimming="CharacterEllipsis"/>
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Classes="caption close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}"/>
+        </Button>
+      </Grid>
+
+      <Border Grid.Row="1" Padding="18,14" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
+        <StackPanel>
+          <TextBlock x:Name="HeadingText" FontSize="{DynamicResource FontSize.Title}" FontWeight="SemiBold"
+                     Text="Logical Parameter Definition"/>
+          <TextBlock x:Name="DescriptionText" Margin="0,4,0,0" Classes="caption"
+                     Text="Definition changes and every referencing Lane are migrated as one atomic Project edit."/>
+        </StackPanel>
+      </Border>
+
+      <ScrollViewer Grid.Row="2" Padding="18" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Classes="overline" Text="NAME"/>
+          <TextBox x:Name="NameBox" Margin="0,5,0,10"/>
+          <UniformGrid Columns="2">
+            <StackPanel Margin="0,0,8,10">
+              <TextBlock Classes="overline" Text="INPUT TYPE"/>
+              <ComboBox x:Name="TypeBox" Margin="0,5,0,0" SelectionChanged="OnDefinitionShapeChanged"/>
+            </StackPanel>
+            <StackPanel Margin="8,0,0,10">
+              <TextBlock Classes="overline" Text="DEFAULT VALUE"/>
+              <TextBox x:Name="DefaultValueBox" Margin="0,5,0,0"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,8,10">
+              <TextBlock Classes="overline" Text="LEGAL MINIMUM"/>
+              <TextBox x:Name="MinimumBox" Margin="0,5,0,0"/>
+            </StackPanel>
+            <StackPanel Margin="8,0,0,10">
+              <TextBlock Classes="overline" Text="LEGAL MAXIMUM"/>
+              <TextBox x:Name="MaximumBox" Margin="0,5,0,0"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,8,10">
+              <TextBlock Classes="overline" Text="DISPLAY MINIMUM"/>
+              <TextBox x:Name="DisplayMinimumBox" Margin="0,5,0,0"/>
+            </StackPanel>
+            <StackPanel Margin="8,0,0,10">
+              <TextBlock Classes="overline" Text="DISPLAY MAXIMUM"/>
+              <TextBox x:Name="DisplayMaximumBox" Margin="0,5,0,0"/>
+            </StackPanel>
+          </UniformGrid>
+
+          <Border x:Name="EnumPanel" Margin="0,2,0,12" Padding="12"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="{DynamicResource Radius.Medium}">
+            <Grid RowDefinitions="Auto,Auto,*">
+              <Grid>
+                <TextBlock VerticalAlignment="Center" Classes="section" Text="Enum items"/>
+                <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                  <Button Width="28" Height="24" Margin="0,0,4,0" Padding="0" Content="↑"
+                          ToolTip.Tip="Move item up" Click="OnMoveEnumItemUpClick"/>
+                  <Button Width="28" Height="24" Margin="0,0,4,0" Padding="0" Content="↓"
+                          ToolTip.Tip="Move item down" Click="OnMoveEnumItemDownClick"/>
+                  <Button Width="28" Height="24" Margin="0,0,4,0" Padding="0" Content="−"
+                          ToolTip.Tip="Remove item" Click="OnRemoveEnumItemClick"/>
+                  <Button Width="28" Height="24" Padding="0" Content="+"
+                          ToolTip.Tip="Add item" Click="OnAddEnumItemClick"/>
+                </StackPanel>
+              </Grid>
+              <CheckBox x:Name="ExplicitValuesBox" Grid.Row="1" Margin="0,10,0,8"
+                        Content="Use explicit integer values" IsCheckedChanged="OnExplicitValuesChanged"/>
+              <ListBox x:Name="EnumItemsList" Grid.Row="2" MinHeight="120" MaxHeight="230"
+                       ItemsSource="{Binding EnumItems}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="0,2" ColumnDefinitions="*,110">
+                      <TextBox Margin="0,0,6,0" Text="{Binding Name, Mode=TwoWay}"/>
+                      <TextBox Grid.Column="1" Text="{Binding ValueText, Mode=TwoWay}"
+                               IsReadOnly="{Binding IsValueReadOnly}"/>
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
+          </Border>
+
+          <Border x:Name="MigrationPanel" Padding="12"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="{DynamicResource Radius.Medium}">
+            <StackPanel>
+              <TextBlock Classes="section" Text="Existing Lane migration"/>
+              <TextBlock x:Name="AffectedDataText" Margin="0,4,0,10" Classes="caption"/>
+              <TextBlock Classes="overline" Text="INVALID EXISTING VALUES"/>
+              <ComboBox x:Name="MigrationModeBox" Margin="0,5,0,10"/>
+              <CheckBox x:Name="EnumWarningBox"
+                        Content="I understand that numeric Enum compatibility does not preserve semantic meaning."/>
+            </StackPanel>
+          </Border>
+          <TextBlock x:Name="ErrorText" Margin="0,10,0,0" TextWrapping="Wrap"
+                     Foreground="{DynamicResource Brush.Red.Hover}"/>
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="3" MinHeight="58" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Margin="0,0,6,0" Width="112" IsCancel="True" Content="Cancel" Click="OnCancelClick"/>
+          <Button Classes="primary" Width="112" IsDefault="True" Content="OK" Click="OnApplyClick"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

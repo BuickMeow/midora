@@ -1,0 +1,69 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.TimelineGenerationPresetDialog"
+        x:CompileBindings="False"
+        Title="Generation Presets"
+        Width="680" Height="470" MinWidth="570" MinHeight="360"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        KeyDown="OnDialogKeyDown">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,62">
+
+      <!-- Custom title bar (WPF WindowChrome substitute). -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock x:Name="TitleText" Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Generation Presets" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <Grid Grid.Row="1" Margin="12" ColumnDefinitions="230,10,*">
+        <ListBox x:Name="PresetList"
+                 SelectionChanged="OnSelectionChanged"
+                 DoubleTapped="OnPresetListDoubleTapped"
+                 PointerWheelChanged="OnPresetListPointerWheel"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <Border Grid.Column="2" Padding="11,9" Background="{DynamicResource Brush.Surface.1}"
+                BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <TextBlock x:Name="PreviewText" FontFamily="{DynamicResource Font.Mono}"
+                       Foreground="{DynamicResource Brush.Text.Secondary}"
+                       TextWrapping="Wrap" />
+          </ScrollViewer>
+        </Border>
+      </Grid>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <Button x:Name="DeleteButton" Width="112" HorizontalAlignment="Left" Content="Delete"
+                  IsEnabled="False" Click="OnDeleteClick" />
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Width="112" Margin="0,0,6,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+            <Button x:Name="ApplyButton" Classes="primary" Width="112" IsDefault="True" IsEnabled="False"
+                    Content="Apply" Click="OnApplyClick" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,137 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.NoteSplitHelpDialog"
+        x:CompileBindings="False"
+        Title="Note Split Help"
+        Width="790" Height="650" MinWidth="650" MinHeight="480"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,58">
+
+      <!-- Custom title bar (WPF WindowChrome substitute). -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitleBarPointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Note Split Help" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCloseClick"
+                ToolTip.Tip="Close">
+          <controls:FluentIcon Classes="captionicon"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <!-- Scrolling help content. -->
+      <ScrollViewer Grid.Row="1" Padding="18,15"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+
+          <!-- How the three modes work. -->
+          <Border Margin="0,0,0,13" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock Classes="section" Margin="0,0,0,8" Text="How the three modes work" />
+              <Grid Margin="0,0,0,7" ColumnDefinitions="180,*">
+                <TextBlock FontWeight="SemiBold" Text="Fixed Piece Length" />
+                <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                           Text="Places equally spaced knives using the specified Tick length." />
+              </Grid>
+              <Grid Margin="0,0,0,7" ColumnDefinitions="180,*">
+                <TextBlock FontWeight="SemiBold" Text="Maximum Piece Count" />
+                <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                           Text="Divides the selected time span into at most the requested number of balanced pieces." />
+              </Grid>
+              <Grid ColumnDefinitions="180,*">
+                <TextBlock FontWeight="SemiBold" Text="Expression" />
+                <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                           Text="Evaluates one bounded expression for each knife. The result is the next piece length in Ticks." />
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <!-- Expression variables. -->
+          <Border Margin="0,0,0,13" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <StackPanel>
+              <TextBlock Classes="section" Margin="0,0,0,8" Text="Expression variables" />
+              <Grid Margin="0,0,0,7" ColumnDefinitions="65,*">
+                <TextBlock Classes="mono" Foreground="#DCDCAA" Text="i" />
+                <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                           Text="Zero-based knife index: 0 for the first knife, 1 for the second, and so on." />
+              </Grid>
+              <Grid ColumnDefinitions="65,*">
+                <TextBlock Classes="mono" Foreground="#DCDCAA" Text="tr" />
+                <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                           Text="Previous knife position relative to the selection's left edge. It is 0 before the first knife." />
+              </Grid>
+              <TextBlock Margin="0,9,0,0" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                         Text="The expression must start with =. System.Math functions are available directly or through Math., with the same safe syntax, limits, colors, bracket matching, and completion as Batch Edit." />
+            </StackPanel>
+          </Border>
+
+          <!-- Examples. -->
+          <TextBlock Classes="section" Margin="0,0,0,8" Text="Examples" />
+          <Border Margin="0,0,0,8" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <Grid ColumnDefinitions="205,*">
+              <TextBlock Classes="mono" Foreground="#DCDCAA" TextWrapping="Wrap" Text="=192" />
+              <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                         Text="Place a knife every 192 Ticks." />
+            </Grid>
+          </Border>
+          <Border Margin="0,0,0,8" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <Grid ColumnDefinitions="205,*">
+              <TextBlock Classes="mono" Foreground="#DCDCAA" TextWrapping="Wrap" Text="=96 + i * 12" />
+              <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                         Text="Make every successive piece 12 Ticks longer." />
+            </Grid>
+          </Border>
+          <Border Margin="0,0,0,13" Padding="16"
+                  Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="5">
+            <Grid ColumnDefinitions="205,*">
+              <TextBlock Classes="mono" Foreground="#DCDCAA" TextWrapping="Wrap"
+                         Text="=Max(24, 192 - tr / 8)" />
+              <TextBlock Grid.Column="1" Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                         Text="Gradually shorten pieces while keeping a 24-Tick minimum." />
+            </Grid>
+          </Border>
+
+          <!-- Footer note. -->
+          <Border Padding="11,9"
+                  Background="{DynamicResource Brush.Info.Subtle}"
+                  BorderBrush="#28517A" BorderThickness="1" CornerRadius="3">
+            <TextBlock Classes="muted" TextWrapping="Wrap" LineHeight="19"
+                       Text="Each returned length is rounded away from zero and clamped to at least 1 Tick. Splitting stops at the right edge or at Maximum Cuts. Empty gaps still count because knives belong to the selected time span, not to individual notes." />
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Footer. -->
+      <Border Grid.Row="2" Padding="12,10"
+              Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}"
+              BorderThickness="0,1,0,0">
+        <Button HorizontalAlignment="Right" Classes="primary" Width="112"
+                IsDefault="True" IsCancel="True" Content="Close" Click="OnCloseClick" />
+      </Border>
+    </Grid>
+  </Border>
+</Window>

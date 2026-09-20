@@ -1,0 +1,217 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.MainWindow"
+        Title="Midora"
+        Width="1440" Height="900" MinWidth="1100" MinHeight="680"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterScreen"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Grid RowDefinitions="36,46,Auto,*,25">
+
+    <!-- Title bar: application mark + main menu + project display name (+ Windows caption buttons). -->
+    <Grid Grid.Row="0" Name="TitleBar" Background="{DynamicResource Brush.Black}">
+      <Border Name="TitleBarDragSurface" Background="Transparent"
+              PointerPressed="OnTitleBarPointerPressed" DoubleTapped="OnTitleBarDoubleTapped" />
+      <Grid ColumnDefinitions="*,Auto">
+        <Grid Name="TitleBarContent" Margin="12,0,0,0" VerticalAlignment="Center"
+              ColumnDefinitions="Auto,Auto,*">
+          <Image Grid.Column="0" Width="20" Height="20" Margin="0,0,5,0" IsHitTestVisible="False"
+                 Source="avares://Midora.Avalonia/Assets/midora-note-transparent-256x256.png"
+                 Stretch="Uniform" />
+          <Menu Grid.Column="1" Height="29" VerticalAlignment="Center">
+            <MenuItem Header="File">
+              <MenuItem Header="New Project…" InputGesture="Ctrl+N" />
+              <MenuItem Header="Open Project…" InputGesture="Ctrl+O" />
+              <MenuItem Header="Open MIDI as New Project…" />
+              <Separator />
+              <MenuItem Header="Save Project" InputGesture="Ctrl+S" IsEnabled="False" />
+              <MenuItem Header="Save Copy…" IsEnabled="False" />
+              <Separator />
+              <MenuItem Header="Close Project" IsEnabled="False" />
+              <MenuItem Header="Exit" Click="OnExitClick" />
+            </MenuItem>
+            <MenuItem Header="Edit">
+              <MenuItem Header="Undo" InputGesture="Ctrl+Z" IsEnabled="False" />
+              <MenuItem Header="Redo" InputGesture="Ctrl+Y" IsEnabled="False" />
+              <Separator />
+              <MenuItem Header="Cut" InputGesture="Ctrl+X" IsEnabled="False" />
+              <MenuItem Header="Copy" InputGesture="Ctrl+C" IsEnabled="False" />
+              <MenuItem Header="Paste" InputGesture="Ctrl+V" IsEnabled="False" />
+              <MenuItem Header="Select All" InputGesture="Ctrl+A" IsEnabled="False" />
+              <MenuItem Header="Duplicate Selection" InputGesture="Ctrl+D" IsEnabled="False" />
+            </MenuItem>
+            <MenuItem Header="View">
+              <MenuItem Header="Arrangement" IsEnabled="False" />
+              <MenuItem Header="Diagnostics" IsEnabled="False" />
+              <Separator />
+              <MenuItem Header="Snap to Grid" IsEnabled="False" />
+              <MenuItem Header="Follow Playback" IsEnabled="False" />
+            </MenuItem>
+            <MenuItem Header="Project" IsEnabled="False">
+              <MenuItem Header="New Event Instrument" />
+              <Separator />
+              <MenuItem Header="New Logical Track" />
+              <MenuItem Header="New Logical Track with Instrument…" />
+              <MenuItem Header="New Raw MIDI Track…" />
+            </MenuItem>
+            <MenuItem Header="Playback">
+              <MenuItem Header="Play" InputGesture="Space" IsEnabled="False" />
+              <MenuItem Header="Stop" InputGesture="Space" IsEnabled="False" />
+              <Separator />
+              <MenuItem Header="Reset Playback Engine" IsEnabled="False" />
+            </MenuItem>
+            <MenuItem Header="Compile" IsEnabled="False">
+              <MenuItem Header="Compile Project" />
+            </MenuItem>
+            <MenuItem Header="Export" IsEnabled="False">
+              <MenuItem Header="MIDI Export…" />
+              <MenuItem Header="Audio Export…" />
+            </MenuItem>
+            <MenuItem Header="Application">
+              <MenuItem Header="Application Preferences…" />
+              <MenuItem Header="Instrument Catalogs…" />
+              <Separator />
+              <MenuItem Header="About Midora" InputGesture="F12" />
+            </MenuItem>
+            <MenuItem Header="Windows" x:Name="WindowsMenu" />
+          </Menu>
+          <Border Grid.Column="2" Margin="8,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
+                  IsHitTestVisible="False"
+                  Background="Transparent" BorderBrush="{DynamicResource Brush.Border}"
+                  BorderThickness="1" CornerRadius="3">
+            <TextBlock Margin="8,2" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}"
+                       Text="Untitled Project" TextTrimming="CharacterEllipsis" />
+          </Border>
+        </Grid>
+        <StackPanel Name="CaptionButtons" Grid.Column="1" Orientation="Horizontal">
+          <Button Classes="caption" ToolTip.Tip="Minimize" Click="OnMinimizeClick">
+            <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                 Data="{StaticResource WindowControl.Minimize}" />
+          </Button>
+          <Button Classes="caption" ToolTip.Tip="Maximize or restore" Click="OnMaximizeClick">
+            <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                 Data="{StaticResource WindowControl.Maximize}" />
+          </Button>
+          <Button Classes="caption close" ToolTip.Tip="Close" Click="OnCloseClick">
+            <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                 Data="{StaticResource WindowControl.Close}" />
+          </Button>
+        </StackPanel>
+      </Grid>
+    </Grid>
+
+    <!-- Global command bar. -->
+    <Border Grid.Row="1" Padding="9,0" Background="{DynamicResource Brush.Surface.1}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,*">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Classes="icon ghost" ToolTip.Tip="Back" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ChevronLeft20Regular}" />
+          </Button>
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Forward" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ChevronRight20Regular}" />
+          </Button>
+          <Border Width="1" Height="18" Margin="7,0" Background="{DynamicResource Brush.Border}" />
+          <Button Classes="icon ghost" ToolTip.Tip="New Project">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Document20Regular}" />
+          </Button>
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Open Project">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Folder20Regular}" />
+          </Button>
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Project Settings" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Settings20Regular}" />
+          </Button>
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Save Project" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Save20Regular}" />
+          </Button>
+          <Border Width="1" Height="18" Margin="7,0" Background="{DynamicResource Brush.Border}" />
+          <Button Classes="icon ghost" ToolTip.Tip="Undo" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ArrowUndo20Regular}" />
+          </Button>
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Redo" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ArrowRedo20Regular}" />
+          </Button>
+          <Border Width="1" Height="18" Margin="7,0" Background="{DynamicResource Brush.Border}" />
+          <Button Classes="icon ghost" ToolTip.Tip="Application Preferences">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.WrenchScrewdriver20Regular}" />
+          </Button>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Classes="icon ghost" Width="34" Height="32" ToolTip.Tip="Reset Playback Engine" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Flash20Filled}" />
+          </Button>
+          <Button Classes="primary" Width="34" Height="32" Margin="4,0" Padding="0"
+                  ToolTip.Tip="Play" IsEnabled="False">
+            <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Play20Filled}" />
+          </Button>
+          <Button Classes="icon ghost" Width="34" Height="32" Padding="0"
+                  ToolTip.Tip="Loop Time Range" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.RepeatAll20Regular}" />
+          </Button>
+          <Button Classes="icon ghost" Width="34" Height="32" Margin="4,0,0,0" Padding="0"
+                  ToolTip.Tip="Follow Playback" IsEnabled="False">
+            <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ArrowRight20Filled}" />
+          </Button>
+          <Border Height="32" Margin="9,0,0,0" Padding="9,0" Background="{DynamicResource Brush.Surface.0}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Classes="mono" VerticalAlignment="Center" FontSize="12"
+                         Foreground="{DynamicResource Brush.Text.Primary}" Text="1.1.000" />
+              <Border Width="1" Height="14" Margin="8,0" Background="{DynamicResource Brush.Border.Strong}" />
+              <TextBlock Classes="mono" VerticalAlignment="Center" FontSize="12"
+                         Foreground="{DynamicResource Brush.Text.Primary}" Text="120.00 BPM" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <Button Classes="commandbartext" Margin="0,0,4,0" IsEnabled="False">
+            <TextBlock Text="Compile" Foreground="#8A939F" />
+          </Button>
+          <Button Classes="commandbartext" Margin="0,0,4,0" IsEnabled="False">
+            <TextBlock Text="MIDI Export" Foreground="#8A939F" />
+          </Button>
+          <Button Classes="commandbartext" IsEnabled="False">
+            <TextBlock Text="Audio Export" Foreground="#8A939F" />
+          </Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Transient notice banner (hidden until a notice exists). -->
+    <Border Grid.Row="2" Padding="10,6" Background="{DynamicResource Brush.Red.Subtle}"
+            BorderBrush="{DynamicResource Brush.Red.Dark}" BorderThickness="0,0,0,1" IsVisible="False" />
+
+    <!-- Workspace area: welcome state until a Project session exists. -->
+    <Grid Grid.Row="3">
+      <Border Margin="48" HorizontalAlignment="Center" VerticalAlignment="Center" Background="Transparent">
+        <StackPanel Width="460">
+          <TextBlock Margin="0,0,0,18" HorizontalAlignment="Center" FontSize="24" FontWeight="Light"
+                     Text="Welcome to Midora" TextAlignment="Center" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button Classes="primary" Margin="0,0,7,0" Content="New Project" />
+            <Button Margin="0,0,7,0" Content="Open Project" />
+            <Button Content="Open MIDI as New Project" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- Status bar. -->
+    <Border Grid.Row="4" Padding="9,0" Background="{DynamicResource Brush.Black}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{DynamicResource Brush.Success}" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="No diagnostics" />
+          <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="Not compiled" />
+          <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="SoundFonts: not configured" />
+        </StackPanel>
+        <TextBlock Grid.Column="1" Classes="caption" VerticalAlignment="Center" Text="Ready" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

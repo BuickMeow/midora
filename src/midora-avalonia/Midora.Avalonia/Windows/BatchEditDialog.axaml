@@ -1,0 +1,141 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.BatchEditDialog"
+        x:CompileBindings="False"
+        Width="620" Height="570" MinWidth="520" MinHeight="430" MaxHeight="760"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Window.Styles>
+    <!-- WPF BatchExpressionEditor chrome: default / hover / keyboard-focus-within border. -->
+    <Style Selector="Border.expression">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
+    </Style>
+    <Style Selector="Border.expression:pointerover">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}" />
+    </Style>
+    <Style Selector="Border.expression:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
+    </Style>
+  </Window.Styles>
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,64">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Batch Edit Selection" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="14,12" HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Margin="0,0,0,12" Classes="muted" TextWrapping="Wrap"
+                     Text="Leave a field blank to keep it unchanged. Type = to enable expression colors, bracket matching, and completion (Ctrl+Space)." />
+
+          <Grid x:Name="VelocityRow" Margin="0,0,0,10" ColumnDefinitions="116,*">
+            <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Velocity" />
+            <Border Grid.Column="1" Classes="expression" MinHeight="34"
+                    Background="{DynamicResource Brush.Surface.0}"
+                    BorderThickness="1" CornerRadius="3">
+              <TextBox x:Name="VelocityBox" MinHeight="32" Padding="7,5"
+                       FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                       Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                       AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                       TextChanged="OnFormulaTextChanged" KeyDown="OnFormulaKeyDown"
+                       Text="=Clamp(v0 * 1.15, 1, 127)" />
+            </Border>
+          </Grid>
+
+          <Grid x:Name="PointValueRow" Margin="0,0,0,10" ColumnDefinitions="116,*">
+            <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Point Value" />
+            <Border Grid.Column="1" Classes="expression" MinHeight="34"
+                    Background="{DynamicResource Brush.Surface.0}"
+                    BorderThickness="1" CornerRadius="3">
+              <TextBox x:Name="PointValueBox" MinHeight="32" Padding="7,5"
+                       FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                       Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                       AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                       TextChanged="OnFormulaTextChanged" KeyDown="OnFormulaKeyDown"
+                       Text="*1.25" />
+            </Border>
+          </Grid>
+
+          <Grid x:Name="KeyNumberRow" Margin="0,0,0,10" ColumnDefinitions="116,*">
+            <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Key Number" />
+            <Border Grid.Column="1" Classes="expression" MinHeight="34"
+                    Background="{DynamicResource Brush.Surface.0}"
+                    BorderThickness="1" CornerRadius="3">
+              <TextBox x:Name="KeyNumberBox" MinHeight="32" Padding="7,5"
+                       FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                       Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                       AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                       TextChanged="OnFormulaTextChanged" KeyDown="OnFormulaKeyDown" />
+            </Border>
+          </Grid>
+
+          <Grid x:Name="GateRow" Margin="0,0,0,10" ColumnDefinitions="116,*">
+            <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Gate" />
+            <Border Grid.Column="1" Classes="expression" MinHeight="34"
+                    Background="{DynamicResource Brush.Surface.0}"
+                    BorderThickness="1" CornerRadius="3">
+              <TextBox x:Name="GateBox" MinHeight="32" Padding="7,5"
+                       FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                       Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                       AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                       TextChanged="OnFormulaTextChanged" KeyDown="OnFormulaKeyDown"
+                       Text="*0.9" />
+            </Border>
+          </Grid>
+
+          <Grid Margin="0,0,0,12" ColumnDefinitions="116,*">
+            <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Tick" />
+            <Border Grid.Column="1" Classes="expression" MinHeight="34"
+                    Background="{DynamicResource Brush.Surface.0}"
+                    BorderThickness="1" CornerRadius="3">
+              <TextBox x:Name="TickBox" MinHeight="32" Padding="7,5"
+                       FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                       Background="Transparent" BorderThickness="0" Foreground="#D4D4D4"
+                       AcceptsReturn="False" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                       TextChanged="OnFormulaTextChanged" KeyDown="OnFormulaKeyDown"
+                       Text="+0" />
+            </Border>
+          </Grid>
+
+          <WrapPanel Margin="116,0,0,10">
+            <Button Width="86" Margin="0,0,6,6" Content="Help" Click="OnHelpClick" />
+            <Button Width="96" Margin="0,0,6,6" Content="Presets…" Click="OnPresetsClick" />
+            <Button Width="112" Margin="0,0,6,6" Content="Save Preset…" Click="OnSavePresetClick" />
+          </WrapPanel>
+
+          <Border Padding="9,7" Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+            <TextBlock x:Name="ValidationText" Classes="caption" Text="Not validated." TextWrapping="Wrap" />
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,11" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Width="90" HorizontalAlignment="Left" Content="Validate" Click="OnValidateClick" />
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Width="112" Margin="0,0,6,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+            <Button Width="112" Classes="primary" IsDefault="True" Content="Apply" Click="OnApplyClick" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

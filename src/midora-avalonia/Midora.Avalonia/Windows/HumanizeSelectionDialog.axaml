@@ -1,0 +1,94 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.HumanizeSelectionDialog"
+        x:CompileBindings="False"
+        Title="Humanize Notes"
+        Width="650" Height="485" MinWidth="590" MinHeight="440"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,62">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}" PointerPressed="OnTitlePointerPressed">
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="Humanize Notes" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="16,14">
+          <TextBlock Margin="0,0,0,14" Classes="muted" TextWrapping="Wrap"
+                     Text="Apply deterministic random variation to the selected notes. Disabled fields remain unchanged." />
+
+          <Border Margin="0,0,0,14" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+            <Grid ColumnDefinitions="72,Auto,18,Auto,12,*">
+              <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Seed" />
+              <RadioButton x:Name="AutomaticSeedButton" Grid.Column="1" VerticalAlignment="Center"
+                           GroupName="SeedMode" IsChecked="True" Content="Automatic"
+                           Checked="OnSeedModeChanged" />
+              <RadioButton x:Name="ExplicitSeedButton" Grid.Column="3" VerticalAlignment="Center"
+                           GroupName="SeedMode" Content="Explicit" Checked="OnSeedModeChanged" />
+              <TextBox x:Name="SeedBox" Grid.Column="5" IsEnabled="False" Text="0" TextChanged="OnInputChanged" />
+            </Grid>
+          </Border>
+
+          <Grid ColumnDefinitions="86,150,12,*,12,*"
+                RowDefinitions="25,Auto,12,Auto,12,Auto">
+            <TextBlock Grid.Column="1" Classes="caption" Text="MODE" />
+            <TextBlock Grid.Column="3" Classes="caption" Text="MINIMUM" />
+            <TextBlock Grid.Column="5" Classes="caption" Text="MAXIMUM" />
+
+            <TextBlock Grid.Row="1" VerticalAlignment="Center" FontWeight="SemiBold" Text="Tick" />
+            <ComboBox x:Name="TickModeBox" Grid.Row="1" Grid.Column="1" SelectedIndex="0"
+                      SelectionChanged="OnFieldModeChanged" />
+            <TextBox x:Name="TickMinimumBox" Grid.Row="1" Grid.Column="3" Text="0" IsEnabled="False"
+                     TextChanged="OnInputChanged" />
+            <TextBox x:Name="TickMaximumBox" Grid.Row="1" Grid.Column="5" Text="0" IsEnabled="False"
+                     TextChanged="OnInputChanged" />
+
+            <TextBlock Grid.Row="3" VerticalAlignment="Center" FontWeight="SemiBold" Text="Gate" />
+            <ComboBox x:Name="GateModeBox" Grid.Row="3" Grid.Column="1" SelectedIndex="0"
+                      SelectionChanged="OnFieldModeChanged" />
+            <TextBox x:Name="GateMinimumBox" Grid.Row="3" Grid.Column="3" Text="0" IsEnabled="False"
+                     TextChanged="OnInputChanged" />
+            <TextBox x:Name="GateMaximumBox" Grid.Row="3" Grid.Column="5" Text="0" IsEnabled="False"
+                     TextChanged="OnInputChanged" />
+
+            <TextBlock Grid.Row="5" VerticalAlignment="Center" FontWeight="SemiBold" Text="Velocity" />
+            <ComboBox x:Name="VelocityModeBox" Grid.Row="5" Grid.Column="1" SelectedIndex="0"
+                      SelectionChanged="OnFieldModeChanged" />
+            <TextBox x:Name="VelocityMinimumBox" Grid.Row="5" Grid.Column="3" Text="0" IsEnabled="False"
+                     TextChanged="OnInputChanged" />
+            <TextBox x:Name="VelocityMaximumBox" Grid.Row="5" Grid.Column="5" Text="0" IsEnabled="False"
+                     TextChanged="OnInputChanged" />
+          </Grid>
+
+          <TextBlock Margin="86,14,0,0" Classes="caption" TextWrapping="Wrap"
+                     Text="Add and Override use inclusive integer ranges. Multiply accepts finite factors greater than or equal to zero." />
+          <TextBlock x:Name="ValidationText" Margin="86,10,0,0" Classes="caption"
+                     Foreground="{DynamicResource Brush.Red.Hover}" TextWrapping="Wrap" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+          <Button Width="112" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+          <Button Classes="primary" Width="112" Content="Apply" IsDefault="True" Click="OnApplyClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

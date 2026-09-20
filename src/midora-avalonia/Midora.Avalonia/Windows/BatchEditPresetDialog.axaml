@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.BatchEditPresetDialog"
+        x:CompileBindings="False"
+        Title="Batch Edit Presets"
+        Width="560" Height="410" MinWidth="480" MinHeight="340"
+        FontFamily="{DynamicResource Font.UI}"
+        Background="{DynamicResource Brush.Surface.0}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        CanResize="True"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,60">
+
+      <!-- Title bar: self-drawn caption with drag and close. -->
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Batch Edit Presets" TextTrimming="CharacterEllipsis" />
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Classes="caption close"
+                ToolTip.Tip="Close" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+
+      <Grid Grid.Row="1" Margin="12" ColumnDefinitions="220,10,*">
+        <ListBox x:Name="PresetList" SelectionChanged="OnSelectionChanged" DoubleTapped="OnPresetListDoubleTapped">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <Border Grid.Column="2" Padding="10" Background="{DynamicResource Brush.Surface.1}"
+                BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <TextBlock x:Name="PreviewText" FontFamily="{DynamicResource Font.Mono}" FontSize="11"
+                       Foreground="{DynamicResource Brush.Text.Secondary}"
+                       Text="Select a preset to preview it." TextWrapping="Wrap" />
+          </ScrollViewer>
+        </Border>
+      </Grid>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Width="112" HorizontalAlignment="Left" Content="Delete" Click="OnDeleteClick" />
+          <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Button Width="112" Margin="0,0,6,0" IsCancel="True" Content="Cancel" Click="OnCancelClick" />
+            <Button Width="112" Classes="primary" IsDefault="True" Content="Apply" Click="OnApplyClick" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,82 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Midora.Avalonia.Controls"
+        x:Class="Midora.Avalonia.Windows.ColorPickerDialog"
+        x:CompileBindings="False"
+        FontFamily="{DynamicResource Font.UI}"
+        Title="Select Color" Width="620" Height="390" MinWidth="620" MinHeight="390"
+        MaxWidth="620" MaxHeight="390"
+        Background="{DynamicResource Brush.Surface.0}"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome">
+  <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid RowDefinitions="36,*,58">
+      <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}">
+        <Border Background="Transparent" PointerPressed="OnTitlePointerPressed" />
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   IsHitTestVisible="False" Text="Select Color" />
+        <Button Classes="caption close" HorizontalAlignment="Right" Click="OnCancelClick">
+          <controls:FluentIcon Classes="captionicon" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               Data="{StaticResource WindowControl.Close}" />
+        </Button>
+      </Grid>
+      <Grid Grid.Row="1" Margin="16,14" ColumnDefinitions="224,44,20,*">
+        <Canvas x:Name="WheelCanvas" Grid.Column="0" Width="220" Height="220"
+                HorizontalAlignment="Left" VerticalAlignment="Top" Background="Transparent"
+                PointerPressed="OnWheelPointerPressed" PointerReleased="OnWheelPointerReleased"
+                PointerMoved="OnWheelPointerMoved">
+          <Border Width="224" Height="224" Canvas.Left="-2" Canvas.Top="-2"
+                  Background="{DynamicResource Brush.Surface.1}" CornerRadius="112" />
+          <Image x:Name="ColorWheelImage" Width="220" Height="220" Stretch="None" />
+          <Ellipse x:Name="WheelSelector" Width="14" Height="14" Stroke="White" StrokeThickness="2"
+                   Fill="Transparent" IsHitTestVisible="False" />
+        </Canvas>
+        <Canvas x:Name="BrightnessCanvas" Grid.Column="1" Width="30" Height="220"
+                HorizontalAlignment="Center" VerticalAlignment="Top" Background="Transparent"
+                PointerPressed="OnBrightnessPointerPressed" PointerReleased="OnBrightnessPointerReleased"
+                PointerMoved="OnBrightnessPointerMoved">
+          <Border Width="30" Height="220" Background="{DynamicResource Brush.Surface.1}"
+                  BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1" />
+          <Image x:Name="BrightnessImage" Width="28" Height="218" Canvas.Left="1" Canvas.Top="1"
+                 Stretch="None" />
+          <Border x:Name="BrightnessSelector" Width="36" Height="3" Canvas.Left="-3" Background="White"
+                  IsHitTestVisible="False" />
+        </Canvas>
+        <Grid Grid.Column="3" VerticalAlignment="Top" ColumnDefinitions="26,72,16,26,72"
+              RowDefinitions="Auto,Auto,Auto,Auto,Auto,*">
+          <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,6,8" VerticalAlignment="Center" Text="R" />
+          <TextBox x:Name="RedTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,0,8"
+                   TextChanged="OnRgbTextChanged" />
+          <TextBlock Grid.Row="0" Grid.Column="3" Margin="0,0,6,8" VerticalAlignment="Center" Text="G" />
+          <TextBox x:Name="GreenTextBox" Grid.Row="0" Grid.Column="4" Margin="0,0,0,8"
+                   TextChanged="OnRgbTextChanged" />
+          <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,0,6,8" VerticalAlignment="Center" Text="B" />
+          <TextBox x:Name="BlueTextBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"
+                   TextChanged="OnRgbTextChanged" />
+          <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,6,8" VerticalAlignment="Center" Text="#" />
+          <TextBox x:Name="HexTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="4" Margin="0,0,0,8"
+                   TextChanged="OnHexTextChanged" />
+          <TextBlock Grid.Row="3" Grid.ColumnSpan="5" Margin="0,0,0,10" Classes="caption"
+                     Text="Format: #RRGGBB" />
+          <Border Grid.Row="4" Grid.ColumnSpan="5" Height="68"
+                  BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1"
+                  Background="{DynamicResource Brush.Surface.1}">
+            <Rectangle x:Name="PreviewFill" Margin="5" />
+          </Border>
+          <TextBlock x:Name="ErrorTextBlock" Grid.Row="5" Grid.ColumnSpan="5" Margin="0,8,0,0"
+                     Foreground="{DynamicResource Brush.Red}" TextWrapping="Wrap" />
+        </Grid>
+      </Grid>
+      <Border Grid.Row="2" Padding="12,10" Background="{DynamicResource Brush.Surface.1}"
+              BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+          <Button Width="112" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick" />
+          <Button Classes="primary" Width="112" Content="Select" Click="OnAcceptClick" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="Midora.Avalonia/Midora.Avalonia.csproj" />
+  <Project Path="Midora.Avalonia.Presentation/Midora.Avalonia.Presentation.csproj" />
 </Solution>

@@ -207,6 +207,26 @@
         "type": "Transitive",
         "resolved": "0.21.3",
         "contentHash": "hDwB8WsQoyALQKqIbwzS68UKdlnafDm4T/DkO/JrA/YIneP/rKv96SxYPVXeh3FP4i/SXfShrYftKLtciJAIlw=="
+      },
+      "midora.avalonia.presentation": {
+        "type": "Project",
+        "dependencies": {
+          "Avalonia": "[11.3.22, )",
+          "Midora.Domain": "[1.0.0-dev, )"
+        }
+      },
+      "midora.common": {
+        "type": "Project"
+      },
+      "midora.domain": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Common": "[1.0.0-dev, )",
+          "Midora.Mapping.Contract.V2": "[1.0.0-dev, )"
+        }
+      },
+      "midora.mapping.contract.v2": {
+        "type": "Project"
       }
     },
     "net10.0/osx-arm64": {

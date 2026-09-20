@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Midora.Avalonia.Presentation</AssemblyName>
+    <RootNamespace>Midora.Avalonia.Presentation</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- macOS-first port: override the repository-wide win-x64 RID until multi-RID publishing is designed. -->
+    <RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\midora-core\Midora.Domain\Midora.Domain.csproj" />
+  </ItemGroup>
+</Project>

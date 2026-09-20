@@ -48,6 +48,7 @@ public sealed partial class TimelineSurface : Control
             LaneHeightProperty,
             GridVisibleProperty,
             ShowTrackNamesProperty,
+            PlaybackTickProperty,
             TicksPerQuarterNoteProperty,
             SelectedIdProperty,
             TrackNamesProperty,
@@ -99,6 +100,10 @@ public sealed partial class TimelineSurface : Control
     /// <summary>Draws lane names inside the content; hosts with a header column set this false.</summary>
     public static readonly StyledProperty<bool> ShowTrackNamesProperty =
         AvaloniaProperty.Register<TimelineSurface, bool>(nameof(ShowTrackNames), defaultValue: true);
+
+    /// <summary>Playback position drawn as a red cursor line; -1 hides it.</summary>
+    public static readonly StyledProperty<long> PlaybackTickProperty =
+        AvaloniaProperty.Register<TimelineSurface, long>(nameof(PlaybackTick), -1);
 
     public static readonly StyledProperty<long> TicksPerQuarterNoteProperty =
         AvaloniaProperty.Register<TimelineSurface, long>(
@@ -177,6 +182,12 @@ public sealed partial class TimelineSurface : Control
         set => SetValue(ShowTrackNamesProperty, value);
     }
 
+    public long PlaybackTick
+    {
+        get => GetValue(PlaybackTickProperty);
+        set => SetValue(PlaybackTickProperty, value);
+    }
+
     public long TicksPerQuarterNote
     {
         get => GetValue(TicksPerQuarterNoteProperty);
@@ -231,6 +242,9 @@ public sealed partial class TimelineSurface : Control
 
     public event EventHandler<int>? LaneActivated;
 
+    /// <summary>Raised when an arrangement Segment is double-clicked (lane, segment start tick).</summary>
+    public event EventHandler<TimelineSegmentActivation>? SegmentActivated;
+
     protected override Size MeasureOverride(Size availableSize)
     {
         double width = double.IsInfinity(availableSize.Width) ? 640 : availableSize.Width;
@@ -274,6 +288,7 @@ public sealed partial class TimelineSurface : Control
             DrawGrid(context, viewport, width, height);
         }
 
+        DrawRulerMarkerLabels(context, viewport, width);
         if (ShowTrackNames)
         {
             DrawTrackNames(context, viewport, width);
@@ -284,6 +299,7 @@ public sealed partial class TimelineSurface : Control
         }
 
         DrawEditCursor(context, viewport, height);
+        DrawPlaybackCursor(context, viewport, height);
         DrawMarquee(context, width, height);
     }
 
@@ -293,6 +309,19 @@ public sealed partial class TimelineSurface : Control
         {
             return;
         }
+
+        double rulerHeight = Math.Min(RulerHeight, height);
+        context.FillRectangle(LaneAlternateBrush, new Rect(0, 0, width, rulerHeight), 1f);
+        context.DrawLine(
+            BorderPen,
+            new Point(0, Math.Round(rulerHeight) + 0.5),
+            new Point(width, Math.Round(rulerHeight) + 0.5));
+        if (GridVisible)
+        {
+            DrawGrid(context, viewport, width, height);
+        }
+
+        DrawRulerMarkerLabels(context, viewport, width);
 
         switch (SurfaceMode)
         {
@@ -310,6 +339,7 @@ public sealed partial class TimelineSurface : Control
                 break;
         }
 
+        DrawPlaybackCursor(context, viewport, height);
         DrawMarquee(context, width, height);
     }
 
@@ -345,7 +375,7 @@ public sealed partial class TimelineSurface : Control
 
         if (e.ClickCount == 2)
         {
-            RaiseLaneActivated(point.Position);
+            RaiseActivation(point.Position);
         }
 
         if (point.Properties.IsMiddleButtonPressed)
@@ -370,8 +400,14 @@ public sealed partial class TimelineSurface : Control
         e.Handled = true;
     }
 
-    private void RaiseLaneActivated(Point position)
+    private void RaiseActivation(Point position)
     {
+        // Lane/segment activation is an Arrangement concept; pitch/event modes do not raise it.
+        if (SurfaceMode is not (TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.General))
+        {
+            return;
+        }
+
         if (!TryCreateViewport(out TimelineViewport viewport))
         {
             return;
@@ -383,6 +419,13 @@ public sealed partial class TimelineSurface : Control
             || contentY < 0
             || contentY >= viewport.LaneCount * viewport.LaneHeight)
         {
+            return;
+        }
+
+        if (TryHitTest(position, out TimelineRenderItem item)
+            && item.Kind == TimelineItemKind.Segment)
+        {
+            SegmentActivated?.Invoke(this, new TimelineSegmentActivation(item.Lane, item.StartTick));
             return;
         }
 
@@ -515,12 +558,31 @@ public sealed partial class TimelineSurface : Control
         {
             ZoomAt(e.GetPosition(this), delta);
         }
+        else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && UsesPitchLanes)
+        {
+            ScrollLanes(delta);
+        }
         else
         {
             PanByWheel(delta);
         }
 
         e.Handled = true;
+    }
+
+    /// <summary>Shift+wheel scrolls the pitch window (pitch-oriented modes).</summary>
+    private void ScrollLanes(double delta)
+    {
+        if (!TryCreateViewport(out TimelineViewport viewport))
+        {
+            return;
+        }
+
+        int step = Math.Max(1, (int)Math.Round(3 * delta));
+        int maximumFirstLane = Math.Max(0, 128 - viewport.LaneCount);
+        SetCurrentValue(
+            FirstLaneProperty,
+            Math.Clamp(viewport.FirstLane - step, 0, maximumFirstLane));
     }
 
     private void PanByWheel(double delta)
@@ -617,7 +679,7 @@ public sealed partial class TimelineSurface : Control
             return false;
         }
 
-        int lane = viewport.YToLane(contentY);
+        int lane = LaneFromContentY(viewport, contentY);
         long tick = viewport.XToContainingTick(position.X);
         _queryScratch.Clear();
         Source.QueryInto(tick, tick + 1, lane, lane + 1, _queryScratch);
@@ -654,11 +716,19 @@ public sealed partial class TimelineSurface : Control
             return;
         }
 
-        int firstLane = viewport.YToLane(topContent - RulerHeight);
-        int lastLane = viewport.YToLane(bottomContent - RulerHeight - double.Epsilon);
-        int lastLaneExclusive = Math.Min(viewport.LastLaneExclusive, lastLane + 1);
+        int firstLane = LaneFromContentY(viewport, topContent - RulerHeight);
+        int lastLane = LaneFromContentY(viewport, bottomContent - RulerHeight - double.Epsilon);
+        int rangeStart = Math.Max(viewport.FirstLane, Math.Min(firstLane, lastLane));
+        int rangeEnd = Math.Min(viewport.LastLaneExclusive - 1, Math.Max(firstLane, lastLane));
+        if (rangeEnd < rangeStart)
+        {
+            SelectItem(null);
+            return;
+        }
+
+        int lastLaneExclusive = rangeEnd + 1;
         _queryScratch.Clear();
-        Source.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, _queryScratch);
+        Source.QueryInto(startTick, endTick, rangeStart, lastLaneExclusive, _queryScratch);
         bool Intersects(TimelineRenderItem candidate) =>
             candidate.EndTick > startTick && candidate.StartTick < endTick;
         SelectItem(TryChooseTopmost(Intersects, out TimelineRenderItem item) ? item : null);

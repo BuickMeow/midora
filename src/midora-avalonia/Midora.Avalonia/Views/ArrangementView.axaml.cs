@@ -18,6 +18,9 @@ public partial class ArrangementView : UserControl
     /// <summary>Raised with a zero-based MIDI track index when a lane is double-clicked.</summary>
     public event EventHandler<int>? TrackActivated;
 
+    /// <summary>Raised with (track index, segment start tick) when a Segment is double-clicked.</summary>
+    public event EventHandler<(int TrackIndex, long StartTick)>? SegmentActivated;
+
     public ArrangementView()
     {
         InitializeComponent();
@@ -27,6 +30,8 @@ public partial class ArrangementView : UserControl
         _previewProvider = segment => _demo.GetPreviewSource(segment);
 
         Timeline.LaneActivated += (_, lane) => TrackActivated?.Invoke(this, lane - 1);
+        Timeline.SegmentActivated += (_, activation) =>
+            SegmentActivated?.Invoke(this, (activation.Lane - 1, activation.StartTick));
         Timeline.PointerTickChanged += (_, tick) => UpdateReadout(tick);
         Timeline.SelectionChanged += (_, item) =>
         {
@@ -65,6 +70,8 @@ public partial class ArrangementView : UserControl
 
     public void UseDemoSource() =>
         SetSource(_demo, 480, _demo.TrackNames, segment => _demo.GetPreviewSource(segment));
+
+    public void SetPlaybackTick(long tick) => Timeline.PlaybackTick = tick;
 
     private void ApplySource(bool preserveView = false)
     {

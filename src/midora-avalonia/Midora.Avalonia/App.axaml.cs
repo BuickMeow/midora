@@ -43,6 +43,24 @@ public partial class App : Application
                 {
                     mainWindow.Opened += (_, _) => mainWindow.OpenTrackForReview(trackIndex);
                 }
+
+                var segment = Environment.GetEnvironmentVariable("MIDORA_OPEN_SEGMENT");
+                if (!string.IsNullOrEmpty(segment))
+                {
+                    string[] parts = segment.Split(':');
+                    if (parts.Length == 2 &&
+                        int.TryParse(parts[0], out int segmentTrack) &&
+                        long.TryParse(parts[1], out long segmentTick))
+                    {
+                        mainWindow.Opened += (_, _) =>
+                            mainWindow.OpenSegmentForReview(segmentTrack, segmentTick);
+                    }
+                }
+
+                if (Environment.GetEnvironmentVariable("MIDORA_AUTOPLAY") == "1")
+                {
+                    mainWindow.Opened += (_, _) => mainWindow.StartPlaybackForReview();
+                }
             }
         }
 

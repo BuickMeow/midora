@@ -67,6 +67,71 @@ public sealed partial class TimelineSurface
         FontStretch.Normal);
 
     private readonly Dictionary<(uint Accent, bool Selected), SolidColorBrush> _segmentFillCache = [];
+    private readonly List<TimelineRenderItem> _rulerMarkerScratch = [];
+
+    /// <summary>Playback position drawn over the whole surface with a red cursor line.</summary>
+    private void DrawPlaybackCursor(DrawingContext context, TimelineViewport viewport, double height)
+    {
+        long tick = PlaybackTick;
+        if (tick < 0 || tick < viewport.StartTick || tick > viewport.EndTick)
+        {
+            return;
+        }
+
+        double x = SnapToDevicePixel(viewport.TickToX(tick), GetDevicePixelWidth());
+        context.DrawLine(CursorPen, new Point(x, 0), new Point(x, height));
+        context.FillRectangle(RedBrush, new Rect(x - 2, 0, 4, 4), 1f);
+    }
+
+    /// <summary>Conductor marker labels projected into the ruler band.</summary>
+    private void DrawRulerMarkerLabels(DrawingContext context, TimelineViewport viewport, double width)
+    {
+        if (Source is null)
+        {
+            return;
+        }
+
+        _rulerMarkerScratch.Clear();
+        Source.QueryInto(viewport.StartTick, viewport.EndTick, 0, 1, _rulerMarkerScratch);
+        foreach (TimelineRenderItem item in _rulerMarkerScratch)
+        {
+            if (item.Kind != TimelineItemKind.Marker || string.IsNullOrEmpty(item.Label))
+            {
+                continue;
+            }
+
+            double x = viewport.TickToX(item.StartTick);
+            if (x < 0 || x > width)
+            {
+                continue;
+            }
+
+            DrawLabel(context, item.Label, x + 3, 3, Math.Max(0, width - x - 5));
+        }
+    }
+
+    /// <summary>Pitch-oriented modes show the highest visible pitch at the top.</summary>
+    private bool UsesPitchLanes =>
+        SurfaceMode is TimelineSurfaceMode.PianoRoll or TimelineSurfaceMode.Velocity;
+
+    /// <summary>Absolute lane for a top-down row in the current mode.</summary>
+    private int LaneAtRow(TimelineViewport viewport, int row) =>
+        UsesPitchLanes
+            ? viewport.LastLaneExclusive - 1 - row
+            : viewport.FirstLane + row;
+
+    /// <summary>Absolute lane at a content-relative Y coordinate in the current mode.</summary>
+    private int LaneFromContentY(TimelineViewport viewport, double contentY) =>
+        LaneAtRow(viewport, viewport.YToLane(contentY) - viewport.FirstLane);
+
+    /// <summary>Vertical position of an absolute lane in the current mode.</summary>
+    private double GetLaneTop(TimelineViewport viewport, int lane)
+    {
+        int row = UsesPitchLanes
+            ? viewport.LastLaneExclusive - 1 - lane
+            : lane - viewport.FirstLane;
+        return RulerHeight + row * viewport.LaneHeight;
+    }
 
     /// <summary>
     /// Segment band fill derived from the track accent color, darkened for the arrangement

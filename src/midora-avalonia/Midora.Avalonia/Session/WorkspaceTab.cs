@@ -17,7 +17,7 @@ public enum WorkspaceKind
 /// </summary>
 public sealed class WorkspaceTab
 {
-    public WorkspaceTab(WorkspaceKind kind, string header, Control content, Geometry? icon, bool canClose, int trackIndex = -1)
+    public WorkspaceTab(WorkspaceKind kind, string header, Control content, Geometry? icon, bool canClose, int trackIndex = -1, long segmentStartTick = -1)
     {
         Kind = kind;
         Header = header;
@@ -25,6 +25,7 @@ public sealed class WorkspaceTab
         Icon = icon;
         CanClose = canClose;
         TrackIndex = trackIndex;
+        SegmentStartTick = segmentStartTick;
     }
 
     public WorkspaceKind Kind { get; }
@@ -39,4 +40,7 @@ public sealed class WorkspaceTab
 
     /// <summary>Zero-based MIDI track index for <see cref="WorkspaceKind.MidiTrack"/>; otherwise -1.</summary>
     public int TrackIndex { get; }
+
+    /// <summary>Segment start tick for segment-scoped MIDI workspaces; otherwise -1.</summary>
+    public long SegmentStartTick { get; }
 }

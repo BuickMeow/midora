@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Midora.Avalonia.Editing;
 using Midora.Avalonia.Import;
 using Midora.Avalonia.Presentation.Rendering;
@@ -38,9 +40,13 @@ public sealed class ShellSession : INotifyPropertyChanged
     private string _notice = string.Empty;
     private int _errorCount;
     private int _warningCount;
-    private string _positionText = "1.1.000";
+    private string _positionText = "0001 : 01 : 0000";
     private string _tempoText = "120.00 BPM";
     private readonly DemoTimelineSource _demoSource = DemoTimelineSource.Create();
+    private readonly Stopwatch _playbackClock = new();
+    private DispatcherTimer? _playbackTimer;
+    private long _playbackTick;
+    private double _tempoBpm = 120;
     private MidiTimelineSource? _midiSource;
     private EditableMidiProject? _editableProject;
     private ArrangementView? _arrangementView;
@@ -214,6 +220,19 @@ public sealed class ShellSession : INotifyPropertyChanged
         private set => Set(ref _positionText, value);
     }
 
+    public long PlaybackTick
+    {
+        get => _playbackTick;
+        private set
+        {
+            if (Set(ref _playbackTick, value))
+            {
+                _arrangementView?.SetPlaybackTick(value);
+                _activeEditView?.SetPlaybackTick(value);
+            }
+        }
+    }
+
     public string TempoText
     {
         get => _tempoText;
@@ -272,7 +291,7 @@ public sealed class ShellSession : INotifyPropertyChanged
         ErrorCount = 0;
         WarningCount = 0;
         IssueSummary = "0 Errors, 0 Warnings";
-        PositionText = "1.1.000";
+        PositionText = "0001 : 01 : 0000";
         TempoText = "120.00 BPM";
         StatusText = $"Project '{ProjectName}' created (in-memory port placeholder).";
         SetNotice($"Project '{ProjectName}' created.");
@@ -285,12 +304,56 @@ public sealed class ShellSession : INotifyPropertyChanged
     {
         _arrangementView = new ArrangementView();
         _arrangementView.TrackActivated += (_, trackIndex) => OpenMidiTrackWorkspace(trackIndex);
+        _arrangementView.SegmentActivated += (_, activation) =>
+            OpenMidiSegmentWorkspace(activation.TrackIndex, activation.StartTick);
         return new WorkspaceTab(
             WorkspaceKind.Arrangement,
             "Arrangement",
             _arrangementView,
             Icon("Fluent.MusicNote120Regular"),
             canClose: false);
+    }
+
+    /// <summary>Opens (or activates) a segment-scoped MIDI editor tab.</summary>
+    public void OpenMidiSegmentWorkspace(int trackIndex, long startTick)
+    {
+        if (!HasProject ||
+            _midiSource is null ||
+            _editableProject is null ||
+            trackIndex < 0 ||
+            trackIndex >= _midiSource.Project.Tracks.Count)
+        {
+            return;
+        }
+
+        long ticksPerBar = Math.Max(1, 4L * _midiSource.Project.TicksPerQuarterNote);
+        long chunkTicks = Math.Max(1, _midiSource.BarsPerSegment * ticksPerBar);
+        long chunkStart = startTick / chunkTicks * chunkTicks;
+        var workspace = Workspaces.FirstOrDefault(
+            tab => tab.Kind == WorkspaceKind.MidiTrack &&
+                   tab.TrackIndex == trackIndex &&
+                   tab.SegmentStartTick == chunkStart);
+        if (workspace is null)
+        {
+            var view = new MidiTrackView();
+            view.SetProject(_editableProject, trackIndex);
+            view.SetSegmentRange(chunkStart, chunkTicks);
+            view.Edited += (_, _) => MarkModified();
+            string trackName = trackIndex + 1 < _midiSource.TrackNames.Count
+                ? _midiSource.TrackNames[trackIndex + 1]
+                : $"Track {trackIndex + 1}";
+            workspace = new WorkspaceTab(
+                WorkspaceKind.MidiTrack,
+                $"MIDI Segment: {trackName}@{chunkStart / ticksPerBar + 1}",
+                view,
+                Icon("Fluent.Midi20Regular"),
+                canClose: true,
+                trackIndex,
+                chunkStart);
+            Workspaces.Add(workspace);
+        }
+
+        ActivateWorkspace(workspace, pushHistory: true);
     }
 
     /// <summary>
@@ -358,8 +421,11 @@ public sealed class ShellSession : INotifyPropertyChanged
         if (project.Conductor.FirstOrDefault(
                 conductorEvent => conductorEvent.Kind == ImportedConductorKind.Tempo) is { Value: > 0 } tempo)
         {
+            _tempoBpm = tempo.Value;
             TempoText = $"{tempo.Value:0.00} BPM";
         }
+
+        PlaybackTick = -1;
 
         StatusText =
             $"Imported '{project.SourceFileName}' · {project.Tracks.Count} track(s) · " +
@@ -408,6 +474,8 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     public void CloseProject()
     {
+        StopPlaybackClock();
+        PlaybackTick = -1;
         _midiSource = null;
         _editableProject = null;
         _activeEditView = null;
@@ -576,7 +644,16 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
 
         IsPlaying = !IsPlaying;
-        StatusText = IsPlaying ? "Playing (placeholder transport)." : "Stopped.";
+        if (IsPlaying)
+        {
+            StartPlaybackClock();
+            StatusText = "Playing.";
+        }
+        else
+        {
+            StopPlaybackClock();
+            StatusText = "Stopped.";
+        }
     }
 
     public void StopPlayback()
@@ -584,8 +661,55 @@ public sealed class ShellSession : INotifyPropertyChanged
         if (IsPlaying)
         {
             IsPlaying = false;
+            StopPlaybackClock();
             StatusText = "Stopped.";
         }
+    }
+
+    private void StartPlaybackClock()
+    {
+        _playbackTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        _playbackTimer.Tick -= OnPlaybackTimerTick;
+        _playbackTimer.Tick += OnPlaybackTimerTick;
+        _playbackClock.Restart();
+        _playbackTimer.Start();
+    }
+
+    private void StopPlaybackClock()
+    {
+        _playbackTimer?.Stop();
+        _playbackClock.Reset();
+    }
+
+    private void OnPlaybackTimerTick(object? sender, EventArgs e)
+    {
+        double seconds = _playbackClock.Elapsed.TotalSeconds;
+        _playbackClock.Restart();
+
+        long ticksPerQuarterNote = Math.Max(1, _midiSource?.Project.TicksPerQuarterNote ?? 480);
+        long advance = Math.Max(1, (long)(seconds * _tempoBpm / 60.0 * ticksPerQuarterNote));
+        long maximum = Math.Max(1, _midiSource?.MaximumEndTick ?? _demoSource.MaximumEndTick);
+        long next = _playbackTick + advance;
+        if (next >= maximum)
+        {
+            next = IsLoopEnabled ? 0 : maximum - 1;
+            if (!IsLoopEnabled)
+            {
+                StopPlayback();
+            }
+        }
+
+        PlaybackTick = next;
+        UpdatePositionText(next, ticksPerQuarterNote);
+    }
+
+    private void UpdatePositionText(long tick, long ticksPerQuarterNote)
+    {
+        long ticksPerBar = ticksPerQuarterNote * 4;
+        long bar = tick / ticksPerBar + 1;
+        long beat = tick % ticksPerBar / ticksPerQuarterNote + 1;
+        long remainder = tick % ticksPerQuarterNote;
+        PositionText = $"{bar:0000} : {beat:00} : {remainder:0000}";
     }
 
     public async Task CompileAsync()

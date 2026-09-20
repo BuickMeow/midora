@@ -81,7 +81,7 @@ public sealed partial class TimelineSurface
                 break;
             }
 
-            long pitch = GetPitchForLane(viewport.FirstLane + index);
+            long pitch = LaneAtRow(viewport, index);
             if (pitch is < 0 or > 127)
             {
                 continue;
@@ -105,7 +105,4 @@ public sealed partial class TimelineSurface
     /// <summary>Piano-roll lanes are absolute MIDI pitches; the viewport shows [FirstLane, FirstLane + visible).</summary>
     private static long GetPitchForLane(int lane) =>
         lane is >= 0 and <= 127 ? lane : -1;
-
-    private static double GetLaneTop(TimelineViewport viewport, int lane) =>
-        RulerHeight + (lane - viewport.FirstLane) * viewport.LaneHeight;
 }

@@ -47,6 +47,13 @@ public partial class MainWindow : Window
     internal void OpenTrackForReview(int trackIndex) =>
         Session.OpenMidiTrackWorkspace(trackIndex);
 
+    /// <summary>Review-only entry point used by the <c>MIDORA_OPEN_SEGMENT</c> env var.</summary>
+    internal void OpenSegmentForReview(int trackIndex, long startTick) =>
+        Session.OpenMidiSegmentWorkspace(trackIndex, startTick);
+
+    /// <summary>Review-only entry point used by the <c>MIDORA_AUTOPLAY</c> env var.</summary>
+    internal void StartPlaybackForReview() => Session.TogglePlayback();
+
     // ---- Platform chrome -------------------------------------------------
 
     protected override void OnOpened(EventArgs e)

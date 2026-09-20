@@ -801,19 +801,19 @@ public sealed partial class TimelineSurface
             return false;
         }
 
-        lane = viewport.YToLane(contentY);
+        lane = LaneFromContentY(viewport, contentY);
         tick = viewport.XToContainingTick(position.X);
         return true;
     }
 
-    private static int ResolveEditingLane(TimelineViewport viewport, double y)
+    private int ResolveEditingLane(TimelineViewport viewport, double y)
     {
         double contentY = y - RulerHeight;
         double maximum = viewport.LaneCount * viewport.LaneHeight;
         double clamped = double.IsFinite(contentY)
             ? Math.Clamp(contentY, 0, maximum - double.Epsilon)
             : 0;
-        return viewport.YToLane(clamped);
+        return LaneFromContentY(viewport, clamped);
     }
 
     private double ResolveVelocityValue(TimelineViewport viewport, int lane, double y)

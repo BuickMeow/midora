@@ -48,6 +48,8 @@ public partial class MidiTrackView : UserControl
         Timeline.SelectionChanged += OnSelectionChanged;
         Timeline.LaneActivated += OnLaneActivated;
         Timeline.EditCommitted += OnEditCommitted;
+        Keyboard.KeyPressed += OnKeyboardKeyPressed;
+        Keyboard.KeyReleased += (_, _) => RefreshFooter();
 
         SetTool(TimelineToolMode.Select);
         SetToolbarEnabled(false);
@@ -240,6 +242,8 @@ public partial class MidiTrackView : UserControl
         Timeline.FirstPitch = DefaultFirstPitch;
         Timeline.PitchCount = DefaultPitchCount;
         Timeline.FirstLane = DefaultFirstPitch;
+        Keyboard.FirstLane = DefaultFirstPitch;
+        Keyboard.LaneHeight = Timeline.LaneHeight;
         Timeline.ValueMinimum = DefaultValueMinimum;
         Timeline.ValueMaximum = DefaultValueMaximum;
         Timeline.TickSpan = Math.Max(1, _ticksPerQuarterNote * 4L);
@@ -289,6 +293,9 @@ public partial class MidiTrackView : UserControl
         Timeline.LaneHeight = _mode == TimelineSurfaceMode.Conductor
             ? ConductorLaneHeight
             : NotesLaneHeight;
+        Keyboard.LaneHeight = Timeline.LaneHeight;
+        Keyboard.FirstLane = Timeline.FirstLane;
+        Keyboard.IsVisible = _mode is TimelineSurfaceMode.PianoRoll or TimelineSurfaceMode.Velocity;
     }
 
     private void SetTool(TimelineToolMode tool)
@@ -364,7 +371,19 @@ public partial class MidiTrackView : UserControl
         Timeline.TickSpan = Math.Min(cap, (long)(Timeline.TickSpan * HorizontalZoomStep));
     }
 
+    public void SetSegmentRange(long startTick, long spanTicks)
+    {
+        Timeline.StartTick = Math.Max(0, startTick);
+        Timeline.TickSpan = Math.Max(1, spanTicks);
+        UpdateTickReadout(Timeline.StartTick);
+    }
+
+    public void SetPlaybackTick(long tick) => Timeline.PlaybackTick = tick;
+
     private void OnPointerTickChanged(object? sender, long tick) => UpdateTickReadout(tick);
+
+    private void OnKeyboardKeyPressed(object? sender, int pitch) =>
+        FooterText.Text = $"Preview MIDI {pitch} · audio preview is not wired yet";
 
     private void OnSelectionChanged(object? sender, TimelineRenderItem? item)
     {

@@ -8,7 +8,8 @@
   <Grid RowDefinitions="38,*,22" Background="{DynamicResource Brush.Surface.0}">
     <Border Background="{DynamicResource Brush.Surface.1}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0" Spacing="3">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0" Spacing="3">
         <ToggleButton Classes="tool" Width="26" Height="24" Padding="0" ToolTip.Tip="Draw (D)">
           <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Pen20Regular}" />
         </ToggleButton>
@@ -46,6 +47,16 @@
         <Border Width="1" Height="18" Margin="8,0" Background="{DynamicResource Brush.Border}" />
         <TextBlock x:Name="TickText" Classes="mono" VerticalAlignment="Center" Text="Bar 1.1.000" />
       </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                    Margin="0,0,9,0" Spacing="3">
+          <ToggleButton Classes="tool" Width="26" Height="24" Padding="0" ToolTip.Tip="Onion skin">
+            <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.LayerDiagonal20Regular}" />
+          </ToggleButton>
+          <ToggleButton Classes="tool" Width="26" Height="24" Padding="0" ToolTip.Tip="All Tracks">
+            <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.LayerDiagonal20Regular}" />
+          </ToggleButton>
+        </StackPanel>
+      </Grid>
     </Border>
 
     <Grid Grid.Row="1" ColumnDefinitions="190,*">

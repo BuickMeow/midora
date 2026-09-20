@@ -28,3 +28,6 @@ public enum TimelineItemEditKind
     ResizeStart,
     ResizeEnd
 }
+
+/// <summary>Identifies an arrangement Segment activation for workspace navigation.</summary>
+public readonly record struct TimelineSegmentActivation(int Lane, long StartTick);

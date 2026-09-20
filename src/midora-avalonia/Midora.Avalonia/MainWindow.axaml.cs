@@ -211,10 +211,14 @@ public partial class MainWindow : Window
     // ---- Edit menu -------------------------------------------------------
 
     private void OnUndoClick(object? sender, RoutedEventArgs e) =>
-        Session.SetStatus("Undo is not wired yet (History arrives with the presentation core).");
+        Session.SetStatus(Session.UndoActive()
+            ? "Undo."
+            : "Nothing to undo in the active editor.");
 
     private void OnRedoClick(object? sender, RoutedEventArgs e) =>
-        Session.SetStatus("Redo is not wired yet (History arrives with the presentation core).");
+        Session.SetStatus(Session.RedoActive()
+            ? "Redo."
+            : "Nothing to redo in the active editor.");
 
     private void OnCutClick(object? sender, RoutedEventArgs e) =>
         Session.SetStatus("Cut is not wired yet (Selection/Clipboard arrive with the presentation core).");
@@ -444,6 +448,38 @@ public partial class MainWindow : Window
         }
         Step("open-arrangement", () => Session.OpenWorkspace(WorkspaceKind.Arrangement));
         Step("open-midi-track", () => Session.OpenMidiTrackWorkspace(0));
+        Step("edit-note", () =>
+        {
+            if (Session.EditableProject is not { } editable)
+            {
+                return;
+            }
+
+            var note = editable.AddNote(0, 0, 64, 120, 100);
+            editable.TransformNotes(0, [note.Id], 240, 1);
+            if (!editable.CanUndo)
+            {
+                throw new InvalidOperationException("Undo stack is empty after an edit.");
+            }
+
+            editable.Undo();
+            editable.Redo();
+            editable.SetVelocity(0, [note.Id], 90);
+        });
+        Step("undo-redo-active", () =>
+        {
+            if (Session.EditableProject is null)
+            {
+                return;
+            }
+
+            if (!Session.UndoActive())
+            {
+                throw new InvalidOperationException("Active editor undo failed.");
+            }
+
+            Session.RedoActive();
+        });
         Step("open-diagnostics", () => Session.OpenWorkspace(WorkspaceKind.Diagnostics));
         Step("open-all-tracks", () => Session.OpenWorkspace(WorkspaceKind.AllTracks));
         Step("navigate-back", Session.NavigateBack);

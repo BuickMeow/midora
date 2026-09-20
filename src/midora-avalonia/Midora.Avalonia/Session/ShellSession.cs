@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Midora.Avalonia.Editing;
 using Midora.Avalonia.Import;
 using Midora.Avalonia.Presentation.Rendering;
 using Midora.Avalonia.Views;
@@ -40,7 +41,9 @@ public sealed class ShellSession : INotifyPropertyChanged
     private string _tempoText = "120.00 BPM";
     private readonly DemoTimelineSource _demoSource = DemoTimelineSource.Create();
     private MidiTimelineSource? _midiSource;
+    private EditableMidiProject? _editableProject;
     private ArrangementView? _arrangementView;
+    private MidiTrackView? _activeEditView;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -233,6 +236,8 @@ public sealed class ShellSession : INotifyPropertyChanged
     public void CreateProject(string name)
     {
         _midiSource = null;
+        _editableProject = null;
+        _activeEditView = null;
         Workspaces.Clear();
         _history.Clear();
         _historyIndex = -1;
@@ -273,6 +278,7 @@ public sealed class ShellSession : INotifyPropertyChanged
     {
         if (!HasProject ||
             _midiSource is null ||
+            _editableProject is null ||
             trackIndex < 0 ||
             trackIndex >= _midiSource.Project.Tracks.Count)
         {
@@ -284,7 +290,8 @@ public sealed class ShellSession : INotifyPropertyChanged
         if (workspace is null)
         {
             var view = new MidiTrackView();
-            view.SetProject(_midiSource, trackIndex);
+            view.SetProject(_editableProject, trackIndex);
+            view.Edited += (_, _) => MarkModified();
             string name = trackIndex + 1 < _midiSource.TrackNames.Count
                 ? _midiSource.TrackNames[trackIndex + 1]
                 : $"Track {trackIndex + 1}";
@@ -301,6 +308,13 @@ public sealed class ShellSession : INotifyPropertyChanged
         ActivateWorkspace(workspace, pushHistory: true);
     }
 
+    /// <summary>Focus/undo surface used by the Edit menu for the active track editor.</summary>
+    internal EditableMidiProject? EditableProject => _editableProject;
+
+    public bool UndoActive() => _activeEditView?.Undo() == true;
+
+    public bool RedoActive() => _activeEditView?.Redo() == true;
+
     /// <summary>
     /// Replaces the current project with a real imported SMF project and shows it in the
     /// Arrangement workspace.
@@ -309,6 +323,7 @@ public sealed class ShellSession : INotifyPropertyChanged
     {
         CreateProject(name);
         _midiSource = source;
+        _editableProject = new EditableMidiProject(source.Project);
         ApplyArrangementSource();
 
         if (source.Project.Conductor.FirstOrDefault(
@@ -350,6 +365,8 @@ public sealed class ShellSession : INotifyPropertyChanged
     public void CloseProject()
     {
         _midiSource = null;
+        _editableProject = null;
+        _activeEditView = null;
         _arrangementView = null;
         IsPlaying = false;
         IsCompiling = false;
@@ -486,6 +503,7 @@ public sealed class ShellSession : INotifyPropertyChanged
     private void ActivateWorkspace(WorkspaceTab workspace, bool pushHistory)
     {
         ActiveWorkspace = workspace;
+        _activeEditView = workspace.Content as MidiTrackView;
         if (pushHistory)
         {
             if (_historyIndex >= 0 && _historyIndex < _history.Count - 1)

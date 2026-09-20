@@ -403,3 +403,13 @@
 - 新增 `Views/MidiTrackView`：轨道选择、Notes/Velocity/Events/Conductor 模式切换、缩放与读数。
 - 新增会话 `WorkspaceKind.MidiTrack` 与 `OpenMidiTrackWorkspace`；Arrangement 双击某轨 lane（`LaneActivated`）打开该轨编辑器工作区。
 - 验证：构建 0 警告 0 错误；shell 冒烟（含真实 MIDI 导入与打开音轨工作区）failures=0。
+
+### 2026-09-20（续）Slice E3：编辑模型与手势（已提交）
+
+- 新增 `Editing/EditableMidiProject.cs`（603 行）：可变 Note/Event/Track 模型（确定性 `MidoraId` 分配、排序维护、值域 clamp、拆分、批量变换）与有界 512 条命令的 Undo/Redo。
+- 新增 `Editing/EditableMidiSource.cs`（204 行）：以 `project.Version` 参与指纹、每次查询从活模型重建 Item，编辑后渲染自动失效。
+- 新增 `Controls/ITimelineEditHost.cs` + `TimelineSurface.Editing.cs`（928 行）：Draw 创建/延展、Select 移动与边缘 Resize、Erase、Split、Velocity 涂改、Event 点拖动；事务 Begin/End、Escape 取消与指针捕获。
+- 新增 `Editing/EditableMidiEditHost.cs`（246 行）：Item Id → 可变对象映射、批量移动/擦除/拆分/赋值。
+- `MidiTrackView` 接入可编辑工程与工具（Select/Draw/Erase/Split、S/D/E 快捷键、macOS ⌘Z/⇧⌘Z）、`Edited` 事件与 Undo/Redo；会话持有 `EditableMidiProject`，打开音轨工作区时绑定，编辑即标记 Modified；Edit 菜单 Undo/Redo 路由到活动编辑器。
+- 验证：构建 0 警告 0 错误；shell 冒烟新增真实编辑脚本（AddNote → Transform → Undo → Redo → SetVelocity → 活动编辑器 Undo/Redo）failures=0。
+- **已知缺口**：一次拖动会按增量产生多条 Undo 记录（事务尚未合并命令）；Event tick 平移未进入 Undo；Arrangement 的 Segment preview 仍读导入快照，编辑后不刷新；Velocity/Event 编辑为单点命中，多选收集依赖可见项。

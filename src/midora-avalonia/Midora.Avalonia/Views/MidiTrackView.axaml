@@ -31,6 +31,15 @@
         <ToggleButton x:Name="ConductorButton" Classes="mode" Tag="Conductor" Content="Conductor"
                       IsEnabled="False" ToolTip.Tip="Conductor events" Click="OnModeClick" />
         <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
+        <ToggleButton x:Name="SelectButton" Classes="mode" Tag="Select" Content="Select"
+                      IsEnabled="False" ToolTip.Tip="Select (S)" Click="OnToolClick" />
+        <ToggleButton x:Name="DrawButton" Classes="mode" Tag="Draw" Content="Draw"
+                      IsEnabled="False" ToolTip.Tip="Draw (D)" Click="OnToolClick" />
+        <ToggleButton x:Name="EraseButton" Classes="mode" Tag="Erase" Content="Erase"
+                      IsEnabled="False" ToolTip.Tip="Erase (E)" Click="OnToolClick" />
+        <ToggleButton x:Name="SplitButton" Classes="mode" Tag="Split" Content="Split"
+                      IsEnabled="False" ToolTip.Tip="Split note" Click="OnToolClick" />
+        <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
         <Button x:Name="ZoomOutButton" Classes="icon ghost" Width="26" Height="24" Padding="0"
                 IsEnabled="False" ToolTip.Tip="Zoom out" Click="OnZoomOutClick">
           <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}" />

@@ -2,8 +2,9 @@ using System;
 using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Interactivity;
-using Midora.Avalonia.Import;
+using Midora.Avalonia.Editing;
 using Midora.Avalonia.Presentation.Controls;
 using Midora.Avalonia.Presentation.Rendering;
 
@@ -12,8 +13,8 @@ namespace Midora.Avalonia.Views;
 /// <summary>
 /// Slice E track editor: one imported SMF track shown through the Avalonia
 /// <see cref="TimelineSurface"/> in Notes (piano roll), Velocity, Events, or Conductor mode.
-/// The view is a thin host; rendering, hit-testing, panning, zooming, and selection all live
-/// in the presentation surface. Until <see cref="SetProject"/> is called the surface has no
+/// The view is a thin host; rendering, hit-testing, panning, zooming, selection, and editing all
+/// live in the presentation surface. Until <see cref="SetProject"/> is called the surface has no
 /// source and the footer shows the empty hint.
 /// </summary>
 public partial class MidiTrackView : UserControl
@@ -27,12 +28,14 @@ public partial class MidiTrackView : UserControl
     private const double ConductorLaneHeight = 20d;
     private const double HorizontalZoomStep = 1.25;
     private const string TimelineHint =
-        "Wheel: pan · Ctrl+wheel: zoom · Drag: select · Middle-drag: pan";
+        "Wheel: pan · Ctrl+wheel: zoom · Drag: select · Middle-drag: pan · S/D/E: tool · Ctrl+Z: undo";
 
-    private MidiTimelineSource? _source;
+    private EditableMidiProject? _project;
+    private EditableMidiSource? _source;
     private int _trackIndex;
     private long _ticksPerQuarterNote = DefaultTicksPerQuarterNote;
     private TimelineSurfaceMode _mode = TimelineSurfaceMode.PianoRoll;
+    private TimelineToolMode _tool = TimelineToolMode.Select;
     private bool _suppressTrackSelection;
     private string? _selectionText;
     private string? _laneText;
@@ -44,7 +47,9 @@ public partial class MidiTrackView : UserControl
         Timeline.PointerTickChanged += OnPointerTickChanged;
         Timeline.SelectionChanged += OnSelectionChanged;
         Timeline.LaneActivated += OnLaneActivated;
+        Timeline.EditCommitted += OnEditCommitted;
 
+        SetTool(TimelineToolMode.Select);
         SetToolbarEnabled(false);
         SetMode(TimelineSurfaceMode.PianoRoll);
         UpdateTickReadout(0);
@@ -52,42 +57,137 @@ public partial class MidiTrackView : UserControl
     }
 
     /// <summary>
-    /// Binds an imported MIDI project to the editor. The combo lists every non-conductor
+    /// Raised after the surface commits an edit gesture to the project.
+    /// </summary>
+    public event EventHandler? Edited;
+
+    /// <summary>
+    /// Binds an editable MIDI project to the editor. The combo lists every non-conductor
     /// project track; <paramref name="trackIndex"/> is the zero-based project track index.
     /// </summary>
-    public void SetProject(MidiTimelineSource source, int trackIndex = 0)
+    public void SetProject(EditableMidiProject project, int trackIndex = 0)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        _source = source;
-        _ticksPerQuarterNote = Math.Max(1, source.Project.TicksPerQuarterNote);
-        PopulateTracks(source, trackIndex);
+        ArgumentNullException.ThrowIfNull(project);
+        if (!ReferenceEquals(_project, project))
+        {
+            if (_project is not null)
+            {
+                _project.Changed -= OnProjectChanged;
+            }
+
+            _project = project;
+            _project.Changed += OnProjectChanged;
+        }
+
+        _ticksPerQuarterNote = Math.Max(1, project.Source.TicksPerQuarterNote);
+        PopulateTracks(project, trackIndex);
         SetToolbarEnabled(true);
         ApplyTrack();
     }
 
-    private void PopulateTracks(MidiTimelineSource source, int requestedIndex)
+    public bool Undo()
+    {
+        if (_project is null || !_project.CanUndo)
+        {
+            return false;
+        }
+
+        _project.Undo();
+        Timeline.InvalidateVisual();
+        return true;
+    }
+
+    public bool Redo()
+    {
+        if (_project is null || !_project.CanRedo)
+        {
+            return false;
+        }
+
+        _project.Redo();
+        Timeline.InvalidateVisual();
+        return true;
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (IsTextInputFocused())
+        {
+            base.OnKeyDown(e);
+            return;
+        }
+
+        bool control = OperatingSystem.IsMacOS()
+            ? e.KeyModifiers.HasFlag(KeyModifiers.Meta)
+            : e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        if (control && e.Key == Key.Z)
+        {
+            if (shift ? Redo() : Undo())
+            {
+                e.Handled = true;
+                return;
+            }
+
+            base.OnKeyDown(e);
+            return;
+        }
+
+        if (e.KeyModifiers == KeyModifiers.None)
+        {
+            switch (e.Key)
+            {
+                case Key.S:
+                    SetTool(TimelineToolMode.Select);
+                    e.Handled = true;
+                    return;
+                case Key.D:
+                    SetTool(TimelineToolMode.Draw);
+                    e.Handled = true;
+                    return;
+                case Key.E:
+                    SetTool(TimelineToolMode.Erase);
+                    e.Handled = true;
+                    return;
+            }
+        }
+
+        base.OnKeyDown(e);
+    }
+
+    private void OnProjectChanged(object? sender, EventArgs e) => Timeline.InvalidateVisual();
+
+    private void OnEditCommitted(object? sender, EventArgs e)
+    {
+        Timeline.InvalidateVisual();
+        Edited?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool IsTextInputFocused()
+    {
+        IInputElement? focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        return focused is TextBox or ComboBox;
+    }
+
+    private void PopulateTracks(EditableMidiProject project, int requestedIndex)
     {
         _suppressTrackSelection = true;
         try
         {
             TrackCombo.Items.Clear();
-            for (int index = 0; index < source.TrackCount; index++)
+            for (int index = 0; index < project.TrackCount; index++)
             {
-                int nameIndex = index + 1;
-                string display = nameIndex < source.TrackNames.Count
-                    ? source.TrackNames[nameIndex]
-                    : "Track " + (index + 1).ToString(CultureInfo.InvariantCulture);
                 TrackCombo.Items.Add(new ComboBoxItem
                 {
-                    Content = display,
+                    Content = TrackDisplayName(project, index),
                     Tag = index
                 });
             }
 
-            _trackIndex = source.TrackCount == 0
+            _trackIndex = project.TrackCount == 0
                 ? 0
-                : Math.Clamp(requestedIndex, 0, source.TrackCount - 1);
-            TrackCombo.SelectedIndex = source.TrackCount == 0 ? -1 : _trackIndex;
+                : Math.Clamp(requestedIndex, 0, project.TrackCount - 1);
+            TrackCombo.SelectedIndex = project.TrackCount == 0 ? -1 : _trackIndex;
         }
         finally
         {
@@ -95,29 +195,44 @@ public partial class MidiTrackView : UserControl
         }
     }
 
+    private static string TrackDisplayName(EditableMidiProject project, int trackIndex)
+    {
+        string name = project.Source.Tracks[trackIndex].Name;
+        return string.IsNullOrWhiteSpace(name)
+            ? "Track " + (trackIndex + 1).ToString(CultureInfo.InvariantCulture)
+            : name;
+    }
+
     private void ApplyTrack()
     {
-        if (_source is null)
+        if (_project is null)
         {
+            _source = null;
             Timeline.Source = null;
+            Timeline.EditHost = null;
             RefreshFooter();
             return;
         }
 
-        if (_source.TrackCount == 0)
+        if (_project.TrackCount == 0)
         {
+            _source = null;
             Timeline.Source = null;
+            Timeline.EditHost = null;
             _selectionText = null;
             _laneText = null;
-            FooterText.Text = "No MIDI tracks in this project.";
+            RefreshFooter();
             return;
         }
 
-        _trackIndex = Math.Clamp(_trackIndex, 0, _source.TrackCount - 1);
+        _trackIndex = Math.Clamp(_trackIndex, 0, _project.TrackCount - 1);
         _selectionText = null;
         _laneText = null;
 
-        Timeline.Source = _source.CreateTrackSource(_trackIndex);
+        EditableMidiSource source = new(_project, _trackIndex);
+        _source = source;
+        Timeline.Source = source;
+        Timeline.EditHost = new EditableMidiEditHost(_project, source, _ticksPerQuarterNote);
         Timeline.PreviewProvider = null;
         Timeline.TicksPerQuarterNote = _ticksPerQuarterNote;
         Timeline.TrackNames = static lane =>
@@ -141,12 +256,12 @@ public partial class MidiTrackView : UserControl
     /// </summary>
     private TimelineSurfaceMode DefaultModeForTrack(int trackIndex)
     {
-        if (_source is null || trackIndex < 0 || trackIndex >= _source.TrackCount)
+        if (_project is null || trackIndex < 0 || trackIndex >= _project.TrackCount)
         {
             return TimelineSurfaceMode.PianoRoll;
         }
 
-        ImportedMidiTrack track = _source.Project.Tracks[trackIndex];
+        EditableMidiTrack track = _project.Tracks[trackIndex];
         if (track.Notes.Count != 0)
         {
             return TimelineSurfaceMode.PianoRoll;
@@ -175,6 +290,17 @@ public partial class MidiTrackView : UserControl
             : NotesLaneHeight;
     }
 
+    private void SetTool(TimelineToolMode tool)
+    {
+        _tool = tool;
+        Timeline.ToolMode = tool;
+        SelectButton.IsChecked = tool == TimelineToolMode.Select;
+        DrawButton.IsChecked = tool == TimelineToolMode.Draw;
+        EraseButton.IsChecked = tool == TimelineToolMode.Erase;
+        SplitButton.IsChecked = tool == TimelineToolMode.Split;
+        RefreshFooter();
+    }
+
     private void SetToolbarEnabled(bool enabled)
     {
         TrackCombo.IsEnabled = enabled;
@@ -182,13 +308,17 @@ public partial class MidiTrackView : UserControl
         VelocityButton.IsEnabled = enabled;
         EventsButton.IsEnabled = enabled;
         ConductorButton.IsEnabled = enabled;
+        SelectButton.IsEnabled = enabled;
+        DrawButton.IsEnabled = enabled;
+        EraseButton.IsEnabled = enabled;
+        SplitButton.IsEnabled = enabled;
         ZoomOutButton.IsEnabled = enabled;
         ZoomInButton.IsEnabled = enabled;
     }
 
     private void OnTrackSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_suppressTrackSelection || _source is null)
+        if (_suppressTrackSelection || _project is null)
         {
             return;
         }
@@ -209,6 +339,17 @@ public partial class MidiTrackView : UserControl
         }
 
         SetMode(mode);
+    }
+
+    private void OnToolClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton { Tag: string tag }
+            || !Enum.TryParse(tag, out TimelineToolMode tool))
+        {
+            return;
+        }
+
+        SetTool(tool);
     }
 
     private void OnZoomInClick(object? sender, RoutedEventArgs e) =>
@@ -256,20 +397,35 @@ public partial class MidiTrackView : UserControl
             + "." + (tick % ticksPerQuarterNote).ToString("000", CultureInfo.InvariantCulture);
     }
 
+    private string ToolLabel => _tool switch
+    {
+        TimelineToolMode.Draw => "Tool: Draw",
+        TimelineToolMode.Erase => "Tool: Erase",
+        TimelineToolMode.Split => "Tool: Split",
+        _ => "Tool: Select"
+    };
+
     private void RefreshFooter()
     {
-        if (_source is null)
+        string tool = ToolLabel;
+        if (_project is null)
         {
-            FooterText.Text = "No MIDI project loaded.";
+            FooterText.Text = tool + " · No MIDI project loaded.";
+            return;
+        }
+
+        if (_project.TrackCount == 0)
+        {
+            FooterText.Text = tool + " · No MIDI tracks in this project.";
             return;
         }
 
         if (_selectionText is { } selection)
         {
-            FooterText.Text = selection;
+            FooterText.Text = tool + " · " + selection;
             return;
         }
 
-        FooterText.Text = _laneText ?? TimelineHint;
+        FooterText.Text = tool + " · " + (_laneText ?? TimelineHint);
     }
 }

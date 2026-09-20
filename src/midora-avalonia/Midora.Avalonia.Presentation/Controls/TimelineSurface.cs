@@ -323,6 +323,12 @@ public sealed partial class TimelineSurface : Control
         base.OnPointerPressed(e);
         Focus();
         PointerPoint point = e.GetCurrentPoint(this);
+        if (OnEditingPointerPressed(e, point))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (e.ClickCount == 2)
         {
             RaiseLaneActivated(point.Position);
@@ -377,6 +383,11 @@ public sealed partial class TimelineSurface : Control
     {
         base.OnPointerMoved(e);
         Point position = e.GetPosition(this);
+        if (OnEditingPointerMoved(e, position))
+        {
+            return;
+        }
+
         if (_isPanning)
         {
             if (TryCreateViewport(out TimelineViewport panViewport)
@@ -422,6 +433,12 @@ public sealed partial class TimelineSurface : Control
         {
             _isPanning = false;
             e.Pointer.Capture(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (OnEditingPointerReleased(e, e.GetPosition(this)))
+        {
             e.Handled = true;
             return;
         }

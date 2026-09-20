@@ -4,6 +4,14 @@
              RequestedThemeVariant="Dark">
   <Application.Resources>
     <ResourceDictionary>
+      <!-- Midora accent overrides: FluentTheme derives its accent brushes from these. -->
+      <Color x:Key="SystemAccentColor">#E5484D</Color>
+      <Color x:Key="SystemAccentColorDark1">#C7373C</Color>
+      <Color x:Key="SystemAccentColorDark2">#8F2429</Color>
+      <Color x:Key="SystemAccentColorDark3">#6E1B1F</Color>
+      <Color x:Key="SystemAccentColorLight1">#F2555A</Color>
+      <Color x:Key="SystemAccentColorLight2">#F57A7E</Color>
+      <Color x:Key="SystemAccentColorLight3">#F8A0A3</Color>
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://Midora.Avalonia/Themes/Palette.axaml" />
         <ResourceInclude Source="avares://Midora.Avalonia/Themes/FluentIcons.axaml" />

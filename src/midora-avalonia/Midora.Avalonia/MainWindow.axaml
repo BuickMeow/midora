@@ -219,9 +219,22 @@
       </Grid>
     </Border>
 
-    <!-- Transient notice banner (hidden until a notice exists). -->
-    <Border Grid.Row="2" Padding="10,6" Background="{DynamicResource Brush.Red.Subtle}"
-            BorderBrush="{DynamicResource Brush.Red.Dark}" BorderThickness="0,0,0,1" IsVisible="False" />
+    <!-- Transient notice banner (compile/import/status summaries). -->
+    <Border Grid.Row="2" Padding="10,6" Background="{DynamicResource Brush.Surface.1}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
+            IsVisible="{Binding HasNotice}">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+        <controls:FluentIcon Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center"
+                             Foreground="{DynamicResource Brush.Success}"
+                             Data="{StaticResource Fluent.CheckmarkCircle20Regular}" />
+        <TextBlock Grid.Column="1" VerticalAlignment="Center" TextWrapping="Wrap"
+                   Text="{Binding Notice}" />
+        <Button Grid.Column="2" Classes="ghost" Height="22" Margin="10,0,0,0" Padding="8,0"
+                Content="View Full Message" Click="OnViewFullNoticeClick" />
+        <Button Grid.Column="3" Classes="ghost" Height="22" Margin="10,0,0,0" Padding="8,0"
+                Content="Dismiss" Click="OnDismissNoticeClick" />
+      </Grid>
+    </Border>
 
     <!-- Workspace area: welcome state until a Project session exists. -->
     <Grid Grid.Row="3">
@@ -273,7 +286,7 @@
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{Binding IssueBrush}" />
-          <Button Classes="icon ghost" Height="22" Padding="0"
+          <Button Classes="ghost" Height="22" Padding="0"
                   IsEnabled="{Binding HasProject}" Click="OnOpenDiagnosticsClick"
                   ToolTip.Tip="Open Diagnostics">
             <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding IssueSummary}" />
@@ -282,6 +295,12 @@
           <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding CompileState}" />
           <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
           <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding SoundFontState}" />
+          <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}"
+                  IsVisible="{Binding HasProject}" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding ModifiedState}"
+                     IsVisible="{Binding HasProject}" />
+          <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding PlaybackState}" />
         </StackPanel>
         <TextBlock Grid.Column="1" Classes="caption" VerticalAlignment="Center" Text="{Binding StatusText}" />
       </Grid>

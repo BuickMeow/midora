@@ -2,24 +2,25 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="using:Midora.Avalonia.Controls"
              xmlns:presentation="using:Midora.Avalonia.Presentation.Controls"
+             xmlns:views="using:Midora.Avalonia.Views"
              x:Class="Midora.Avalonia.Views.ArrangementView"
              x:CompileBindings="False">
   <Grid RowDefinitions="38,*,22" Background="{DynamicResource Brush.Surface.0}">
     <Border Background="{DynamicResource Brush.Surface.1}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0" Spacing="3">
-        <Button Classes="icon ghost" Width="26" Height="24" Padding="0" ToolTip.Tip="Draw (D)">
+        <ToggleButton Classes="tool" Width="26" Height="24" Padding="0" ToolTip.Tip="Draw (D)">
           <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Pen20Regular}" />
-        </Button>
-        <Button Classes="icon ghost" Width="26" Height="24" Padding="0" ToolTip.Tip="Select (S)">
+        </ToggleButton>
+        <ToggleButton Classes="tool" Width="26" Height="24" Padding="0" IsChecked="True" ToolTip.Tip="Select (S)">
           <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.SelectObject20Regular}" />
-        </Button>
-        <Button Classes="icon ghost" Width="26" Height="24" Padding="0" ToolTip.Tip="Split">
+        </ToggleButton>
+        <ToggleButton Classes="tool" Width="26" Height="24" Padding="0" ToolTip.Tip="Split">
           <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.SplitVertical20Regular}" />
-        </Button>
-        <Button Classes="icon ghost" Width="26" Height="24" Padding="0" ToolTip.Tip="Erase (E)">
+        </ToggleButton>
+        <ToggleButton Classes="tool" Width="26" Height="24" Padding="0" ToolTip.Tip="Erase (E)">
           <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Eraser20Regular}" />
-        </Button>
+        </ToggleButton>
         <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
         <Button Classes="icon ghost" Width="26" Height="24" Padding="0" ToolTip.Tip="Zoom out" Click="OnZoomOutClick">
           <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}" />
@@ -29,15 +30,33 @@
         </Button>
         <TextBlock x:Name="ZoomText" Classes="caption" VerticalAlignment="Center" Margin="6,0,0,0" Text="100%" />
         <Border Width="1" Height="18" Margin="8,0" Background="{DynamicResource Brush.Border}" />
+        <TextBlock x:Name="TickChip" Classes="mono" MinWidth="70" VerticalAlignment="Center"
+                   TextAlignment="Right" Text="(0)" />
+        <ToggleButton x:Name="GridToggle" Height="24" Margin="8,0,3,0" Padding="9,0" Content="Grid"
+                      IsChecked="{Binding #Timeline.GridVisible, Mode=TwoWay}" />
+        <ToggleButton x:Name="SnapToggle" Height="24" Margin="0,0,3,0" Padding="9,0" Content="Snap"
+                      IsChecked="True" ToolTip.Tip="Enable/Disable Snap (A)" />
+        <ComboBox x:Name="SubdivisionBox" Width="76" Height="24" Margin="0,0,3,0" SelectedIndex="1">
+          <ComboBoxItem Content="1/4" />
+          <ComboBoxItem Content="1/8" />
+          <ComboBoxItem Content="1/16" />
+        </ComboBox>
+        <TextBlock Classes="caption" VerticalAlignment="Center" Margin="7,0,5,0" Text="Length" />
+        <TextBox x:Name="LengthBox" Width="64" Height="24" Padding="5,0" Text="1920" />
+        <Border Width="1" Height="18" Margin="8,0" Background="{DynamicResource Brush.Border}" />
         <TextBlock x:Name="TickText" Classes="mono" VerticalAlignment="Center" Text="Bar 1.1.000" />
       </StackPanel>
     </Border>
 
-    <presentation:TimelineSurface x:Name="Timeline"
-                                  Grid.Row="1"
-                                  LaneHeight="28"
-                                  TicksPerQuarterNote="480"
-                                  GridVisible="True" />
+    <Grid Grid.Row="1" ColumnDefinitions="190,*">
+      <views:LaneHeaderStrip x:Name="LaneHeaders" Grid.Column="0" />
+      <presentation:TimelineSurface x:Name="Timeline"
+                                    Grid.Column="1"
+                                    LaneHeight="28"
+                                    TicksPerQuarterNote="480"
+                                    GridVisible="True"
+                                    ShowTrackNames="False" />
+    </Grid>
 
     <Border Grid.Row="2" Background="{DynamicResource Brush.Surface.1}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">

@@ -190,9 +190,13 @@ public sealed partial class TimelineSurface
         bool selected,
         bool hovered)
     {
-        Rect bounds = new(left, laneTop, Math.Max(1, right - left), viewport.LaneHeight);
+        Rect bounds = new(
+            left + 1,
+            laneTop + 1,
+            Math.Max(1, right - left - 2),
+            Math.Max(1, viewport.LaneHeight - 2));
         context.DrawRectangle(
-            selected ? SelectedSegmentBrush : SegmentBrush,
+            SegmentFillFor(item.AccentColor, selected),
             BorderPen,
             bounds,
             2,

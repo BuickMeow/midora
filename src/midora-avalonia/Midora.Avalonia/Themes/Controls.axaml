@@ -200,6 +200,26 @@
     <Setter Property="Foreground" Value="#8A939F" />
   </Style>
 
+  <!-- Timeline tool toggles: active tool uses the Midora red accent. -->
+
+  <Style Selector="ToggleButton.tool">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="CornerRadius" Value="3" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+  </Style>
+
+  <Style Selector="ToggleButton.tool:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface.4}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+  </Style>
+
+  <Style Selector="ToggleButton.tool:checked">
+    <Setter Property="Background" Value="{DynamicResource Brush.Red.Subtle}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Red.Hover}" />
+  </Style>
+
   <!-- Menu: keep the FluentTheme mechanics, tone down to the approved palette. -->
 
   <Style Selector="Menu">

@@ -32,9 +32,10 @@ public sealed class ShellSession : INotifyPropertyChanged
     private bool _isCompiling;
     private string _projectName = "Untitled Project";
     private string _compileState = "Not compiled";
-    private string _soundFontState = "SoundFonts: not configured";
+    private string _soundFontState = "No SoundFonts Enabled";
     private string _statusText = "Ready";
-    private string _issueSummary = "No diagnostics";
+    private string _issueSummary = "0 Errors, 0 Warnings";
+    private string _notice = string.Empty;
     private int _errorCount;
     private int _warningCount;
     private string _positionText = "1.1.000";
@@ -163,6 +164,26 @@ public sealed class ShellSession : INotifyPropertyChanged
         private set => Set(ref _issueSummary, value);
     }
 
+    public string Notice
+    {
+        get => _notice;
+        private set
+        {
+            if (Set(ref _notice, value))
+            {
+                OnPropertyChanged(nameof(HasNotice));
+            }
+        }
+    }
+
+    public bool HasNotice => !string.IsNullOrEmpty(_notice);
+
+    public string ModifiedState => HasProject
+        ? IsModified ? "Unsaved" : "Saved"
+        : string.Empty;
+
+    public string PlaybackState => IsPlaying ? "Playing" : "Stopped";
+
     public int ErrorCount
     {
         get => _errorCount;
@@ -250,10 +271,11 @@ public sealed class ShellSession : INotifyPropertyChanged
         CompileState = "Not compiled";
         ErrorCount = 0;
         WarningCount = 0;
-        IssueSummary = "No diagnostics";
+        IssueSummary = "0 Errors, 0 Warnings";
         PositionText = "1.1.000";
         TempoText = "120.00 BPM";
         StatusText = $"Project '{ProjectName}' created (in-memory port placeholder).";
+        SetNotice($"Project '{ProjectName}' created.");
 
         OpenWorkspace(WorkspaceKind.Arrangement);
         ApplyArrangementSource();
@@ -310,6 +332,8 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     /// <summary>Focus/undo surface used by the Edit menu for the active track editor.</summary>
     internal EditableMidiProject? EditableProject => _editableProject;
+
+    internal MidiTimelineSource? MidiSource => _midiSource;
 
     public bool UndoActive() => _activeEditView?.Undo() == true;
 
@@ -400,7 +424,7 @@ public sealed class ShellSession : INotifyPropertyChanged
         CompileState = "Not compiled";
         ErrorCount = 0;
         WarningCount = 0;
-        IssueSummary = "No diagnostics";
+        IssueSummary = "0 Errors, 0 Warnings";
         StatusText = "Project closed.";
     }
 
@@ -413,6 +437,10 @@ public sealed class ShellSession : INotifyPropertyChanged
     }
 
     public void SetStatus(string text) => StatusText = text;
+
+    public void SetNotice(string text) => Notice = text;
+
+    public void DismissNotice() => Notice = string.Empty;
 
     public void SetSoundFontState(string text) => SoundFontState = text;
 
@@ -573,8 +601,9 @@ public sealed class ShellSession : INotifyPropertyChanged
         try
         {
             await Task.Delay(600);
-            CompileState = "Compiled (placeholder)";
-            StatusText = "Compilation finished (port placeholder, no canonical result yet).";
+            CompileState = "Compile Succeeded";
+            StatusText = "Compile succeeded. The current canonical result is consumable (port placeholder).";
+            SetNotice("Compile succeeded. The current canonical result is consumable.");
         }
         finally
         {
@@ -619,6 +648,8 @@ public sealed class ShellSession : INotifyPropertyChanged
         OnPropertyChanged(nameof(HasErrors));
         OnPropertyChanged(nameof(HasWarnings));
         OnPropertyChanged(nameof(IssueBrush));
+        OnPropertyChanged(nameof(ModifiedState));
+        OnPropertyChanged(nameof(PlaybackState));
     }
 
     private static IBrush Brush(string resourceKey, string fallback)

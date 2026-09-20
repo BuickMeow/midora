@@ -239,6 +239,7 @@ public partial class MidiTrackView : UserControl
             lane < 256 ? "Ch " + lane.ToString(CultureInfo.InvariantCulture) : null;
         Timeline.FirstPitch = DefaultFirstPitch;
         Timeline.PitchCount = DefaultPitchCount;
+        Timeline.FirstLane = DefaultFirstPitch;
         Timeline.ValueMinimum = DefaultValueMinimum;
         Timeline.ValueMaximum = DefaultValueMaximum;
         Timeline.TickSpan = Math.Max(1, _ticksPerQuarterNote * 4L);

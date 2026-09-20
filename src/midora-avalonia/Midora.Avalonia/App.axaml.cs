@@ -31,6 +31,19 @@ public partial class App : Application
                     desktop.Shutdown(exitCode);
                 };
             }
+            else
+            {
+                var reviewMidi = Environment.GetEnvironmentVariable("MIDORA_MIDI_OPEN");
+                if (!string.IsNullOrEmpty(reviewMidi) && File.Exists(reviewMidi))
+                {
+                    mainWindow.Opened += (_, _) => mainWindow.OpenMidiForReview(reviewMidi);
+                }
+
+                if (int.TryParse(Environment.GetEnvironmentVariable("MIDORA_OPEN_TRACK"), out int trackIndex))
+                {
+                    mainWindow.Opened += (_, _) => mainWindow.OpenTrackForReview(trackIndex);
+                }
+            }
         }
 
         base.OnFrameworkInitializationCompleted();

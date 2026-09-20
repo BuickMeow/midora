@@ -66,6 +66,43 @@ public sealed partial class TimelineSurface
         FontWeight.Normal,
         FontStretch.Normal);
 
+    private readonly Dictionary<(uint Accent, bool Selected), SolidColorBrush> _segmentFillCache = [];
+
+    /// <summary>
+    /// Segment band fill derived from the track accent color, darkened for the arrangement
+    /// background. Falls back to the fixed segment gray when no accent is present.
+    /// </summary>
+    private SolidColorBrush SegmentFillFor(uint accent, bool selected)
+    {
+        if (accent == 0)
+        {
+            return selected ? SelectedSegmentBrush : SegmentBrush;
+        }
+
+        if (_segmentFillCache.TryGetValue((accent, selected), out SolidColorBrush? cached))
+        {
+            return cached;
+        }
+
+        if (_segmentFillCache.Count > 64)
+        {
+            _segmentFillCache.Clear();
+        }
+
+        byte alpha = (byte)(accent >> 24);
+        double factor = selected ? 0.8 : 0.55;
+        byte red = (byte)Math.Clamp((byte)(accent >> 16) * factor, 0, 255);
+        byte green = (byte)Math.Clamp((byte)(accent >> 8) * factor, 0, 255);
+        byte blue = (byte)Math.Clamp((byte)accent * factor, 0, 255);
+        var brush = new SolidColorBrush(global::Avalonia.Media.Color.FromArgb(
+            alpha == 0 ? (byte)0xFF : alpha,
+            red,
+            green,
+            blue));
+        _segmentFillCache[(accent, selected)] = brush;
+        return brush;
+    }
+
     private bool TryCreateViewport(out TimelineViewport viewport)
     {
         viewport = default;

@@ -47,6 +47,7 @@ public sealed partial class TimelineSurface : Control
             FirstLaneProperty,
             LaneHeightProperty,
             GridVisibleProperty,
+            ShowTrackNamesProperty,
             TicksPerQuarterNoteProperty,
             SelectedIdProperty,
             TrackNamesProperty,
@@ -94,6 +95,10 @@ public sealed partial class TimelineSurface : Control
 
     public static readonly StyledProperty<bool> GridVisibleProperty =
         AvaloniaProperty.Register<TimelineSurface, bool>(nameof(GridVisible), defaultValue: true);
+
+    /// <summary>Draws lane names inside the content; hosts with a header column set this false.</summary>
+    public static readonly StyledProperty<bool> ShowTrackNamesProperty =
+        AvaloniaProperty.Register<TimelineSurface, bool>(nameof(ShowTrackNames), defaultValue: true);
 
     public static readonly StyledProperty<long> TicksPerQuarterNoteProperty =
         AvaloniaProperty.Register<TimelineSurface, long>(
@@ -164,6 +169,12 @@ public sealed partial class TimelineSurface : Control
     {
         get => GetValue(GridVisibleProperty);
         set => SetValue(GridVisibleProperty, value);
+    }
+
+    public bool ShowTrackNames
+    {
+        get => GetValue(ShowTrackNamesProperty);
+        set => SetValue(ShowTrackNamesProperty, value);
     }
 
     public long TicksPerQuarterNote
@@ -263,7 +274,10 @@ public sealed partial class TimelineSurface : Control
             DrawGrid(context, viewport, width, height);
         }
 
-        DrawTrackNames(context, viewport, width);
+        if (ShowTrackNames)
+        {
+            DrawTrackNames(context, viewport, width);
+        }
         if (Source is not null)
         {
             DrawItems(context, viewport, height);

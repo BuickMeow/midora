@@ -69,6 +69,8 @@ public partial class ArrangementView : UserControl
     private void ApplySource(bool preserveView = false)
     {
         long maximum = Math.Max(1, _source.MaximumEndTick);
+        LaneHeaders.LaneHeight = Timeline.LaneHeight;
+        LaneHeaders.TrackNames = _trackNames;
         Timeline.TicksPerQuarterNote = _ticksPerQuarterNote;
         Timeline.PreviewProvider = _previewProvider;
         Timeline.TrackNames = lane =>
@@ -77,7 +79,7 @@ public partial class ArrangementView : UserControl
         {
             Timeline.StartTick = 0;
             Timeline.SelectedId = null;
-            Timeline.TickSpan = Math.Clamp(_ticksPerQuarterNote * 16L, 1, maximum);
+            Timeline.TickSpan = Math.Clamp(_ticksPerQuarterNote * 64L, 1, maximum);
         }
         Timeline.Source = _source;
         UpdateZoomText();
@@ -104,6 +106,7 @@ public partial class ArrangementView : UserControl
         long bar = tick / ticksPerBar + 1;
         long beat = tick % ticksPerBar / _ticksPerQuarterNote + 1;
         TickText.Text = $"Bar {bar}.{beat}.{tick % _ticksPerQuarterNote:000}";
+        TickChip.Text = $"({tick})";
         HintText.Text = $"Tick {tick} · Bar {bar} · Wheel: pan · Ctrl+wheel: zoom · Drag: select";
     }
 }

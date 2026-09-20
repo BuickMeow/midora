@@ -27,6 +27,26 @@ public partial class MainWindow : Window
 
     internal ShellSession Session { get; }
 
+    /// <summary>Review-only entry point used by the <c>MIDORA_MIDI_OPEN</c> env var.</summary>
+    internal void OpenMidiForReview(string path)
+    {
+        try
+        {
+            var project = ImportedMidiProject.Parse(path);
+            Session.CreateProjectFromMidi(
+                System.IO.Path.GetFileNameWithoutExtension(path),
+                project);
+        }
+        catch (Exception ex)
+        {
+            Session.SetStatus($"MIDI open failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Review-only entry point used by the <c>MIDORA_OPEN_TRACK</c> env var.</summary>
+    internal void OpenTrackForReview(int trackIndex) =>
+        Session.OpenMidiTrackWorkspace(trackIndex);
+
     // ---- Platform chrome -------------------------------------------------
 
     protected override void OnOpened(EventArgs e)
@@ -92,6 +112,16 @@ public partial class MainWindow : Window
     private void OnCloseClick(object? sender, RoutedEventArgs e) => Close();
 
     private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
+
+    private async void OnViewFullNoticeClick(object? sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(Session.Notice))
+        {
+            await MessageDialog.ShowAsync(this, Session.Notice, "Notice");
+        }
+    }
+
+    private void OnDismissNoticeClick(object? sender, RoutedEventArgs e) => Session.DismissNotice();
 
     // ---- File menu / command bar ----------------------------------------
 
@@ -328,7 +358,7 @@ public partial class MainWindow : Window
         await dialog.ShowDialog(this);
         if (dialog.Result is not null)
         {
-            Session.SetSoundFontState("SoundFonts: loaded (placeholder)");
+            Session.SetSoundFontState("1 SoundFont Enabled (placeholder)");
             Session.SetStatus("Application Preferences saved (in-memory placeholder).");
         }
     }
@@ -446,6 +476,29 @@ public partial class MainWindow : Window
             }
         }
         Step("open-arrangement", () => Session.OpenWorkspace(WorkspaceKind.Arrangement));
+        Step("segment-preview-content", () =>
+        {
+            if (Session.MidiSource is not { } source)
+            {
+                return;
+            }
+
+            var scratch = new List<Presentation.Rendering.TimelineRenderItem>();
+            source.QueryInto(0, long.MaxValue / 2, 2, 3, scratch);
+            var segment = scratch.FirstOrDefault(
+                item => item.Kind == Presentation.Rendering.TimelineItemKind.Segment);
+            if (segment.Id.Value == 0)
+            {
+                throw new InvalidOperationException("No arrangement segment found on lane 2.");
+            }
+
+            var preview = source.GetPreviewSource(segment);
+            if (!preview.HasNoteContent)
+            {
+                throw new InvalidOperationException(
+                    $"Segment preview on lane 2 has no notes (segment {segment.StartTick}..{segment.EndTick}).");
+            }
+        });
         Step("open-midi-track", () => Session.OpenMidiTrackWorkspace(0));
         Step("edit-note", () =>
         {

@@ -420,3 +420,13 @@
 - `EditableMidiEditHost` 转发事务并改用 `TransformEvents`；事件拖动现在可撤销且触发 `Changed`。
 - `MidiTimelineSource` 支持 `liveProject` 叠加：Arrangement 的 Segment preview 与总览按 `liveProject.Version` 读取当前可编辑轨道内容；`ArrangementView.SetSource(..., preserveView: true)` 让编辑后刷新不重置 zoom/选择；会话在 `Changed` 时刷新 Arrangement 并标记 Modified。
 - 验证：构建 0 警告 0 错误；冒烟新增「两次增量拖动合并且一次 Undo 回到起点」断言，failures=0。
+
+### 2026-09-20（续）Slice F：视觉对齐轮（已提交，截图驱动）
+
+- **验证方法（用户要求）**：`MIDORA_MIDI_OPEN=<path>` 启动即导入真实 MIDI、`MIDORA_OPEN_TRACK=<n>` 直接打开音轨编辑器；用 `screencapture -x` 截图并以 PIL 做像素采样（确认轨道色带、音符预览像素、排查默认蓝色）。
+- **全局强调色**：`App.axaml` 覆盖 `SystemAccentColor` 系列为 Midora 红，FluentTheme 的 Tab 选中、ToggleButton、ComboBox 等不再出现默认蓝；像素扫描确认主窗口蓝色像素只来自轨道色带（非 UI 默认色）。
+- **状态栏/通知**：状态栏改为 `0 Errors, 0 Warnings | Not compiled | No SoundFonts Enabled | Saved/Unsaved | Stopped/Playing`；新增通知条（绿色对勾 + 文本 + `View Full Message`/`Dismiss`），编译与导入会写入通知。修复诊断摘要按钮被 `.icon` 固定宽度截断的问题。
+- **Arrangement 视觉**：新增 190px `LaneHeaderStrip`（轨道色条、名称、`P1 ChN Melodic`、M/S 芯片、空轨不再画头）；Segment 按 `AccentColor` 着色（暗化 0.55/选中 0.8）并带 1px 间隙；内容区不再重复画 lane 名（`ShowTrackNames=false`）。
+- **工具栏**：工具改为选中红底的 ToggleButton，新增指针 tick 读数 `(tick)`、`Grid`、`Snap`、`1/8` 细分、`Length 1920`、缩放与 Bar 读数；默认显示 16 小节。
+- **钢琴卷帘修复**：lane 约定改为绝对音高（`FirstLane = FirstPitch`，`GetPitchForLane(lane) = lane`），截图确认音符矩形恢复显示；`⌘Z/⇧⌘Z` 撤销、Select/Draw/Erase/Split 工具均已在音轨编辑器工作。
+- **仍存差距（像素级复刻未完成）**：钢琴卷帘缺小节标尺与左侧钢琴键盘；Arrangement 仍缺 WPF 的 Segment tabs（`MIDI Segment: …`）、Conductor 编辑器、ruler marker 标签、All Tracks/Onion 按钮；M/S 芯片不可点击（运行期 Mute/Solo 未接线）；Arrangement 工具按钮无编辑行为（编辑目前只在音轨编辑器）；Notice 语义与 WPF 的编译/任务流程仍未完全一致。

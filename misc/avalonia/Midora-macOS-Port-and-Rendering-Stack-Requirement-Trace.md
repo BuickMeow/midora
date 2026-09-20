@@ -1,0 +1,367 @@
+# Midora macOS 移植与大规模时间线渲染技术栈 — Requirement Trace / 待决策问题
+
+状态：**进行中（已定：回贡上游 + Avalonia 外壳 + Skia 渲染，C# 重实现；SRS/ADR 仍待提交，验收门待定）**
+创建日期：2026-09-20
+参与者：
+
+- 上游 Midora 作者：Zacksony（公开仓库 `https://github.com/Zacksony/midora`）
+- 第三方移植开发者：节能降耗（`yinhe` 作者，Rust + egui + wgpu 高性能 MIDI 编辑器，仓库 `/Users/jieneng/Documents/GitHub/yinhe`）
+- 本记录由移植工作区维护，不修改上游 SRS、不修改源码、不运行发布
+
+依据：
+
+- SRS §1.4.1（目标平台）、§21.2（产品级排除项）、§21.3（实现自由度）、§21.4（范围变更规则）、§21.6（第三方许可发布门）
+- `AGENTS.md` §1（事实来源与待决问题记录）、§3（初版范围护栏）、§4（音频后端约束）、§8（GPU backend 需另立 ADR）
+- ADR-UI-018:125（CPU raster backend 可替换；GPU 需基准证明）、ADR-UI-020:143（GPU instance renderer 需新 ADR + 性能门 + 许可证审计）
+- `misc/Midora-Extreme-Timeline-Performance-Requirement-Trace.md`（Midora 现有大规模实测）
+- 外部对照：`/Users/jieneng/Documents/GitHub/yinhe`（只读调查；AGPL-3.0；其数据只作为参考事实，不构成 Midora 需求）
+
+---
+
+## 0. 事实分类（SRS 规定 / 源码现状 / 外部对照 / 设计推断 / 未决问题）
+
+### 0.1 SRS 已规定（上游正式范围，不得静默改变）
+
+- 初版固定 Windows Desktop、.NET 10、WPF、`win-x64`；不发布 x86、Arm64 或 AnyCPU（SRS §1.4.1、§21.2）。
+- 初版明确排除 macOS、Linux、Web、移动端、跨平台 UI 框架（SRS `01-...:149-154`、`21-...:27-28`）。
+- 范围变更必须走 §21.4：记录验证事实与失败条件 → 明确受影响条款 → 提出替代方案和用户可见影响 → 修订 SRS → 保持历史可追踪。
+- BASS / BASSMIDI / BASSWASAPI 版本与 SHA-256 固定，仓库不提交 DLL；第三方分发前必须完成许可核验（SRS §21.6；`AGENTS.md` §4）。
+- 渲染实现属于实现自由度（SRS §21.3:63）；但平台/RID、确定性、canonical 与音频语义不属于。
+- 无 Enabled SoundFont 时允许打开、保存、编译和 MIDI 导出，只阻止播放/预览/音频渲染（`AGENTS.md` §4）→ **macOS 首阶段可以完全不做音频而仍形成可用闭环**。
+
+### 0.2 Midora 源码/仓库现状（核实）
+
+1. 时间线内容渲染已是「后台 CPU 软件光栅（Pbgra32 `byte[]`）→ 冻结 `BitmapSource` tile → UI 线程贴图」，带 LOD 聚合、分页数据源、256 MiB LRU、2～4 worker、过期结果丢弃（`Midora.Desktop.Presentation/Rendering/TimelineRasterCache.cs:67-80, 568-1086, 2564-3087`；ADR-UI-018/019/020/021）。
+2. WPF 承重点集中在宿主层：`OnRender(DrawingContext)`、`BitmapSource` 交付、`DispatcherPriority.Render`、`DependencyProperty + AffectsRender`、`VisualTreeHelper.GetDpi`/`DpiScale`、`RenderOptions`（`Controls/TimelineSurface.cs:1930` 等）。
+3. Midora 已有实测（`misc/Midora-Extreme-Timeline-Performance-Requirement-Trace.md` §7/§8）：真实 1800 万 Note SMF 导入 ≈16 s；180 万 Note Segment 冷帧 15～30 ms，`OnRender` content p50 0.33～0.87 ms；60,000 Note 选择编辑约 0.1～1.5 s。**Midora 侧尚无「1000 万音符整体视图/连续 pan-zoom」的公开基准**。
+4. 平台耦合（macOS 影响面）：Desktop UI ≈100,925 行 C# + 8,191 行 XAML；实时音频唯一生产实现为 BASSWASAPI；Worker 为 win-x64 Native AOT + Job Objects + Windows-only 命名共享内存/命名管道；路径策略假定固定盘/大小写不敏感/Windows 文件名合法化；大量测试为 WPF STA/Windows-only。
+5. 本机环境：`global.json` 固定 SDK `10.0.400` 且 `rollForward: disable`；本机只有 10.0.201/302 → 当前无法构建。用户已表示可升级 SDK。
+
+### 0.3 外部对照：yinhe 渲染栈（参考事实，非 Midora 需求）
+
+来源：`/Users/jieneng/Documents/GitHub/yinhe` 只读调查（AGPL-3.0，无 CLA/双许可）。
+
+- 栈：Rust 2024 + `eframe/egui 0.36.1` + `wgpu 30.0.0`；macOS 是一等目标（CI 出 dmg，Metal 路径），另有 Android。
+- 集成：编辑器把内容渲染到 offscreen texture，再经 `register_native_texture` + `painter.image` 合成进 egui（`crates/yinhe-egui/src/render_context.rs:183-233, 339-379`）；网格/键盘/标尺/文字/选框仍由 egui painter 绘制。
+- 大规模音符路径：**语义实例 + per-key GPU compute cull（无 atomics、Hillis-Steele 前缀和）+ 4B 可见索引 indirect multi-draw + 由 ppu 选择的 LOD 摘要段**（`crates/yinhe-wgpu/src/cull.wgsl:1-198`、`cull/state.rs:644-730, 867-908`、`pianoroll/summary.rs:18-50`；实例布局 12B/音符见 `vertex.rs:47-157`）。
+- 文档化数据（注意口径）：headless 渲染 pass 基准 1 亿音符全曲视图 755 ms → 1.32 ms；真实端到端（含 UI/音频，macOS/Metal）44M 音符播放 40～61 fps、33 万音符 61 fps（`docs/perf-investigation-plan.md:5-12`；commit 记录见调查）。
+- 资源：per-key cull 约 `2 × notes × 16B`（1 亿 ≈3.2 GB），GPU 总预算 8 GiB；LOD 摘要把 1.64 亿音符显存从约 670 MB 降到约 450 MB。
+- 与 Midora 的结构差异：yinhe 不做 tile bitmap 缓存，靠 GPU per-frame cull + LOD；Midora 靠 CPU tile 缓存 + 输出像素聚合。两者都能把每帧成本与音符数解耦，但 yinhe 路线在连续 pan/zoom、全曲视图上无 tile 失效/重光栅停顿。
+
+### 0.4 设计推断（不是需求）
+
+- 用户所说的「羸弱」是**架构对照判断**：Midora 的 CPU tile 光栅在 `10^7` 量级、中等缩放连续 pan/zoom/整体视图下，会受 tile 失效与 CPU 光栅吞吐限制；yinhe 的 GPU instancing 路线在同一场景下没有这类停顿。这是否构成 Midora 需要换渲染栈的理由，取决于目标规模与验收门（见 D-PERF01/D-RENDER01）。
+- Avalonia 是与现有 WPF 代码形状最接近的跨平台 .NET UI 栈；迁移主要是宿主控件与平台服务，tile/数据层可复用。Avalonia 11.x 在 macOS 上基于 Skia + Metal（`CAMetalLayer`），自定义绘制可用 `Control.Render` / `ICustomDrawOperation` / `ISkiaSharpApiLease` 直接操作 Skia（外部事实，需 spike 复核）。
+- 对 GPU 渲染有两条现实路线：单语言（Avalonia + Skia GPU，无 compute，需 CPU cull）与双栈（Avalonia 外壳 + 自研 Rust/wgpu 渲染器经 native interop 嵌入，wgpu 可跨 Metal/D3D12/Vulkan）。后者能复用用户既有专长与 yinhe 已证明的思路，但不能复用 AGPL 代码，且引入第二工具链/FFI/输入与 DPI 桥接成本。
+
+### 0.5 未决问题
+
+见 §3。在回答前不实施 macOS/GPU/UI 栈改动；本记录不修改 SRS。
+
+---
+
+## 1. 用户输入原始记录（2026-09-20）
+
+### 1.1 用户明确回答（要点）
+
+1. 用户不是原开发者，而是**准备开始移植的第三方开发者**（yinhe 作者）。
+2. .NET SDK **可以升级**，用户尚未升级本机 SDK。
+3. 「羸弱」是**相比 Rust wgpu（`/Users/jieneng/Documents/GitHub/yinhe`）而言**，不是对 Midora 现有实现的实测回归结论。
+4. 已 fork 上游并计划「第一步在 macOS 上跑通」；倾向切 Avalonia；自认最难的可能是 BASSMIDI，上游作者确认音频后端是独立 worker 程序、BASSWASAPI 需替换。
+
+### 1.2 用户提供的聊天记录（原文照录）
+
+> 节能降耗: 09-20 14:22:32
+> 但我真想偷看你仓库
+>
+> 节能降耗: 09-20 14:24:20
+> 可以吗可以吗可以吗（星星眼
+>
+> Zacksony: 09-20 14:24:21
+> 公开了
+>
+> Zacksony: 09-20 14:24:23
+> https://github.com/Zacksony/midora
+>
+> 节能降耗: 09-20 14:24:45
+> 好耶
+>
+> 节能降耗: 09-20 14:35:09
+> fork一份，我自己捣鼓捣鼓
+>
+> 节能降耗: 09-20 14:35:26
+> 第一步是在macOS上跑通
+>
+> Zacksony: 09-20 14:36:51
+> 加油？
+>
+> 节能降耗: 09-20 14:37:03
+> 嗯
+>
+> 节能降耗: 09-20 14:37:12
+> 我网好卡我还在clone
+>
+> Zacksony: 09-20 14:37:41
+> wpf好移植吗
+>
+> 节能降耗: 09-20 14:38:01
+> 没什么不好移植的吧
+>
+> 节能降耗: 09-20 14:38:12
+> 不如说是目标平台好移植吗
+>
+> 节能降耗: 09-20 14:38:25
+> 比如macOS难不难，Avalonia难不难
+>
+> Zacksony: 09-20 14:38:38
+> wpf不是windows only吗
+>
+> 节能降耗: 09-20 14:38:51
+> 所以要切换成avalonia
+>
+> Zacksony: 09-20 14:38:57
+> [惊讶]
+>
+> 节能降耗: 09-20 14:39:04
+> 让我搓一下
+>
+> Zacksony: 09-20 14:39:05
+> 大工程
+>
+> 节能降耗: 09-20 14:39:23
+> 其实最难的都已经有了
+>
+> 节能降耗: 09-20 14:39:33
+> 有源代码，很好搬的
+>
+> 节能降耗: 09-20 14:40:52
+> 我两眼一瞄，最难的可能是BASSMIDI
+>
+> Zacksony: 09-20 14:41:15
+> 我用了basswasapi，这块也得换掉
+>
+> Zacksony: 09-20 14:42:22
+> 不过音频后端是独立的worker程序，好说
+>
+> 节能降耗: 09-20 14:42:37
+> 比外接OmniMIDI好多了
+>
+> 节能降耗: 09-20 14:48:55
+> 啊，看到了MD文档想起了我的公司项目
+>
+> 节能降耗: 09-20 14:48:58
+> 比我严谨多了
+>
+> Zacksony: 09-20 14:50:28
+> ai生成的
+>
+> Zacksony: 09-20 14:51:09
+> ai看ai生成的约束写ai代码
+
+### 1.3 2026-09-20 追加回答（用户对本记录问题的直接回复，原文）
+
+> 1.打算回贡，因为大家都希望得到更强的性能
+> 2.计划使用Skia，这个最贴近C#技术栈
+> 3.不用管许可证，我允许了，yinhe没有任何其他rust代码的贡献（其他人唯一的贡献是改了一行toml），反正这个项目我觉得不会有Rust代码
+
+对回答的准确含义（不改变原话）：
+
+- **回贡**：移植目标是向上游 `Zacksony/midora` 提交，不只是个人 fork。
+- **Skia**：时间线 GPU 渲染用 Skia（经 Avalonia 的 Skia 集成），不引入 Rust/wgpu 渲染器；即以 C# 重实现高性能渲染架构。
+- **许可证**：用户声明其为 yinhe 全部 Rust 代码的版权人（他人唯一贡献为一行 toml），并允许使用；且 Midora 侧不会包含 Rust 代码。本记录按「不跨语言复制 AGPL 源文件，只以 C# 重实现架构思路」执行；若将来真要复制任何 yinhe 源文件，需在 D-LIC01 显式记录再许可。
+
+---
+
+## 2. 需求追踪（本记录自身）
+
+- 输入：用户问题与回答；上游 SRS §1.4/§21；AGENTS.md；Midora 现状；yinhe 外部对照。
+- 正式输出：事实分类、编号待决策问题、候选方案、分阶段建议。
+- 不产生：SRS 修改、源码修改、格式变更、发布产物、测试结论。
+- 失败条件：把 yinhe 的基准当 Midora 验收门；把建议当决定；在 D-LIC01 未定前复制 AGPL 代码。
+- 非目标：改变 Domain/Compiler/canonical/音频语义；讨论 MIDI/格式变更。
+
+---
+
+## 3. 待决策问题
+
+> 每题「建议」不等于决定；「用户回答」「确认状态」随用户回复更新，不得改写用户原话。
+
+### D-MAC01：移植性质与范围（已答核心项，待上游确认）
+
+- 已确认（用户 §1.1、§1.3）：以 fork 推进、**计划回贡上游**、第一步「在 macOS 上跑通」、SDK 可升级、目标是更强性能。
+- 由「回贡」推导出的必然后续（记录，不是新问题）：
+  1. macOS 进入上游范围需要按 SRS §21.4 提交范围修订，并需上游产品所有者（Zacksony）正式确认；用户当前意图不能替代该确认。
+  2. UI 框架切换（WPF → Avalonia）与 Skia GPU 渲染需新 ADR；GPU renderer 另需性能门与许可审计（ADR-UI-020:143）。
+  3. 上游长期必须保持 Windows 可用；「回贡」不应以牺牲 Windows 现有行为为代价。
+- 仍需决定（用户/上游）：
+  1. macOS 进入哪个版本（1.x 追加 / 2.0 / 未定），Windows 是否仍为一等平台？
+  2. macOS 架构：仅 `osx-arm64`，还是 `osx-x64` 并存？
+  3. 首阶段是否接受「无音频」的 macOS 闭环（打开/编辑/保存/编译/MIDI 导出），音频后置？
+- 建议：fork 侧先按「无音频闭环 → 性能验证 → 音频」推进；SRS 修订、ADR 与上游确认在首次回贡 PR 前完成。
+- 确认状态：fork 侧可继续；上游合并待产品所有者确认
+
+### D-RENDER01：时间线渲染栈（已定 Skia，架构待 ADR）
+
+- 已确认（用户 §1.3）：**Avalonia 外壳 + Skia 渲染**；以 C# 重实现，不引入 Rust/wgpu 渲染器。
+- Skia 能力边界（事实，spike 需复核）：
+  - Skia 是 2D 光栅 API，**没有 compute shader，也没有逐实例属性/indirect draw**；yinhe 的 GPU compute cull + indirect multi-draw 无法在 Skia API 层一一对应。
+  - C# 侧对应手段：CPU cull（复用 Midora 现有区间索引/分页源，`O(log n + visible)`）后构建 GPU-ready 几何，再用 `SKCanvas.DrawVertices`（每音符 4 顶点，坐标/颜色烘焙）或 `SKCanvas.DrawAtlas`（共享 sprite + 每实例 `RSXform`/颜色）批量绘制；几何可在后台 worker 预构建并缓存，渲染帧只做 canvas transform。
+  - Avalonia 集成：自定义绘制经 `ICustomDrawOperation` + `ISkiaSharpApiLeaseFeature`/`ISkiaSharpApiLease` 取 GPU Skia canvas；`SKVertices`/atlas 对象的 GPU 资源复用与缓存行为需 spike 验证。
+  - 缩小视图下限：沿用 Midora 现有「device px/tick ≤ 0.125 时按输出 device column 聚合」；若仍不足，再补 yinhe 式固定 tick 块 LOD 摘要（`1024/256/64/16` 量级），属于新增表现层缓存。
+- 提议的目标架构（提案，不是已批准设计）：
+  1. 保留：canonical 只读输入、区间索引、分页/revision 快照、CPU 命中与编辑路径、SRS 24.11 的预览层规则。
+  2. 替换：tile bitmap 光栅器 → per-chunk GPU 几何构建器（顶点/atlas），后台 worker + 有界 LRU + 局部失效；cache key 继续包含语义指纹/投影 key/DPI/颜色身份。
+  3. 渲染：Avalonia 自定义 draw op 内按 transform 一次绘制可见 chunk；网格/标尺/文字/光标/选框等 chrome 仍由 Avalonia DrawingContext 绘制（与 yinhe「egui 管 chrome、wgpu 管音符」分层一致）。
+  4. 大选区/播放光标等 overlay 不进几何缓存，仍走独立层。
+- Spike 验收（用户 2026-09-20 决定**暂缓性能门**：「现在暂时不用想性能，Skia 用得巧妙就没问题」）：先验证正确性/可用性/架构（S1/S2/S3 作为候选实现路径保留）；同数据对照 yinhe 的帧时/首次可用/内存测量推迟到正式回贡或实测出现问题后补。
+- 失败条件：若 S2/S3 在目标门内不达标且确需 compute/indirect，另立 ADR 讨论原生 Metal/wgpu 旁路；默认不引入第二工具链。
+- 确认状态：**已答（Skia）**；架构细节待补
+
+### D-STRUCT01：Avalonia 解决方案与共享呈现层的结构（待确认）
+
+- 场景：用户提议在 `src` 下新增解决方案 `midora-avalonia`。目前 `src/midora-desktop` 为 WPF 专用（`Midora.Desktop`、`Midora.Desktop.Presentation` 均 `net10.0-windows` + `UseWPF`）；`Midora.Desktop.Presentation` 约 24,737 行，渲染数据层无 WPF 引用，但光栅器/放置计算大量使用 `System.Windows.Media.Color`、`Rect`、`Point`、`DpiScale`。
+- 建议（提案）：
+  1. **新增独立解决方案** `src/midora-avalonia/`，不要并入 `midora-desktop.slnx`（该解决方案面向 WPF TFM，混入后 macOS 无法构建，也容易动到现有 WPF 路径）。名字可接受；若 Avalonia 将来取代 WPF 成为唯一外壳，再一次性改名（Avalonia → `midora-desktop`，WPF → legacy），现在不要来回改。
+  2. **不要复制 `Midora.Desktop.Presentation`**：先抽出框架中立的 `Midora.Presentation`（`net10.0`），承载 `TimelineRenderModel`、区间索引、cache key/LRU、光栅器与调度；把 `Color/Rect/Point/DpiScale` 换成本项目结构或 `System.Numerics`。WPF 与 Avalonia 各保留宿主/适配层。否则会产生 24k 行的沉默分叉，回贡不可行（AGENTS.md §8 的禁止分叉原则同样适用）。
+  3. 初始形状建议：
+     ```text
+     src/midora-avalonia/
+       midora-avalonia.slnx
+       Midora.Avalonia/                 # Avalonia 应用（先 macOS，可跨 Windows）
+       Midora.Avalonia.Presentation/    # Avalonia 宿主控件/适配
+       Midora.Avalonia.Tests/
+     src/midora-presentation/
+       Midora.Presentation/             # net10.0，框架中立（从 Desktop.Presentation 迁移）
+       Midora.Presentation.Tests/
+     ```
+  4. 构建注意：`Directory.Build.props` 全局 `RuntimeIdentifiers=win-x64`（`Directory.Build.props:7`），新项目需按项目覆盖；Avalonia 项目用 `Microsoft.NET.Sdk` + `net10.0`，不引用任何 WPF 程序集。
+- 影响：决定回贡的可合并性与两条 UI 路径的长期维护成本。
+- 确认状态：待用户确认命名与是否先抽中立层（建议先抽 spike 所需最小子集，再逐步迁移）
+
+### D-PERF01：性能对照口径与验收门（部分回答）
+
+- 已确认（用户 3）：「羸弱」= 与 yinhe wgpu 对照的架构判断，非 Midora 实测回归。
+- 仍需明确（做架构决定前的最小集合）：
+  1. 目标规模与场景：编辑态可见音符数、全曲视图、连续 pan/zoom、播放指针、导入/编辑事务，哪些是主目标？
+  2. 同数据对照样本：准备用哪个 `.mid`/`.midora`（音符数、最大 Segment）与 yinhe 同机对测？
+  3. 验收门：帧时 p95、操作延迟、内存上限、首次可用时间。
+- 影响：原为 D-RENDER01 spike 的进入条件；用户已决定暂缓，不作为当前阻塞。
+- 建议：先用同一份 10M 级数据在 macOS 上测 Avalonia+Skia 路径；性能门在正式回贡前或实测出现退化时补冻。
+- 用户回答：2026-09-20 暂缓（§1.3 语境）
+- 确认状态：**用户决定暂缓**（spike 不设性能门，先跑通与正确性）
+
+### D-MAC03：macOS 实时音频后端（沿用，优先级后置）
+
+- 场景：唯一生产设备工厂为 BASSWASAPI；macOS 需新实现（BASS 核心 CoreAudio 设备输出或替代方案）；Worker 的 win-x64 Native AOT、Job Objects、命名共享内存/管道均需 macOS 方案。
+- 需要决定：继续 BASS 体系（新设备工厂 + macOS 二进制基线 + 许可核验）还是换音频后端；首阶段是否允许无音频。
+- 建议：首选 BASS 核心设备输出实现 `IAudioOutputDeviceFactory`；音频作为第二阶段里程碑；macOS 二进制版本/SHA/许可由移植方冻结。
+- 用户回答：见 §1.2（上游作者确认需替换 BASSWASAPI；worker 独立）
+- 确认状态：待回答（具体方案）
+
+### D-MAC04：输出命名与路径策略（沿用）
+
+- 场景：SRS 14.17.4 固定 Windows 合法化规则；macOS 规则不同。
+- 建议：沿用同一合法化规则以保持跨平台确定性与 golden 复用，仅把固定盘/大小写敏感探测改为平台适配。
+- 用户回答：
+- 确认状态：待回答
+
+### D-MAC05（设计，需 ADR）：macOS 进程隔离与 IPC
+
+- 场景：Job Objects、Windows-only 命名共享内存、命名管道语义需替换（POSIX 进程组、Unix domain socket、文件/共享内存）。
+- 说明：属并发/进程模型变更，按 AGENTS.md §5 需独立 ADR；范围决定后开工。
+- 状态：待范围决定
+
+### D-LIC01：许可证边界（已答，按用户声明记录）
+
+- 已确认（用户 §1.3）：用户声明其为 yinhe Rust 代码的版权人（他人唯一贡献为一行 toml），**允许**使用；且 Midora 侧不会包含 Rust 代码。
+- 据此执行：
+  1. 只以 C#/Skia 重实现架构思路（compute cull、LOD 摘要、语义实例等思想不受版权保护）；**不复制** yinhe 的 `.rs`/`.wgsl`/数据结构文件。
+  2. fork 与上游保持 Midora 现有 MIT；新增 C# 渲染器为全新 MIT 实现，并保留 Midora 上游 MIT notices。
+  3. 若将来确需复制任何 yinhe 源文件，必须在回贡前把「版权人声明 + 显式再许可 + 上游接受」补入本记录。
+- 遗留提示（非阻塞）：若 yinhe 仓库仍公开分发，其 AGPL 与字体 notices 问题与 Midora 无关，但属于用户自身项目合规，本记录不代为处理。
+- 确认状态：**已答（用户声明）；复制任何 AGPL 源文件前需再确认**
+
+---
+
+## 4. 建议分阶段路线（建议，不是已批准计划）
+
+1. **环境（等用户指示）**：安装 .NET SDK 10.0.400（macOS）；拆分 `win-x64` 全局 RID 与 `net10.0-windows` TFM（新 macOS 平台工程），先构建/测试非 UI 解决方案（`midora-core`/`midora-midi`/`midora-common`/Persistence），记录 Windows-only 跳过与失败。**SDK 安装仅在用户明确指示后执行。**
+2. **结构（D-STRUCT01）**：新建 `src/midora-avalonia/` 解决方案；先抽 `Midora.Presentation`（net10.0）的 spike 最小子集（model/index/cache key），不要复制 `Midora.Desktop.Presentation`。
+3. **macOS 无音频闭环**：Avalonia 外壳；垂直切片——Arrangement/Piano Roll 一个 `TimelineSurface` + Skia 渲染 + 打开/保存/编译/MIDI 导出。此阶段不做 BASS、不设性能门。
+4. **Skia 实现**：按 D-RENDER01 的预构建 chunk 路线实现（S1/S2/S3 作为候选），先正确性与可用性；性能测量推迟到回贡前或实测退化时。
+5. **音频第二阶段**：macOS `IAudioOutputDeviceFactory`（BASS 核心设备输出）+ Worker 平台适配（D-MAC05 ADR）+ macOS 原生基线与许可核验。
+6. **回贡**：按 SRS §21.4 提交 macOS 范围修订、UI/Avalonia ADR、Skia 渲染 ADR、性能证据与上游产品所有者确认。
+
+---
+
+## 5. 状态汇总
+
+| 问题 | 主题 | 状态 |
+|---|---|---|
+| D-MAC01 | 移植性质与范围 | 已答核心项（fork + 回贡 + macOS 优先）；上游产品所有者确认与版本待定 |
+| D-RENDER01 | 时间线渲染栈 | **已答：Avalonia + Skia，C# 重实现**；架构/ADR 待补，性能门暂缓 |
+| D-STRUCT01 | Avalonia 解决方案与共享呈现层结构 | 待确认（建议独立 `src/midora-avalonia/` + 抽取 `Midora.Presentation`） |
+| D-PERF01 | 性能对照口径与验收门 | **用户决定暂缓**；先跑通与正确性，回贡前补 |
+| D-MAC03 | macOS 实时音频后端 | 待回答（方案未定，优先级后置） |
+| D-MAC04 | 输出命名/路径策略 | 待回答 |
+| D-MAC05 | 进程隔离/IPC ADR | 待范围决定 |
+| D-LIC01 | 许可证边界 | 已答（用户声明版权与允许；不复制 AGPL 源文件） |
+
+## 6. 用户回答（原始记录区）
+
+见 §1.1、§1.2（原文照录）。后续回答继续按日期追加，不得改写。
+
+## 7. 补充问答
+
+（等待补充。）
+
+---
+
+## 8. 实施进度
+
+### 2026-09-20
+
+- **SDK**：用户级安装 .NET SDK 10.0.400 到 `~/.dotnet`（`dotnet-install.sh --no-path`，未 sudo、未改 PATH），`~/.dotnet/dotnet --version` = 10.0.400，满足 `global.json`（`rollForward: disable`）。后续命令统一用 `$HOME/.dotnet/dotnet`。
+- **非 UI 构建**：`src/midora-core/midora-core.slnx` Debug 构建 20 s 完成 15 个项目；唯一失败为 `Midora.Audio.Bass.Worker`（win-x64/AOT 专用，macOS 无 assets；音频后置，暂不处理）。首次 restore 耗时约 30 分钟，原因是 nuget.org 元数据/包下载极慢（实测包下载约 289 KB/s，元数据 5～22 KB/s）。
+- **Avalonia 骨架**：新建 `src/midora-avalonia/midora-avalonia.slnx` + `Midora.Avalonia`（`net10.0`、覆盖全局 RID 为 `osx-arm64`）；Avalonia 版本暂定 **11.3.22**（存在 12.1.2；11.3 为成熟稳定线，降低大规模 WPF 移植的 API 风险，后续可评估升级）。
+- **运行 smoke 成功**：restore 完成（慢网导致多次超时，最终 178+ 包落盘）；Debug 构建 0 警告 0 错误；`Midora.Avalonia` 进程启动并已在 macOS 窗口服务器注册（`lsappinfo` 可见），屏幕显示暗色最小窗口。
+- **用户指示**：可以开始逐步复刻 UI，并预留 macOS 与 Windows 适配。
+- **结构决定（覆盖 D-STRUCT01 原建议）**：用户明确允许「抄 WPF 的 UI」。执行方式：Avalonia 侧复制/适配，**不改动 WPF 侧**（WPF 保持上游原样，避免双向分叉失控）；框架中立的 `Midora.Presentation` 抽取延后到回贡前再评估。
+- **UI 移植切片计划（提案，按依赖顺序）**：
+  1. **Slice A 外壳与主题**：移植 StyleGallery `Palette/Controls/FluentSystemIcons/WindowControlIcons` 到 Avalonia 资源与 Styles；主窗口标题栏、菜单、Global Command Bar、Workspace Tab、Status Bar；嵌入 Sora/JetBrainsMono 字体。
+  2. **Slice B 平台适配层**：窗口 chrome（macOS 红绿灯 / Windows 自绘按钮）、快捷键修饰（⌘ vs Ctrl）、菜单与文件对话框（StorageProvider）、剪贴板/拖放/IME 的 Avalonia 实现；以接口隔离，Windows 条件引用预留。
+  3. **Slice C 呈现核心**：复制 `TimelineRenderModel`/区间索引/tick math/cache 结构，替换 WPF 几何类型（`Rect/Point/Color/DpiScale`）；先跑 CPU tile 正确性。
+  4. **Slice D 时间线表面**：`TimelineSurface` 自绘控件（Avalonia `Render`）+ Skia 自定义绘制；Arrangement/Conductor → Piano Roll → Velocity/Event Lane。
+  5. **Slice E 工作流**：打开/保存/编译/MIDI 导出与各对话框；Project/Workspace 命令接线。
+  6. **Slice F 音频**（后置）：macOS 设备工厂与 Worker 适配。
+- **待办**：非 UI 测试尚未在 macOS 跑（`Midora.Audio.Bass.Worker` 阻塞部分测试项目）；Slice A 未开始。
+
+### 2026-09-20（续）Slice A 首次落地
+
+- **主题**：新增 `Themes/Palette.axaml`（移植已批准色板）、`FluentIcons.axaml` / `WindowControlIcons.axaml`（由 WPF 资源机械转换：`Geometry`→`StreamGeometry`，76+4 个图标）、`Themes/Controls.axaml`（Button/Text/Menu/FluentIcon/Caption 子集，触发器改为 Avalonia 伪类选择器）。
+- **控件适配**：`Controls/FluentIcon.cs` 以 `Path`（`Stretch=Uniform`）子类实现，`Foreground` 映射 `Fill`，替代 WPF Viewbox+Path 模板。
+- **字体/资源**：链接仓库 `assets/fonts/Sora`、`JetBrainsMono` 与 `midora-note-transparent-256x256.png` 为 `AvaloniaResource`；`avares://` 字体 URI 已验证资源名正确嵌入。
+- **外壳**：`MainWindow.axaml` 按 WPF 结构重建 36px 标题栏（应用标 + 主菜单 + 项目名 chip）、46px Global Command Bar（导航/文件/编辑/偏好 + 传输/位置速度 + Compile/MIDI Export/Audio Export）、欢迎页、25px 状态栏。菜单条目与结构对齐 WPF，但命令未接线（除 Exit/窗口按钮）。
+- **平台适配预留**：macOS 用 `ExtendClientAreaChromeHints.PreferSystemChrome` 保留原生红绿灯并左移 72px；Windows caption 按钮已存在但用 `CaptionButtons.IsVisible=false` 隐藏，标题栏拖动/双击仅 Windows 路径生效。
+- **验证**：Debug 构建 0 警告 0 错误；应用启动且窗口服务器注册成功；等待产品/用户视觉确认。
+- **未完成**：菜单命令、Workspace Tab（`TabControl` 模板）、大量控件样式（TextBox/ComboBox/TabItem/ListBoxItem/ScrollBar/Switch 等）、Windows 平台实机验证。
+- **用户视觉反馈修复（同日）**：
+  1. 标题栏拖动/双击：之前 macOS 被显式禁用；现改为调用 `BeginMoveDrag`（菜单/按钮来源除外），双击切换最大化/还原。
+  2. 红绿灯垂直居中：设置 `ExtendClientAreaTitleBarHeightHint = 36` 对齐 36px 标题栏。
+  3. Fluent 图标全部消失：根因是自定义 `Foreground` 不参与 Avalonia 属性继承导致 `Fill` 为空；`FluentIcon` 改为 `TemplatedControl` 子类，使用继承的 `Foreground` 并在 `Render` 中按 `Geometry.Bounds` 等比缩放绘制。
+  4. 几何转换说明：WPF `FluentSystemIcons.xaml` 只做机械转换（默认 xmlns → Avalonia、`<Geometry>` → `<StreamGeometry>`，路径数据语法兼容），不引用 `System.Windows.Media.Geometry`；新增图标可直接把 WPF 路径数据粘贴进 `<StreamGeometry>`。
+- **第二轮视觉反馈修复（同日）**：
+  1. 红绿灯垂直居中：新增 `Platform/MacWindowChrome.cs`，用 AppKit `standardWindowButton:` + `frame/setFrame:` interop（仅 Apple Silicon、best-effort）把三个按钮下移 4px，窗口打开与状态变化时重施；失败则保持原生位置。
+  2. 标题栏误拖动：点击 File→New 会移动窗口的根因是事件来自菜单 Popup 而 `FindAncestorOfType<Menu>` 失败；改为独立透明 `TitleBarDragSurface`（在内容之下）承载拖动/双击，菜单与按钮不再触发。
+  3. 菜单高亮：按 WPF 指标移植一级项 `Height=29`、`Padding=9,0`、`CornerRadius=3`、hover `Surface.4`/Primary、submenu `Padding=9,5`。
+  4. 按下动画：不是 WPF 基线特性，是 Avalonia FluentTheme 的默认按压过渡；已在 Button 样式清空 `Transitions` 与 `RenderTransform`，保持 WPF 的“背景/边框变化 + 内容 1px 下移”。
+
+### 2026-09-20（续）Slice B：批量窗口移植
+
+- **方法**：先写共享指南 [Midora-Avalonia-Window-Porting-Guide.md](Midora-Avalonia-Window-Porting-Guide.md)，再分 8 个并行子 Agent 按组移植；子 Agent 只写各自窗口文件，不构建、不改共享文件。
+- **产出**：`src/midora-avalonia/Midora.Avalonia/Windows/` 下 44 个窗口 + 1 个 UserControl（`ValueTraceShapeSelector`，附预览窗口）+ `WindowCatalog.cs`；覆盖 WPF 侧除 Workspace 视图与 MainWindow 外的全部窗口。
+- **集成**：`MainWindow` 增加临时 `Windows` 菜单（按 5 组列出全部窗口，模态打开）；新增 `--smoke-windows` 启动探针，逐个创建/显示/关闭全部窗口并报告失败。
+- **验证**：Debug 构建 0 警告 0 错误；冒烟 `WINDOW-SMOKE total=44 failures=0`。
+- **本轮修复**：窗口缺公共无参构造（5 个）、事件处理器签名与 Avalonia 事件委托不匹配（InstrumentSelection/Quantize/Scale）、`OnionSettingsDialog` 的 `PropertyChanged` 隐藏基类成员、`ScaleSelectionDialog` 在 `InitializeComponent` 期间 TextChanged 触发导致的 NRE。
+- **已知近似（子 Agent 报告汇总）**：AvalonEdit 全部替换为等宽 TextBox；Avalonia 无 `DialogResult`，统一 `Close()` + 结果属性；WPF ViewModel/Domain 用本地占位数据；触发器/`VirtualizingPanel`/`DisplayMemberPath` 等按指南降级；各窗口重复手写标题栏；TextBox/ComboBox/TabItem/ListBox/ScrollBar 等仍为 FluentTheme 默认样式，未对齐 StyleGallery 基线。
+- **未移植**：`ConductorWorkspaceView`、`AllTracksView`、`LaneTabHeader`、`InstrumentChangeLane`（Workspace/时间线宿主，属 Slice C/D）。

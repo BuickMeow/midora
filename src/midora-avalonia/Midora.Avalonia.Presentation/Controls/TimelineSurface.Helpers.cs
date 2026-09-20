@@ -54,6 +54,8 @@ public sealed partial class TimelineSurface
     private static readonly SolidColorBrush TextTertiaryBrush = new(Color.TextTertiary);
     private static readonly SolidColorBrush RedBrush = new(Color.Red);
     private static readonly SolidColorBrush MarqueeFillBrush = new(Color.MarqueeFill);
+    private static readonly SolidColorBrush LaneDimBrush = new(
+        global::Avalonia.Media.Color.FromArgb(0x66, 0x05, 0x06, 0x07));
     private static readonly Pen BorderPen = new(new SolidColorBrush(Color.Border), 1);
     private static readonly Pen GridPen = new(GridBrush, 1);
     private static readonly Pen SelectedOutlinePen = new(NoteBrush, 1.5);
@@ -68,6 +70,42 @@ public sealed partial class TimelineSurface
 
     private readonly Dictionary<(uint Accent, bool Selected), SolidColorBrush> _segmentFillCache = [];
     private readonly List<TimelineRenderItem> _rulerMarkerScratch = [];
+    private readonly HashSet<int> _mutedLanes = [];
+    private readonly HashSet<int> _soloedLanes = [];
+
+    /// <summary>Runtime-only lane filtering: muted lanes, or non-soloed lanes while any solo is active.</summary>
+    public void SetLaneMute(int lane, bool muted)
+    {
+        bool changed = muted ? _mutedLanes.Add(lane) : _mutedLanes.Remove(lane);
+        if (changed)
+        {
+            InvalidateVisual();
+        }
+    }
+
+    public void SetLaneSolo(int lane, bool soloed)
+    {
+        bool changed = soloed ? _soloedLanes.Add(lane) : _soloedLanes.Remove(lane);
+        if (changed)
+        {
+            InvalidateVisual();
+        }
+    }
+
+    public void ClearLaneStates()
+    {
+        if (_mutedLanes.Count == 0 && _soloedLanes.Count == 0)
+        {
+            return;
+        }
+
+        _mutedLanes.Clear();
+        _soloedLanes.Clear();
+        InvalidateVisual();
+    }
+
+    private bool IsLaneFiltered(int lane) =>
+        _mutedLanes.Contains(lane) || (_soloedLanes.Count > 0 && !_soloedLanes.Contains(lane));
 
     /// <summary>Playback position drawn over the whole surface with a red cursor line.</summary>
     private void DrawPlaybackCursor(DrawingContext context, TimelineViewport viewport, double height)

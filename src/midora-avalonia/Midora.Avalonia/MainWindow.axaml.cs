@@ -54,6 +54,12 @@ public partial class MainWindow : Window
     /// <summary>Review-only entry point used by the <c>MIDORA_AUTOPLAY</c> env var.</summary>
     internal void StartPlaybackForReview() => Session.TogglePlayback();
 
+    /// <summary>Review-only entry point used by the <c>MIDORA_TRACK_MODE</c> env var.</summary>
+    internal void SetTrackModeForReview(string mode) => Session.SetActiveEditMode(mode);
+
+    /// <summary>Review-only entry point used by the <c>MIDORA_NEW_PROJECT</c> env var.</summary>
+    internal void NewProjectForReview() => Session.CreateProject("Untitled Project");
+
     // ---- Platform chrome -------------------------------------------------
 
     protected override void OnOpened(EventArgs e)

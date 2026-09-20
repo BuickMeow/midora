@@ -402,6 +402,9 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     public bool RedoActive() => _activeEditView?.Redo() == true;
 
+    /// <summary>Review helper: switches the active track editor's surface mode.</summary>
+    internal void SetActiveEditMode(string mode) => _activeEditView?.ApplyModeByName(mode);
+
     /// <summary>
     /// Replaces the current project with a real imported SMF project and shows it in the
     /// Arrangement workspace.
@@ -465,10 +468,10 @@ public sealed class ShellSession : INotifyPropertyChanged
         else
         {
             _arrangementView.SetSource(
-                _demoSource,
+                EmptyTimelineSource.Instance,
                 480,
-                _demoSource.TrackNames,
-                segment => _demoSource.GetPreviewSource(segment));
+                ["Conductor"],
+                previewProvider: null);
         }
     }
 

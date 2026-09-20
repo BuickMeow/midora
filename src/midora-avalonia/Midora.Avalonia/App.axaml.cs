@@ -61,6 +61,17 @@ public partial class App : Application
                 {
                     mainWindow.Opened += (_, _) => mainWindow.StartPlaybackForReview();
                 }
+
+                var trackMode = Environment.GetEnvironmentVariable("MIDORA_TRACK_MODE");
+                if (!string.IsNullOrEmpty(trackMode))
+                {
+                    mainWindow.Opened += (_, _) => mainWindow.SetTrackModeForReview(trackMode);
+                }
+
+                if (Environment.GetEnvironmentVariable("MIDORA_NEW_PROJECT") == "1")
+                {
+                    mainWindow.Opened += (_, _) => mainWindow.NewProjectForReview();
+                }
             }
         }
 

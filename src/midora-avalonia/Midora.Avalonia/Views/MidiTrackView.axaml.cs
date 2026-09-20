@@ -277,6 +277,19 @@ public partial class MidiTrackView : UserControl
             : TimelineSurfaceMode.PianoRoll;
     }
 
+    /// <summary>Review helper: selects a surface mode by name.</summary>
+    public void ApplyModeByName(string name)
+    {
+        TimelineSurfaceMode mode = name.ToLowerInvariant() switch
+        {
+            "velocity" => TimelineSurfaceMode.Velocity,
+            "events" => TimelineSurfaceMode.EventLanes,
+            "conductor" => TimelineSurfaceMode.Conductor,
+            _ => TimelineSurfaceMode.PianoRoll
+        };
+        SetMode(mode);
+    }
+
     private void SetMode(TimelineSurfaceMode mode)
     {
         _mode = mode;

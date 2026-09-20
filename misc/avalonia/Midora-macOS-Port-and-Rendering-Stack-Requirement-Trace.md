@@ -430,3 +430,15 @@
 - **工具栏**：工具改为选中红底的 ToggleButton，新增指针 tick 读数 `(tick)`、`Grid`、`Snap`、`1/8` 细分、`Length 1920`、缩放与 Bar 读数；默认显示 16 小节。
 - **钢琴卷帘修复**：lane 约定改为绝对音高（`FirstLane = FirstPitch`，`GetPitchForLane(lane) = lane`），截图确认音符矩形恢复显示；`⌘Z/⇧⌘Z` 撤销、Select/Draw/Erase/Split 工具均已在音轨编辑器工作。
 - **仍存差距（像素级复刻未完成）**：钢琴卷帘缺小节标尺与左侧钢琴键盘；Arrangement 仍缺 WPF 的 Segment tabs（`MIDI Segment: …`）、Conductor 编辑器、ruler marker 标签、All Tracks/Onion 按钮；M/S 芯片不可点击（运行期 Mute/Solo 未接线）；Arrangement 工具按钮无编辑行为（编辑目前只在音轨编辑器）；Notice 语义与 WPF 的编译/任务流程仍未完全一致。
+
+### 2026-09-20（续）Slice G：继续截图对齐（已提交）
+
+- **钢琴键盘与方向**：新增 `PianoKeyboardStrip`（白/黑键、C 标签、按下高亮、`KeyPressed/KeyReleased`），接入音轨编辑器 Notes/Velocity 模式；修正钢琴卷帘音高方向（高音在上，`FirstLane = FirstPitch`，lane == 绝对音高），Shift+滚轮纵向滚动；Track/模式切换同步键盘。
+- **Segment 标签页**：Arrangement 双击 Segment 打开 `MIDI Segment: <track>@<bar>` 会话（lane→track、chunk 起点/跨度），与原版命名一致；双击 lane 仍打开整轨编辑器。
+- **播放指针**：`PlaybackTick` 属性 + 红色光标与顶部标记；会话用 `DispatcherTimer` 按 tempo/TPQN 推进位置，命令栏读数格式对齐为 `0000 : 00 : 0000`，状态栏 Playing/Stopped 联动，Loop 开启时回绕。
+- **标尺 Marker 标签**：Conductor Marker 文本投影到 Arrangement/模式视图的 ruler 带。
+- **空工程语义**：新增 `EmptyTimelineSource`；New Project 不再显示演示工程（只显示 Conductor 行）。
+- **M/S 运行期过滤**：轨道头 M/S 芯片可点击（含选中配色），Arrangement 泳道按 Mute/Solo 变暗并隐藏内容；仅运行期，不持久化、不进 canonical。
+- **评审入口**（仅用于截图验收）：`MIDORA_MIDI_OPEN`、`MIDORA_OPEN_TRACK`、`MIDORA_OPEN_SEGMENT`、`MIDORA_TRACK_MODE`、`MIDORA_AUTOPLAY`、`MIDORA_NEW_PROJECT`。
+- **验证**：构建 0 警告 0 错误；shell 冒烟（真实 MIDI、编辑、Undo/Redo、合并拖动）failures=0；逐项截图确认布局、颜色（无 Fluent 默认蓝）、钢琴键盘、Velocity 渲染（像素采样 3,736 命中）、播放指针与位置读数。
+- **仍存的功能级差距（需新子系统，不是纯视觉）**：Conductor 专用编辑器工作区（事件列表 + Tempo 阶梯图）、Track/All Tracks 概览条与导航、钢琴卷帘对象列表面板、Event/Parameter Lane 的增删与管理栏、播放键盘试听（依赖音频引擎）、Diagnostics 实际内容。

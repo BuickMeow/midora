@@ -35,6 +35,15 @@ public sealed partial class TimelineSurface
                 BorderPen,
                 new Point(0, Math.Round(laneTop) + 0.5),
                 new Point(width, Math.Round(laneTop) + 0.5));
+
+            if (IsLaneFiltered(viewport.FirstLane + index))
+            {
+                double laneBottom = Math.Min(height, laneTop + viewport.LaneHeight);
+                context.FillRectangle(
+                    LaneDimBrush,
+                    new Rect(0, laneTop, width, Math.Max(0, laneBottom - laneTop)),
+                    1f);
+            }
         }
     }
 
@@ -152,6 +161,11 @@ public sealed partial class TimelineSurface
         in TimelineRenderItem item,
         double height)
     {
+        if (IsLaneFiltered(item.Lane))
+        {
+            return;
+        }
+
         double laneTop = RulerHeight + (item.Lane - viewport.FirstLane) * viewport.LaneHeight;
         if (laneTop >= height || laneTop + viewport.LaneHeight <= RulerHeight)
         {

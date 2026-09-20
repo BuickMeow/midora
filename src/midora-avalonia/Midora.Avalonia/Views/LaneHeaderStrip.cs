@@ -1,5 +1,6 @@
 using System.Globalization;
 using Avalonia;
+using Avalonia.Input;
 using Avalonia.Controls;
 using Avalonia.Media;
 
@@ -67,6 +68,9 @@ public sealed class LaneHeaderStrip : Control
     private static readonly Pen BorderPen = new(new SolidColorBrush(BorderColor), 1);
     private static readonly Pen ChipPen = new(new SolidColorBrush(ChipBorderColor), 1);
 
+    private readonly List<(Rect Rect, int Lane, bool IsMute)> _chipHitRects = [];
+    private readonly HashSet<int> _mutedLanes = [];
+    private readonly HashSet<int> _soloedLanes = [];
     private Typeface? _typeface;
 
     static LaneHeaderStrip()
@@ -102,6 +106,12 @@ public sealed class LaneHeaderStrip : Control
         set => SetValue(TrackNamesProperty, value);
     }
 
+    public event EventHandler<LaneToggleEventArgs>? MuteToggled;
+
+    public event EventHandler<LaneToggleEventArgs>? SoloToggled;
+
+    public sealed record LaneToggleEventArgs(int Lane, bool Active);
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);
@@ -113,6 +123,7 @@ public sealed class LaneHeaderStrip : Control
             return;
         }
 
+        _chipHitRects.Clear();
         context.FillRectangle(BackgroundBrush, new Rect(0, 0, width, height), 1f);
         context.DrawLine(
             BorderPen,
@@ -164,8 +175,14 @@ public sealed class LaneHeaderStrip : Control
             DrawText(context, name, 10, laneTop + 3, PrimaryBrush, 12, 600);
             DrawText(context, summary, 10, laneTop + 17, TertiaryBrush, 10, 400);
 
-            DrawChip(context, "M", width - 47, laneTop + 7);
-            DrawChip(context, "S", width - 25, laneTop + 7);
+            bool muted = _mutedLanes.Contains(lane);
+            bool soloed = _soloedLanes.Contains(lane);
+            Rect muteRect = new(width - 47, laneTop + 7, 18, 14);
+            Rect soloRect = new(width - 25, laneTop + 7, 18, 14);
+            _chipHitRects.Add((muteRect, lane, true));
+            _chipHitRects.Add((soloRect, lane, false));
+            DrawChip(context, "M", muteRect, muted);
+            DrawChip(context, "S", soloRect, soloed, solo: true);
         }
     }
 
@@ -179,11 +196,58 @@ public sealed class LaneHeaderStrip : Control
             (byte)argb);
     }
 
-    private void DrawChip(DrawingContext context, string glyph, double x, double y)
+    private void DrawChip(DrawingContext context, string glyph, Rect chip, bool active, bool solo = false)
     {
-        Rect chip = new(x, y, 18, 14);
-        context.DrawRectangle(ChipBrush, ChipPen, chip, 3, 3);
-        DrawText(context, glyph, x + 5.5, y + 0.5, SecondaryBrush, 10, 600);
+        IBrush fill = active
+            ? new SolidColorBrush(solo
+                ? global::Avalonia.Media.Color.FromRgb(0x2A, 0x21, 0x11)
+                : global::Avalonia.Media.Color.FromRgb(0x2A, 0x12, 0x15))
+            : ChipBrush;
+        Pen pen = active
+            ? new Pen(new SolidColorBrush(solo
+                ? global::Avalonia.Media.Color.FromRgb(0xE8, 0xB3, 0x4B)
+                : global::Avalonia.Media.Color.FromRgb(0x8F, 0x24, 0x29)), 1)
+            : ChipPen;
+        IBrush textBrush = active
+            ? new SolidColorBrush(solo
+                ? global::Avalonia.Media.Color.FromRgb(0xE8, 0xB3, 0x4B)
+                : global::Avalonia.Media.Color.FromRgb(0xF2, 0x55, 0x5A))
+            : SecondaryBrush;
+        context.DrawRectangle(fill, pen, chip, 3, 3);
+        DrawText(context, glyph, chip.X + 5.5, chip.Y + 0.5, textBrush, 10, 600);
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        Point position = e.GetPosition(this);
+        foreach ((Rect rect, int lane, bool isMute) in _chipHitRects)
+        {
+            if (!rect.Contains(position))
+            {
+                continue;
+            }
+
+            HashSet<int> states = isMute ? _mutedLanes : _soloedLanes;
+            bool active = !states.Remove(lane);
+            if (active)
+            {
+                states.Add(lane);
+            }
+
+            InvalidateVisual();
+            if (isMute)
+            {
+                MuteToggled?.Invoke(this, new LaneToggleEventArgs(lane, active));
+            }
+            else
+            {
+                SoloToggled?.Invoke(this, new LaneToggleEventArgs(lane, active));
+            }
+
+            e.Handled = true;
+            return;
+        }
     }
 
     private void DrawText(

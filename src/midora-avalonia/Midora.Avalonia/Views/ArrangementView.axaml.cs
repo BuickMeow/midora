@@ -32,6 +32,8 @@ public partial class ArrangementView : UserControl
         Timeline.LaneActivated += (_, lane) => TrackActivated?.Invoke(this, lane - 1);
         Timeline.SegmentActivated += (_, activation) =>
             SegmentActivated?.Invoke(this, (activation.Lane - 1, activation.StartTick));
+        LaneHeaders.MuteToggled += (_, e) => Timeline.SetLaneMute(e.Lane, e.Active);
+        LaneHeaders.SoloToggled += (_, e) => Timeline.SetLaneSolo(e.Lane, e.Active);
         Timeline.PointerTickChanged += (_, tick) => UpdateReadout(tick);
         Timeline.SelectionChanged += (_, item) =>
         {

@@ -29,7 +29,11 @@ public sealed partial class TimelineSurface
                 break;
             }
 
-            if ((index & 1) != 0)
+            bool shaded = UsesPitchLanes
+                ? !PianoKeyPresentation.IsBlackKey(
+                    Math.Clamp(LaneAtRow(viewport, index), 0, 127))
+                : (index & 1) != 0;
+            if (shaded)
             {
                 double laneBottom = Math.Min(height, laneTop + viewport.LaneHeight);
                 AddFill(
@@ -82,11 +86,16 @@ public sealed partial class TimelineSurface
                 line.Kind == TimelineGridLineKind.Bar ? BorderPen : BeatGridPen,
                 new Point(x, RulerHeight),
                 new Point(x, height));
+            if (line.Kind != TimelineGridLineKind.Bar)
+            {
+                continue;
+            }
+
             AddLine(
                 RulerTickPen,
                 new Point(x, Math.Max(0, RulerHeight - 5)),
                 new Point(x, RulerHeight));
-            if (line.Kind != TimelineGridLineKind.Bar || x < nextLabelX)
+            if (x < nextLabelX)
             {
                 continue;
             }

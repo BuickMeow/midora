@@ -19,7 +19,6 @@ public sealed partial class TimelineSurface
     {
         DrawLaneBackgrounds(context, viewport, width, height);
         FlushShapes(context);
-        DrawPitchLabels(context, viewport, width, height);
         if (Source is null)
         {
             return;
@@ -64,50 +63,16 @@ public sealed partial class TimelineSurface
                 right - left,
                 Math.Max(devicePixel, viewport.LaneHeight - verticalInset * 2));
             bool selected = SelectedId == item.Id || item.State.HasFlag(TimelineItemState.Selected);
-            AddShape(selected ? NoteSelectedBrush : NoteBrush, BorderPen, bounds, 2, 0.78);
+            AddShape(selected ? NoteSelectedBrush : NoteBrush, BorderPen, bounds, 0, 0.78);
             if (selected)
             {
-                AddShape(null, SelectionPen, bounds, 2);
+                AddShape(null, SelectionPen, bounds, 0);
             }
         }
 
         FlushShapes(context);
     }
 
-    private void DrawPitchLabels(
-        DrawingContext context,
-        TimelineViewport viewport,
-        double width,
-        double height)
-    {
-        for (int index = 0; index < viewport.LaneCount; index++)
-        {
-            double laneTop = RulerHeight + index * viewport.LaneHeight;
-            if (laneTop >= height)
-            {
-                break;
-            }
-
-            long pitch = LaneAtRow(viewport, index);
-            if (pitch is < 0 or > 127)
-            {
-                continue;
-            }
-
-            string? label = PianoKeyPresentation.GetOctaveCLabel((int)pitch);
-            if (label is null)
-            {
-                continue;
-            }
-
-            DrawLabel(
-                context,
-                label,
-                4,
-                laneTop + Math.Max(0, (viewport.LaneHeight - 12) / 2),
-                Math.Max(0, width - 8));
-        }
-    }
 
     /// <summary>Piano-roll lanes are absolute MIDI pitches; the viewport shows [FirstLane, FirstLane + visible).</summary>
     private static long GetPitchForLane(int lane) =>

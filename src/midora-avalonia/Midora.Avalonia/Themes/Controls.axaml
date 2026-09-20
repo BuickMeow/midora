@@ -49,199 +49,28 @@
   </Style>
 
   <!-- Workspace tab strip: approved baseline (12,8 padding, 2px red underline when selected). -->
-  <Style Selector="TabControl > TabItem">
-    <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
-    <Setter Property="FontSize" Value="{DynamicResource FontSize.Body}" />
-    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-    <Setter Property="Background" Value="Transparent" />
+  <Style Selector="Border.wstab">
     <Setter Property="Padding" Value="12,8" />
-    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0,0,0,2" />
     <Setter Property="Cursor" Value="Hand" />
-    <Setter Property="Template">
-      <ControlTemplate>
-        <Border Name="Chrome"
-                Padding="{TemplateBinding Padding}"
-                Background="{TemplateBinding Background}"
-                BorderBrush="Transparent"
-                BorderThickness="0,0,0,2">
-          <ContentPresenter Content="{TemplateBinding Header}"
-                            ContentTemplate="{TemplateBinding HeaderTemplate}" />
-        </Border>
-      </ControlTemplate>
-    </Setter>
   </Style>
 
-  <Style Selector="TabControl > TabItem:pointerover">
+  <Style Selector="Border.wstab:pointerover">
     <Setter Property="Background" Value="{DynamicResource Brush.Surface.2}" />
-    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
   </Style>
 
-  <Style Selector="TabControl > TabItem:selected">
-    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-  </Style>
-
-  <Style Selector="TabControl > TabItem:selected /template/ Border#Chrome">
+  <Style Selector="Border.wstab.active">
     <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
   </Style>
 
-  <Style Selector="controls|FluentIcon">
-    <Setter Property="Width" Value="16" />
-    <Setter Property="Height" Value="16" />
-    <Setter Property="Focusable" Value="False" />
-    <Setter Property="IsHitTestVisible" Value="False" />
-  </Style>
-
-  <Style Selector="controls|FluentIcon.commandbar">
-    <Setter Property="Width" Value="14" />
-    <Setter Property="Height" Value="14" />
-  </Style>
-
-  <Style Selector="controls|FluentIcon.stepper">
-    <Setter Property="Width" Value="14" />
-    <Setter Property="Height" Value="14" />
-  </Style>
-
-  <Style Selector="controls|FluentIcon.captionicon">
-    <Setter Property="Width" Value="10" />
-    <Setter Property="Height" Value="10" />
-  </Style>
-
-  <!-- Buttons: approved dark/black/red baseline. -->
-
-  <Style Selector="Button">
-    <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
-    <Setter Property="Height" Value="32" />
-    <Setter Property="Padding" Value="12,0" />
-    <Setter Property="Background" Value="{DynamicResource Brush.Surface.3}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
-    <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-    <Setter Property="FontWeight" Value="SemiBold" />
-    <Setter Property="Cursor" Value="Hand" />
-    <Setter Property="HorizontalContentAlignment" Value="Center" />
-    <Setter Property="VerticalContentAlignment" Value="Center" />
-    <!-- The approved WPF baseline has no press animation; drop FluentTheme's transitions. -->
-    <Setter Property="Transitions">
-      <Transitions />
-    </Setter>
-    <Setter Property="RenderTransform" Value="{x:Null}" />
-    <Setter Property="Template">
-      <ControlTemplate>
-        <Border Name="Chrome"
-                Padding="{TemplateBinding Padding}"
-                Background="{TemplateBinding Background}"
-                BorderBrush="{TemplateBinding BorderBrush}"
-                BorderThickness="{TemplateBinding BorderThickness}"
-                CornerRadius="3">
-          <ContentPresenter Name="PART_Content"
-                            Content="{TemplateBinding Content}"
-                            ContentTemplate="{TemplateBinding ContentTemplate}"
-                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
-        </Border>
-      </ControlTemplate>
-    </Setter>
-  </Style>
-
-  <Style Selector="Button:pointerover">
-    <Setter Property="Background" Value="{DynamicResource Brush.Surface.4}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}" />
-  </Style>
-
-  <Style Selector="Button:pressed">
-    <Setter Property="Background" Value="{DynamicResource Brush.Black}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red.Dark}" />
-    <Setter Property="RenderTransform" Value="{x:Null}" />
-  </Style>
-
-  <Style Selector="Button:pressed /template/ ContentPresenter#PART_Content">
-    <Setter Property="Margin" Value="0,1,0,-1" />
-  </Style>
-
-  <Style Selector="Button:disabled">
-    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
-    <Setter Property="Cursor" Value="Arrow" />
-  </Style>
-
-  <Style Selector="Button:disabled /template/ Border#Chrome">
-    <Setter Property="Background" Value="{DynamicResource Brush.Surface.3}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-  </Style>
-
-  <Style Selector="Button.ghost">
-    <Setter Property="Background" Value="Transparent" />
-    <Setter Property="BorderBrush" Value="Transparent" />
-    <Setter Property="BorderThickness" Value="0" />
+  <Style Selector="TextBlock.wstablabel">
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
   </Style>
 
-  <Style Selector="Button.ghost:disabled /template/ Border#Chrome">
-    <Setter Property="Background" Value="Transparent" />
-    <Setter Property="BorderBrush" Value="Transparent" />
-  </Style>
-
-  <Style Selector="Button.icon">
-    <Setter Property="Width" Value="32" />
-    <Setter Property="Padding" Value="0" />
-    <Setter Property="FontSize" Value="14" />
-  </Style>
-
-  <Style Selector="Button.primary">
-    <Setter Property="Background" Value="{DynamicResource Brush.Red}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
-    <Setter Property="Foreground" Value="White" />
-  </Style>
-
-  <Style Selector="Button.primary:pointerover">
-    <Setter Property="Background" Value="{DynamicResource Brush.Red.Hover}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red.Hover}" />
-  </Style>
-
-  <Style Selector="Button.primary:pressed">
-    <Setter Property="Background" Value="{DynamicResource Brush.Red.Pressed}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red.Dark}" />
-  </Style>
-
-  <Style Selector="Button.primary:disabled /template/ Border#Chrome">
-    <Setter Property="Background" Value="{DynamicResource Brush.Surface.3}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-  </Style>
-
-  <Style Selector="Button.caption">
-    <Setter Property="Width" Value="46" />
-    <Setter Property="Height" Value="36" />
-    <Setter Property="Padding" Value="0" />
-    <Setter Property="FontSize" Value="12" />
-    <Setter Property="Cursor" Value="Arrow" />
-    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-  </Style>
-
-  <Style Selector="Button.caption:pointerover">
-    <Setter Property="Background" Value="{DynamicResource Brush.Surface.3}" />
-    <Setter Property="BorderBrush" Value="Transparent" />
+  <Style Selector="TextBlock.wstablabel.active">
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-  </Style>
-
-  <Style Selector="Button.caption.close:pointerover">
-    <Setter Property="Background" Value="{DynamicResource Brush.Red}" />
-    <Setter Property="Foreground" Value="White" />
-  </Style>
-
-  <Style Selector="Button.commandbartext">
-    <Setter Property="Height" Value="28" />
-    <Setter Property="Padding" Value="10,0" />
-    <Setter Property="Background" Value="Transparent" />
-    <Setter Property="BorderThickness" Value="0" />
-    <Setter Property="Foreground" Value="White" />
-  </Style>
-
-  <Style Selector="Button.commandbartext:pointerover">
-    <Setter Property="Background" Value="{DynamicResource Brush.Surface.4}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}" />
-  </Style>
-
-  <Style Selector="Button.commandbartext:disabled">
-    <Setter Property="Foreground" Value="#8A939F" />
   </Style>
 
   <!-- ToggleButtons: approved baseline (WPF Toggle.Segment). -->

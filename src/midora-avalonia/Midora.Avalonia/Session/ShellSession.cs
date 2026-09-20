@@ -574,6 +574,11 @@ public sealed class ShellSession : INotifyPropertyChanged
         Workspaces.Clear();
         _history.Clear();
         _historyIndex = -1;
+        foreach (WorkspaceTab tab in Workspaces)
+        {
+            tab.SetActive(false);
+        }
+
         ActiveWorkspace = null;
         CompileState = "Not Compiled";
         ErrorCount = 0;
@@ -695,6 +700,11 @@ public sealed class ShellSession : INotifyPropertyChanged
             }
         }
 
+        foreach (WorkspaceTab tab in Workspaces)
+        {
+            tab.SetActive(ReferenceEquals(tab, ActiveWorkspace));
+        }
+
         RaiseDerived();
     }
 
@@ -724,6 +734,12 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     private void ActivateWorkspace(WorkspaceTab workspace, bool pushHistory)
     {
+        if (_activeWorkspace is { } previous && !ReferenceEquals(previous, workspace))
+        {
+            previous.SetActive(false);
+        }
+
+        workspace.SetActive(true);
         ActiveWorkspace = workspace;
         _activeEditView = workspace.Content as MidiTrackView;
         if (pushHistory)

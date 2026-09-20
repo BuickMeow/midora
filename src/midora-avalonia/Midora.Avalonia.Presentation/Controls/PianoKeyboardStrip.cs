@@ -54,7 +54,7 @@ public sealed class PianoKeyboardStrip : Control
     private static readonly Typeface LabelTypeface = new(
         FontFamily.Default,
         FontStyle.Normal,
-        FontWeight.Normal,
+        FontWeight.SemiBold,
         FontStretch.Normal);
 
     private int _pressedPitch = -1;
@@ -122,23 +122,48 @@ public sealed class PianoKeyboardStrip : Control
             double top = rulerHeight + row * laneHeight;
             double keyHeight = Math.Max(1, laneHeight);
             bool black = PianoKeyPresentation.IsBlackKey(pitch);
-            double keyWidth = black ? Math.Max(1, width * 0.62) : width;
             bool pressed = pitch == _pressedPitch;
-            IBrush brush = black
-                ? pressed ? BlackKeyPressedBrush : BlackKeyBrush
-                : pressed ? WhiteKeyPressedBrush : WhiteKeyBrush;
-            context.FillRectangle(brush, new Rect(0, top, keyWidth, keyHeight), 1f);
-            if (!black)
+            Rect whiteBounds = new(0, top, width, keyHeight);
+            context.DrawRectangle(
+                pressed ? WhiteKeyPressedBrush : WhiteKeyBrush,
+                BorderPen,
+                whiteBounds);
+            if (black)
             {
-                context.DrawLine(
-                    WhiteKeyPen,
-                    new Point(0, Math.Round(top + keyHeight) - 0.5),
-                    new Point(width, Math.Round(top + keyHeight) - 0.5));
-                string? label = PianoKeyPresentation.GetOctaveCLabel(pitch);
-                if (label is not null)
-                {
-                    DrawLabel(context, label, 4, top + 1);
-                }
+                double blackKeyWidth = Math.Max(12, Math.Round(width * 0.68));
+                Rect blackBounds = new(0, top + 1, blackKeyWidth, Math.Max(1, keyHeight - 2));
+                context.DrawRectangle(
+                    pressed ? BlackKeyPressedBrush : BlackKeyBrush,
+                    BorderPen,
+                    blackBounds,
+                    1,
+                    1);
+                continue;
+            }
+
+            string? label = PianoKeyPresentation.GetOctaveCLabel(pitch);
+            if (label is null)
+            {
+                continue;
+            }
+
+            double fontSize = Math.Clamp(laneHeight * 0.56, 8, 11);
+            FormattedText formatted = new(
+                label,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                LabelTypeface,
+                fontSize,
+                LabelBrush);
+            try
+            {
+                double labelX = Math.Max(4, width - formatted.Width - 6);
+                double labelY = top + (keyHeight - formatted.Height) / 2;
+                context.DrawText(formatted, new Point(labelX, labelY));
+            }
+            finally
+            {
+                (formatted as IDisposable)?.Dispose();
             }
         }
     }
@@ -214,15 +239,4 @@ public sealed class PianoKeyboardStrip : Control
         return pitch;
     }
 
-    private static void DrawLabel(DrawingContext context, string text, double x, double y)
-    {
-        var formatted = new FormattedText(
-            text,
-            CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight,
-            LabelTypeface,
-            9,
-            LabelBrush);
-        context.DrawText(formatted, new Point(x, y));
-    }
 }

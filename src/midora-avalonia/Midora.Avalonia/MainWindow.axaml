@@ -245,56 +245,44 @@
         </StackPanel>
       </Border>
 
-      <TabControl x:Name="WorkspaceTabs"
-                  IsVisible="{Binding HasProject}"
-                  ItemsSource="{Binding Workspaces}"
-                  SelectedItem="{Binding ActiveWorkspace, Mode=OneWay}"
-                  Background="Transparent">
-        <TabControl.Template>
-          <ControlTemplate>
-            <Grid RowDefinitions="Auto,*">
-              <Grid Background="{DynamicResource Brush.Surface.1}" ColumnDefinitions="*,32">
-                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                  <ItemsPresenter Name="PART_ItemsPresenter" HorizontalAlignment="Left" />
-                </ScrollViewer>
-                <Button Grid.Column="1" Width="28" Height="28" Margin="2" Padding="0" Classes="icon ghost"
-                        ToolTip.Tip="Workspace list">
-                  <TextBlock FontSize="14" Text="▾" Foreground="{DynamicResource Brush.Text.Secondary}" />
-                </Button>
-              </Grid>
-              <ContentPresenter Name="PART_SelectedContentHost" Grid.Row="1"
-                                Content="{TemplateBinding SelectedContent}"
-                                ContentTemplate="{TemplateBinding SelectedContentTemplate}" />
-            </Grid>
-          </ControlTemplate>
-        </TabControl.Template>
-        <TabControl.ItemsPanel>
-          <ItemsPanelTemplate>
-            <StackPanel Orientation="Horizontal" />
-          </ItemsPanelTemplate>
-        </TabControl.ItemsPanel>
-        <TabControl.ItemTemplate>
-          <DataTemplate>
-            <StackPanel Orientation="Horizontal">
-              <controls:FluentIcon Width="16" Height="16" Margin="0,0,6,0"
-                                   VerticalAlignment="Center" Data="{Binding Icon}" />
-              <TextBlock VerticalAlignment="Center" Text="{Binding Header}" />
-              <Button Width="20" Height="20" Margin="7,0,0,0" Padding="0" Classes="icon ghost"
-                      ToolTip.Tip="Close Workspace"
-                      IsVisible="{Binding CanClose}"
-                      Tag="{Binding}"
-                      Click="OnCloseWorkspaceClick">
-                <controls:FluentIcon Width="10" Height="10" Data="{StaticResource Fluent.Dismiss20Regular}" />
-              </Button>
-            </StackPanel>
-          </DataTemplate>
-        </TabControl.ItemTemplate>
-        <TabControl.ContentTemplate>
-          <DataTemplate>
-            <ContentControl Content="{Binding Content}" />
-          </DataTemplate>
-        </TabControl.ContentTemplate>
-      </TabControl>
+      <Grid RowDefinitions="Auto,*" IsVisible="{Binding HasProject}">
+        <Grid Background="{DynamicResource Brush.Surface.1}" ColumnDefinitions="*,32">
+          <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Workspaces}" HorizontalAlignment="Left">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Classes="wstab" Classes.active="{Binding IsActive}"
+                          PointerPressed="OnWorkspaceTabPointerPressed">
+                    <StackPanel Orientation="Horizontal">
+                      <controls:FluentIcon Width="16" Height="16" Margin="0,0,6,0"
+                                           VerticalAlignment="Center" Data="{Binding Icon}" />
+                      <TextBlock Classes="wstablabel" Classes.active="{Binding IsActive}"
+                                 VerticalAlignment="Center" Text="{Binding Header}" />
+                      <Button Width="20" Height="20" Margin="7,0,0,0" Padding="0" Classes="icon ghost"
+                              ToolTip.Tip="Close Workspace"
+                              IsVisible="{Binding CanClose}"
+                              Tag="{Binding}"
+                              Click="OnCloseWorkspaceClick">
+                        <controls:FluentIcon Width="10" Height="10" Data="{StaticResource Fluent.Dismiss20Regular}" />
+                      </Button>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+          <Button Grid.Column="1" Width="28" Height="28" Margin="2" Padding="0" Classes="icon ghost"
+                  ToolTip.Tip="Workspace list">
+            <TextBlock FontSize="14" Text="▾" Foreground="{DynamicResource Brush.Text.Secondary}" />
+          </Button>
+        </Grid>
+        <ContentControl Grid.Row="1" Content="{Binding ActiveWorkspace.Content}" />
+      </Grid>
     </Grid>
 
     <!-- Status bar. -->

@@ -476,3 +476,18 @@
 验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；最大化截图核对 Arrangement（预览噪声、标尺/网格、轨道头、双滚动条）、钢琴卷帘、力度条三种场景。
 
 - **仍存的功能级差距（需新子系统，不是纯视觉）**：Conductor 专用编辑器工作区（事件列表 + Tempo 阶梯图）、Track/All Tracks 概览条与导航（WPF `TimelineOverviewSurface`）、钢琴卷帘对象列表面板、Event/Parameter Lane 的增删与管理栏、播放键盘试听（依赖音频引擎）、Diagnostics 实际内容。P3 路径后续可扩展为 `SKPicture`/`DrawVertices` 与瓦片缓存合并，并按 ADR-UI-020 补性能门。
+
+### 2026-09-20（续）Slice J：钢琴卷帘与标签条按 WPF 校正（本轮）
+
+产品所有者指出钢琴卷帘与标签条的实际差异，本轮修复：
+
+1. **标签条横排**：放弃 Avalonia `TabControl`（其模板/ItemsPanel 不可靠，实际渲染成竖排），改为自绘单行标签条：`ItemsControl` + 水平 `StackPanel` + `ContentControl`，标签为 `Border.wstab`（12,8 内边距、选中红色 2 px 下划线、悬停 `Surface.2`），`WorkspaceTab` 新增 `IsActive`（INPC）由 `ShellSession.ActivateWorkspace/CloseWorkspace/CloseProject` 维护。截图确认 `Arrangement` 与 `Chords` 水平并排。
+2. **钢琴卷帘音符**：去掉圆角（批处理半径 0，与 WPF 瓦片栅格一致），保留 0.78 不透明度与 Border 描边；选中用 Red.Hover 描边。
+3. **钢琴键盘**：按 WPF `DrawPianoKeyboardCore` 重写——白键整宽矩形 + Border 描边；黑键宽 `max(12, round(width*0.68))`、上下各 1 px、圆角 1、带描边，因此黑键右侧露出白键；C 标签右对齐（`x = width - text - 6`）、`fontSize = clamp(laneHeight*0.56, 8, 11)`、SemiBold、`Brush.PianoKey.Label`。
+4. **删除重复音名**：移除 surface 的 `DrawPitchLabels`（WPF 只在键盘上画 C 标签；EventLanes/Velocity 模式也不画 lane 标签）。
+5. **卷帘角块**：音轨编辑器左上补上 WPF 的竖排缩放角块（52×18，`Surface.1` 底、底部/右侧 Border 分割线、`Zoom out/in` 按钮 22×18），范围 3–128（WPF `MinimumPianoLaneHeight/MaximumPianoLaneHeight`）。
+6. **卷帘底纹与网格**：白键行使用 `Surface.1` 底纹、黑键行用 `Surface.0`（对齐 WPF `shaded = !IsBlackKey`），每个半音仍有 1 px 分隔线；标尺刻度只在 bar 线绘制（WPF `DrawBarRuler` 只在 bar 线写刻度与小节号），不再每格都画，消除“繁琐”的密集刻度。
+
+验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；最大化截图核对标签条横排、键盘黑键右露白、C 标签位置、角块、方形音符、白键底纹。
+
+- **钢琴卷帘仍未接入的 WPF 功能**（下一批）：底部 Lane Tab Host（Inst./CC7/Program Change 等 lane 标签页与各自工具条）、`List/Lanes` 切换与对象列表面板、下半区值编辑 lane、`TimelineOverviewSurface` 水平概览+视口拖动、`Onion` 按钮、PianoNotes/Selection 瓦片缓存（需要 WPF 的 `TimelineRenderSnapshot` 投影层；当前音符走批处理实时绘制）。这些属于新子系统，不是纯视觉微调。

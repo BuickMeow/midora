@@ -85,8 +85,26 @@
     </Border>
 
     <Grid Grid.Row="1" RowDefinitions="*,10" ColumnDefinitions="Auto,*,10">
-      <presentation:PianoKeyboardStrip x:Name="Keyboard" Grid.Row="0" Grid.Column="0" Width="64"
-                                       FirstLane="36" LaneHeight="15" IsVisible="False" />
+      <Grid Grid.Row="0" Grid.Column="0">
+        <presentation:PianoKeyboardStrip x:Name="Keyboard" Width="64"
+                                         FirstLane="36" LaneHeight="15" RulerHeight="24" IsVisible="False" />
+        <!-- WPF segment corner: vertical zoom out/in above the keyboard. -->
+        <Grid Width="52" Height="18" HorizontalAlignment="Left" VerticalAlignment="Top"
+              Background="{DynamicResource Brush.Surface.1}" ColumnDefinitions="*,22,2,22,*"
+              IsVisible="{Binding #Keyboard.IsVisible}">
+          <Button Grid.Column="1" Padding="0" Classes="icon ghost" ToolTip.Tip="Vertical zoom out"
+                  Click="OnVerticalZoomOutClick">
+            <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}" />
+          </Button>
+          <Button Grid.Column="3" Padding="0" Classes="icon ghost" ToolTip.Tip="Vertical zoom in"
+                  Click="OnVerticalZoomInClick">
+            <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}" />
+          </Button>
+          <Border Grid.Column="4" Width="1" HorizontalAlignment="Right" Background="{DynamicResource Brush.Border}" />
+          <Border Grid.Row="0" Grid.ColumnSpan="5" Height="1" VerticalAlignment="Bottom"
+                  Background="{DynamicResource Brush.Border}" />
+        </Grid>
+      </Grid>
       <presentation:TimelineSurface x:Name="Timeline"
                                     Grid.Row="0" Grid.Column="1"
                                     GridVisible="True"

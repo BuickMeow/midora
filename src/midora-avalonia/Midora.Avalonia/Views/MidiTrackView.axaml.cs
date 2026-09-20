@@ -383,6 +383,18 @@ public partial class MidiTrackView : UserControl
         SetTool(tool);
     }
 
+    private void OnVerticalZoomInClick(object? sender, RoutedEventArgs e) =>
+        SetVerticalLaneHeight(Timeline.LaneHeight * 1.25);
+
+    private void OnVerticalZoomOutClick(object? sender, RoutedEventArgs e) =>
+        SetVerticalLaneHeight(Timeline.LaneHeight / 1.25);
+
+    private void SetVerticalLaneHeight(double laneHeight)
+    {
+        Timeline.LaneHeight = Math.Clamp(laneHeight, 3, 128);
+        Keyboard.LaneHeight = Timeline.LaneHeight;
+    }
+
     private void OnZoomInClick(object? sender, RoutedEventArgs e) =>
         Timeline.TickSpan = Math.Max(1, (long)(Timeline.TickSpan / HorizontalZoomStep));
 

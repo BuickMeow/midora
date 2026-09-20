@@ -21,8 +21,15 @@ public partial class MainWindow : Window
         DataContext = Session;
         ApplyPlatformChrome();
         PopulateWindowsMenu();
-        WorkspaceTabs.SelectionChanged += (_, _) =>
-            Session.ActivateFromUi(WorkspaceTabs.SelectedItem as WorkspaceTab);
+    }
+
+    private void OnWorkspaceTabPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is Control { DataContext: WorkspaceTab tab }
+            && e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed)
+        {
+            Session.ActivateFromUi(tab);
+        }
     }
 
     internal ShellSession Session { get; }

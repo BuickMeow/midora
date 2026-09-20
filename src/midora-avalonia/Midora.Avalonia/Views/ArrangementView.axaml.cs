@@ -34,6 +34,7 @@ public partial class ArrangementView : UserControl
 
     private ITimelineRenderItemSource _source;
     private IReadOnlyList<string> _trackNames;
+    private IReadOnlyList<string>? _trackDetails;
     private Func<TimelineRenderItem, ITimelineSegmentPreviewSource?>? _previewProvider;
     private long _ticksPerQuarterNote = 480;
 
@@ -89,11 +90,13 @@ public partial class ArrangementView : UserControl
         long ticksPerQuarterNote,
         IReadOnlyList<string> trackNames,
         Func<TimelineRenderItem, ITimelineSegmentPreviewSource?>? previewProvider,
-        bool preserveView = false)
+        bool preserveView = false,
+        IReadOnlyList<string>? trackDetails = null)
     {
         _source = source;
         _ticksPerQuarterNote = Math.Max(1, ticksPerQuarterNote);
         _trackNames = trackNames;
+        _trackDetails = trackDetails;
         _previewProvider = previewProvider;
         ApplySource(preserveView);
     }
@@ -108,6 +111,8 @@ public partial class ArrangementView : UserControl
         long maximum = Math.Max(1, _source.MaximumEndTick);
         LaneHeaders.LaneHeight = Timeline.LaneHeight;
         LaneHeaders.TrackNames = _trackNames;
+        LaneHeaders.SecondaryLabels = _trackDetails;
+        Timeline.LaneCount = Math.Max(1, _trackNames.Count);
         Timeline.TicksPerQuarterNote = _ticksPerQuarterNote;
         Timeline.PreviewProvider = _previewProvider;
         Timeline.TrackNames = lane =>

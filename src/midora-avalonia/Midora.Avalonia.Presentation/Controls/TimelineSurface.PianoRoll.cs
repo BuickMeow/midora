@@ -7,9 +7,9 @@ namespace Midora.Avalonia.Presentation.Controls;
 public sealed partial class TimelineSurface
 {
     private readonly List<TimelineRenderItem> _pianoRollItems = [];
-    private static Pen? _noteSelectedPen;
-
-    private static Pen NoteSelectedPen => _noteSelectedPen ??= new Pen(RedBrush, 1.5);
+    private static readonly Pen SelectionPen = new(
+        new SolidColorBrush(global::Avalonia.Media.Color.FromRgb(0xF2, 0x55, 0x5A)),
+        2);
 
     private void DrawPianoRollSurface(
         DrawingContext context,
@@ -18,6 +18,7 @@ public sealed partial class TimelineSurface
         double height)
     {
         DrawLaneBackgrounds(context, viewport, width, height);
+        FlushShapes(context);
         DrawPitchLabels(context, viewport, width, height);
         if (Source is null)
         {
@@ -63,8 +64,14 @@ public sealed partial class TimelineSurface
                 right - left,
                 Math.Max(devicePixel, viewport.LaneHeight - verticalInset * 2));
             bool selected = SelectedId == item.Id || item.State.HasFlag(TimelineItemState.Selected);
-            context.DrawRectangle(NoteBrush, selected ? NoteSelectedPen : null, bounds, 2, 2);
+            AddShape(selected ? NoteSelectedBrush : NoteBrush, BorderPen, bounds, 2, 0.78);
+            if (selected)
+            {
+                AddShape(null, SelectionPen, bounds, 2);
+            }
         }
+
+        FlushShapes(context);
     }
 
     private void DrawPitchLabels(

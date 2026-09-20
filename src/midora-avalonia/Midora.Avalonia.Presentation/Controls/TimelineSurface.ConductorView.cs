@@ -18,6 +18,7 @@ public sealed partial class TimelineSurface
         double height)
     {
         DrawLaneBackgrounds(context, viewport, width, height);
+        FlushShapes(context);
         if (Source is null)
         {
             return;
@@ -67,7 +68,7 @@ public sealed partial class TimelineSurface
             }
 
             bool selected = SelectedId == item.Id || item.State.HasFlag(TimelineItemState.Selected);
-            context.DrawEllipse(RedBrush, selected ? NoteSelectedPen : null, new Point(x, centerY), 2.5, 2.5);
+            context.DrawEllipse(RedBrush, selected ? SelectionPen : null, new Point(x, centerY), 2.5, 2.5);
             string label = ConductorRenderItemSource.GetDisplayLabel(item);
             if (string.IsNullOrEmpty(label))
             {

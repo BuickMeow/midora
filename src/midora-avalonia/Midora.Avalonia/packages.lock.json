@@ -212,7 +212,9 @@
         "type": "Project",
         "dependencies": {
           "Avalonia": "[11.3.22, )",
-          "Midora.Domain": "[1.0.0-dev, )"
+          "Avalonia.Skia": "[11.3.22, )",
+          "Midora.Domain": "[1.0.0-dev, )",
+          "SkiaSharp": "[2.88.9, )"
         }
       },
       "midora.common": {

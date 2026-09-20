@@ -47,6 +47,7 @@ public sealed class MidiTimelineSource :
     private readonly LaneBucket?[] _bucketsByLane;
     private readonly ArrangementLaneDescriptor[] _laneDescriptors;
     private readonly string[] _trackNames;
+    private readonly string[] _trackDetails;
     private readonly SegmentPreviewSource _overviewPreview;
     private readonly ulong _contentFingerprint;
     private ConcurrentDictionary<MidoraId, SegmentPreviewSource> _segmentPreviews = [];
@@ -167,10 +168,13 @@ public sealed class MidiTimelineSource :
         }
 
         _trackNames = new string[project.Tracks.Count + 1];
+        _trackDetails = new string[project.Tracks.Count + 1];
         _trackNames[0] = "Conductor";
+        _trackDetails[0] = "Tempo & markers";
         for (int trackIndex = 0; trackIndex < project.Tracks.Count; trackIndex++)
         {
             _trackNames[trackIndex + 1] = TrackDisplayName(project.Tracks[trackIndex], trackIndex);
+            _trackDetails[trackIndex + 1] = TrackDetailLabel(project.Tracks[trackIndex]);
         }
 
         _laneDescriptors = new ArrangementLaneDescriptor[project.Tracks.Count + 1];
@@ -229,6 +233,7 @@ public sealed class MidiTimelineSource :
         : _contentFingerprint;
     public IReadOnlyList<ArrangementLaneDescriptor> LaneDescriptors => _laneDescriptors;
     public IReadOnlyList<string> TrackNames => _trackNames;
+    public IReadOnlyList<string> TrackDetails => _trackDetails;
 
     public IReadOnlyList<ImportedMidiNote> GetTrackNotes(int trackIndex)
     {
@@ -446,6 +451,19 @@ public sealed class MidiTimelineSource :
         return string.IsNullOrWhiteSpace(track.Name)
             ? "Track " + (trackIndex + 1).ToString(CultureInfo.InvariantCulture)
             : track.Name;
+    }
+
+    /// <summary>WPF lane detail format: <c>P.{port} Ch.{channel} {mode}</c>.</summary>
+    private static string TrackDetailLabel(ImportedMidiTrack track)
+    {
+        int channel = 0;
+        int mask = track.ChannelMask;
+        while (channel < 15 && (mask & (1 << channel)) == 0)
+        {
+            channel++;
+        }
+
+        return $"P.1 Ch.{channel + 1} Melodic";
     }
 
     private static TimelineRenderItem CreateConductorItem(

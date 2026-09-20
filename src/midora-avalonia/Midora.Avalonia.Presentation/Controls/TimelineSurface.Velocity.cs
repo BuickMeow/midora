@@ -15,6 +15,7 @@ public sealed partial class TimelineSurface
         double height)
     {
         DrawLaneBackgrounds(context, viewport, width, height);
+        FlushShapes(context);
         DrawPitchLabels(context, viewport, width, height);
         if (Source is null)
         {
@@ -63,10 +64,11 @@ public sealed partial class TimelineSurface
                 0,
                 Math.Max(0, viewport.Width - barWidth));
             bool selected = SelectedId == item.Id || item.State.HasFlag(TimelineItemState.Selected);
-            context.FillRectangle(
+            AddFill(
                 selected ? RedBrush : NoteBrush,
-                new Rect(x, top, barWidth, Math.Max(devicePixel, rowBottom - top)),
-                1f);
+                new Rect(x, top, barWidth, Math.Max(devicePixel, rowBottom - top)));
         }
+
+        FlushShapes(context);
     }
 }

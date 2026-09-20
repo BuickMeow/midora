@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 
@@ -71,6 +72,12 @@ public partial class App : Application
                 if (Environment.GetEnvironmentVariable("MIDORA_NEW_PROJECT") == "1")
                 {
                     mainWindow.Opened += (_, _) => mainWindow.NewProjectForReview();
+                }
+
+                if (Environment.GetEnvironmentVariable("MIDORA_MAXIMIZE") == "1")
+                {
+                    mainWindow.Opened += (_, _) =>
+                        mainWindow.WindowState = WindowState.Maximized;
                 }
             }
         }

@@ -30,7 +30,7 @@ public partial class MidiTrackView : UserControl
     private const int DefaultPitchCount = 60;
     private const double DefaultValueMinimum = 0d;
     private const double DefaultValueMaximum = 127d;
-    private const double NotesLaneHeight = 12d;
+    private const double NotesLaneHeight = 15d;
     private const double ConductorLaneHeight = 20d;
     private const double HorizontalZoomStep = 1.25;
 
@@ -249,6 +249,7 @@ public partial class MidiTrackView : UserControl
         Timeline.FirstPitch = DefaultFirstPitch;
         Timeline.PitchCount = DefaultPitchCount;
         Timeline.FirstLane = DefaultFirstPitch;
+        Timeline.LaneCount = 128;
         Keyboard.FirstLane = DefaultFirstPitch;
         Keyboard.LaneHeight = Timeline.LaneHeight;
         Timeline.ValueMinimum = DefaultValueMinimum;

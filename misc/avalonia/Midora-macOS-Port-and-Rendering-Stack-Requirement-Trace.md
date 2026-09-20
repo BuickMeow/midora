@@ -458,3 +458,21 @@
 验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；截图核对空工程、真实 MIDI 导入与 Chords 音轨编辑三种场景（标签栏、头部工具栏、56px 轨道、M/S 芯片、Marker chip、状态栏按钮、无横幅/无多余底栏）。
 
 - **仍存的功能级差距（需新子系统，不是纯视觉）**：Conductor 专用编辑器工作区（事件列表 + Tempo 阶梯图）、Track/All Tracks 概览条与导航、钢琴卷帘对象列表面板、Event/Parameter Lane 的增删与管理栏、播放键盘试听（依赖音频引擎）、Diagnostics 实际内容。
+
+### 2026-09-20（续）Slice I：P3 Skia 形状批处理 + 预览瓦片 + 控件基线（本轮）
+
+产品所有者要求“开始 3”并继续按 WPF 原版校正，本轮：
+
+1. **P3 渲染路径（新增）**：`Presentation/Controls/TimelineShapeDrawOperation.cs` 实现 `ICustomDrawOperation` + `ISkiaSharpApiLeaseFeature`，把泳道底纹、栅格线、标尺刻度、Segment 主体/选中框、钢琴卷帘音符、力度条、事件步进线与事件点、Conductor 点全部批量成一次 `SKCanvas` 绘制（`TimelineShapeBatch`，AA 关闭、圆角按 WPF 半径 2）；文本、Marker chip、瓦片位图仍在 `DrawingContext` 上按序绘制，保证主题文本与图片位置不变。`TimelineSurface.Tiles.cs` 提供 `AddFill/AddShape/AddLine/AddEllipse/FlushShapes` 与颜色转换（含 WPF 的 0.88 Segment、0.78 Note 不透明度）。
+   修复过程记录：首版把线段端点存进 `Rect(x,y,width,height)` 导致所有批处理线画成斜线，已改为独立 `X1/Y1/X2/Y2`，截图确认恢复水平/垂直。
+2. **Arrangement 音符预览改用移植瓦片管线**：`MidiTimelineSource` 增加 `TrackDetails`（`P.{port} Ch.{ch} {mode}`，对齐 WPF `PresentationModels.cs:1951`），`TimelineSegmentPreviewRasterizer` 的 CPU 栅格器按 96 px/quarter 固定内容宽度 + LOD 出瓦片，经 `PixelBufferBitmap` 变成位图后 `DrawImage` 平铺；未就绪时保留旧的实时细线回退，因此任何时刻都能看到音符噪声。
+3. **控件基线补齐**：`TextBox`（34 高、10,3 内边距、圆角 3、Surface.0/Border.Strong、Caret Red.Hover）、`ComboBox`（32 高、圆角 3、9 右侧 chevron）、`ComboBoxItem`、`ScrollBar`（10 宽、`Border.Strong` 圆角 4 滑块、悬停 Text.Tertiary、拖动 Red）、TabItem `MinHeight=0`（修复标签条偏高）。
+4. **Arrangement 标签图标**改为 WPF 的 `Fluent.MoviesAndTv20Regular`（`WorkspaceTabIconConverter`）。
+5. **标尺/网格颜色**按 WPF：bar 线 = `Brush.Border`，beat 线 = Border × 0.32，刻度 = `Brush.Text.Primary` 2 px 且高 5，小节号 10 号 Text.Primary 位于标尺底部；轨道头分隔线、标尺底线同色。
+6. **轨道头**改为 WPF 栅格逻辑：20×20 类型图标（Conductor=`Wrench`，其余=`Midi`）在 x=5、主标签 11 号 Text.Primary、副标签 9 号 Text.Tertiary 外加圆角 2 边框 chip、M/S 为 16×16 无圆角方块（未选中透明+Border 边框+Secondary 文字；M 选中 `Red.Subtle`/`Red.Dark`/`Red.Hover`，S 选中 `Success.Subtle`/`Success`），命中区按 WPF 的 `width-41/-21` 与 `width-21/width`。
+7. **滚动条**：`TimelineSurface` 新增只读度量（`LaneCount`、`VisibleLaneCount`、`MaximumFirstLane`、`ExtentEndTick`、`MaximumStartTick`，在 `Render` 内刷新），Arrangement 与音轨编辑器增加纵向（泳道）与横向（时间）滚动条。
+8. 钢琴卷帘音符补齐 WPF 语义：圆角 2 + `Brush.Border` 描边 + 0.78 不透明度 + 选中 `Red.Dark`/`Red.Hover` 双描边；Segment 编辑器默认 `LaneHeight` 由 12 改为 WPF `PianoEditorDefaults.LaneHeight = 15`。
+
+验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；最大化截图核对 Arrangement（预览噪声、标尺/网格、轨道头、双滚动条）、钢琴卷帘、力度条三种场景。
+
+- **仍存的功能级差距（需新子系统，不是纯视觉）**：Conductor 专用编辑器工作区（事件列表 + Tempo 阶梯图）、Track/All Tracks 概览条与导航（WPF `TimelineOverviewSurface`）、钢琴卷帘对象列表面板、Event/Parameter Lane 的增删与管理栏、播放键盘试听（依赖音频引擎）、Diagnostics 实际内容。P3 路径后续可扩展为 `SKPicture`/`DrawVertices` 与瓦片缓存合并，并按 ADR-UI-020 补性能门。

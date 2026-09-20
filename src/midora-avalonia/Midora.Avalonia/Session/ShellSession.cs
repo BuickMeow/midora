@@ -353,7 +353,7 @@ public sealed class ShellSession : INotifyPropertyChanged
             WorkspaceKind.Arrangement,
             "Arrangement",
             _arrangementView,
-            Icon("Fluent.MusicNote120Regular"),
+            Icon("Fluent.MoviesAndTv20Regular"),
             canClose: false);
     }
 
@@ -527,7 +527,8 @@ public sealed class ShellSession : INotifyPropertyChanged
             _midiSource.Project.TicksPerQuarterNote,
             _midiSource.TrackNames,
             segment => _midiSource.GetPreviewSource(segment),
-            preserveView: true);
+            preserveView: true,
+            trackDetails: _midiSource.TrackDetails);
     }
 
     private void ApplyArrangementSource()
@@ -543,7 +544,8 @@ public sealed class ShellSession : INotifyPropertyChanged
                 midi,
                 midi.Project.TicksPerQuarterNote,
                 midi.TrackNames,
-                segment => midi.GetPreviewSource(segment));
+                segment => midi.GetPreviewSource(segment),
+                trackDetails: midi.TrackDetails);
         }
         else
         {
@@ -551,7 +553,8 @@ public sealed class ShellSession : INotifyPropertyChanged
                 EmptyTimelineSource.Instance,
                 480,
                 ["Conductor"],
-                previewProvider: null);
+                previewProvider: null,
+                trackDetails: ["Tempo & markers"]);
         }
     }
 

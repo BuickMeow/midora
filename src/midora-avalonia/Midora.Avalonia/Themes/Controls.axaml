@@ -51,9 +51,11 @@
   <!-- Workspace tab strip: approved baseline (12,8 padding, 2px red underline when selected). -->
   <Style Selector="TabControl > TabItem">
     <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Body}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Padding" Value="12,8" />
+    <Setter Property="MinHeight" Value="0" />
     <Setter Property="Cursor" Value="Hand" />
     <Setter Property="Template">
       <ControlTemplate>
@@ -365,5 +367,122 @@
   <Style Selector="MenuItem:disabled">
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
     <Setter Property="Opacity" Value="0.6" />
+  </Style>
+
+  <!-- TextBox: approved baseline (34 high, 10,3 padding, radius 3). -->
+
+  <Style Selector="TextBox">
+    <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Body}" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="Height" Value="34" />
+    <Setter Property="Padding" Value="10,3" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface.0}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="3" />
+    <Setter Property="CaretBrush" Value="{DynamicResource Brush.Red.Hover}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource Brush.Red.Dark}" />
+  </Style>
+
+  <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}" />
+  </Style>
+
+  <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
+  </Style>
+
+  <Style Selector="TextBox:disabled">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface.2}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+  </Style>
+
+  <!-- ComboBox: approved baseline (32 high, radius 3, chevron right, Surface.2 popup). -->
+
+  <Style Selector="ComboBox">
+    <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Body}" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="Height" Value="32" />
+    <Setter Property="Padding" Value="10,0,32,0" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface.0}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="3" />
+    <Setter Property="MaxDropDownHeight" Value="260" />
+  </Style>
+
+  <Style Selector="ComboBox:pointerover /template/ Border#Background">
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Text.Tertiary}" />
+  </Style>
+
+  <Style Selector="ComboBox:focus /template/ Border#Background">
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
+  </Style>
+
+  <Style Selector="ComboBoxItem">
+    <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Body}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Padding" Value="10,7" />
+  </Style>
+
+  <Style Selector="ComboBoxItem:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface.3}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+  </Style>
+
+  <Style Selector="ComboBoxItem:selected">
+    <Setter Property="Background" Value="{DynamicResource Brush.Red.Subtle}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Red.Hover}" />
+  </Style>
+
+  <!-- ScrollBar: approved baseline (10 wide/tall, Border.Strong thumb radius 4). -->
+
+  <Style Selector="ScrollBar">
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+
+  <Style Selector="ScrollBar:vertical">
+    <Setter Property="Width" Value="10" />
+  </Style>
+
+  <Style Selector="ScrollBar:horizontal">
+    <Setter Property="Height" Value="10" />
+  </Style>
+
+  <Style Selector="ScrollBar /template/ Thumb">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="ThumbChrome"
+                Background="{DynamicResource Brush.Border.Strong}"
+                CornerRadius="4" />
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="ScrollBar /template/ Thumb:pointerover /template/ Border#ThumbChrome">
+    <Setter Property="Background" Value="{DynamicResource Brush.Text.Tertiary}" />
+  </Style>
+
+  <Style Selector="ScrollBar /template/ Thumb:pressed /template/ Border#ThumbChrome">
+    <Setter Property="Background" Value="{DynamicResource Brush.Red}" />
+  </Style>
+
+  <Style Selector="ScrollBar /template/ RepeatButton">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="Transparent" />
+      </ControlTemplate>
+    </Setter>
   </Style>
 </Styles>

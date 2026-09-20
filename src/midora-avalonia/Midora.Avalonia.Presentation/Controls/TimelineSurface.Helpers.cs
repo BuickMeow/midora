@@ -38,6 +38,18 @@ public sealed partial class TimelineSurface
         public static readonly global::Avalonia.Media.Color TextTertiary =
             global::Avalonia.Media.Color.FromRgb(0x74, 0x7E, 0x8C);
 
+        public static readonly global::Avalonia.Media.Color TextPrimary =
+            global::Avalonia.Media.Color.FromRgb(0xF1, 0xF3, 0xF5);
+
+        public static readonly global::Avalonia.Media.Color SegmentNotePreview =
+            global::Avalonia.Media.Color.FromRgb(0xBD, 0xC7, 0xCF);
+
+        public static readonly global::Avalonia.Media.Color EventPreview =
+            global::Avalonia.Media.Color.FromRgb(0xE5, 0x3D, 0x44);
+
+        public static readonly global::Avalonia.Media.Color NoteSelected =
+            global::Avalonia.Media.Color.FromRgb(0x8F, 0x24, 0x29);
+
         public static readonly global::Avalonia.Media.Color Red =
             global::Avalonia.Media.Color.FromRgb(0xE5, 0x48, 0x4D);
 
@@ -53,6 +65,10 @@ public sealed partial class TimelineSurface
     private static readonly SolidColorBrush NoteBrush = new(Color.Note);
     private static readonly SolidColorBrush EventBrush = new(Color.Event);
     private static readonly SolidColorBrush TextTertiaryBrush = new(Color.TextTertiary);
+    private static readonly SolidColorBrush TextPrimaryBrush = new(Color.TextPrimary);
+    private static readonly SolidColorBrush SegmentNotePreviewBrush = new(Color.SegmentNotePreview);
+    private static readonly SolidColorBrush EventPreviewBrush = new(Color.EventPreview);
+    private static readonly SolidColorBrush NoteSelectedBrush = new(Color.NoteSelected);
     private static readonly SolidColorBrush TextSecondaryBrush = new(
         global::Avalonia.Media.Color.FromRgb(0xA7, 0xAF, 0xBB));
     private static readonly SolidColorBrush MarkerChipTextBrush = new(
@@ -66,6 +82,10 @@ public sealed partial class TimelineSurface
         global::Avalonia.Media.Color.FromArgb(0x66, 0x05, 0x06, 0x07));
     private static readonly Pen BorderPen = new(new SolidColorBrush(Color.Border), 1);
     private static readonly Pen GridPen = new(GridBrush, 1);
+    private static readonly Pen BeatGridPen = new(
+        new SolidColorBrush(Color.Border, 0.32),
+        1);
+    private static readonly Pen RulerTickPen = new(TextPrimaryBrush, 2);
     private static readonly Pen SelectedOutlinePen = new(NoteBrush, 1.5);
     private static readonly Pen HoverOutlinePen = new(TextTertiaryBrush, 1);
     private static readonly Pen CursorPen = new(RedBrush, 1);

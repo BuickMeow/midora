@@ -8,6 +8,13 @@ namespace Midora.Avalonia.Presentation.Controls;
 
 public sealed partial class TimelineSurface
 {
+    private readonly List<PendingSegmentPreview> _pendingSegmentPreviews = [];
+
+    private readonly record struct PendingSegmentPreview(
+        Rect Bounds,
+        TimelineRenderItem Item,
+        ITimelineSegmentPreviewSource Preview);
+
     private void DrawLaneBackgrounds(
         DrawingContext context,
         TimelineViewport viewport,
@@ -25,13 +32,12 @@ public sealed partial class TimelineSurface
             if ((index & 1) != 0)
             {
                 double laneBottom = Math.Min(height, laneTop + viewport.LaneHeight);
-                context.FillRectangle(
+                AddFill(
                     LaneAlternateBrush,
-                    new Rect(0, laneTop, width, Math.Max(0, laneBottom - laneTop)),
-                    1f);
+                    new Rect(0, laneTop, width, Math.Max(0, laneBottom - laneTop)));
             }
 
-            context.DrawLine(
+            AddLine(
                 BorderPen,
                 new Point(0, Math.Round(laneTop) + 0.5),
                 new Point(width, Math.Round(laneTop) + 0.5));
@@ -39,10 +45,9 @@ public sealed partial class TimelineSurface
             if (IsLaneFiltered(viewport.FirstLane + index))
             {
                 double laneBottom = Math.Min(height, laneTop + viewport.LaneHeight);
-                context.FillRectangle(
+                AddFill(
                     LaneDimBrush,
-                    new Rect(0, laneTop, width, Math.Max(0, laneBottom - laneTop)),
-                    1f);
+                    new Rect(0, laneTop, width, Math.Max(0, laneBottom - laneTop)));
             }
         }
     }
@@ -73,10 +78,13 @@ public sealed partial class TimelineSurface
                 continue;
             }
 
-            context.DrawLine(GridPen, new Point(x, RulerHeight), new Point(x, height));
-            context.DrawLine(
-                BorderPen,
-                new Point(x, Math.Max(0, RulerHeight - 4)),
+            AddLine(
+                line.Kind == TimelineGridLineKind.Bar ? BorderPen : BeatGridPen,
+                new Point(x, RulerHeight),
+                new Point(x, height));
+            AddLine(
+                RulerTickPen,
+                new Point(x, Math.Max(0, RulerHeight - 5)),
                 new Point(x, RulerHeight));
             if (line.Kind != TimelineGridLineKind.Bar || x < nextLabelX)
             {
@@ -84,7 +92,13 @@ public sealed partial class TimelineSurface
             }
 
             string label = map.GetBarBounds(line.Tick).Bar.ToString(CultureInfo.InvariantCulture);
-            nextLabelX = x + DrawLabel(context, label, x + 2, RulerHeight - 14, width - x - 4) + 8;
+            nextLabelX = x + DrawLabel(
+                context,
+                label,
+                x + 4,
+                Math.Max(1, RulerHeight - 12 - 1),
+                width - x - 4,
+                TextPrimaryBrush) + 8;
         }
     }
 
@@ -209,29 +223,67 @@ public sealed partial class TimelineSurface
             laneTop + 1,
             Math.Max(1, right - left - 2),
             Math.Max(1, viewport.LaneHeight - 2));
-        context.DrawRectangle(
+        AddShape(
             SegmentFillFor(item.AccentColor, selected),
             BorderPen,
             bounds,
             2,
-            2);
+            0.88);
         if (PreviewProvider is { } provider && bounds.Width >= 3 && bounds.Height >= 3)
         {
             ITimelineSegmentPreviewSource? preview = provider(item);
             if (preview is not null)
             {
-                DrawSegmentPreview(context, bounds, preview);
+                _pendingSegmentPreviews.Add(new PendingSegmentPreview(
+                    bounds,
+                    item,
+                    preview));
             }
         }
 
         if (selected)
         {
-            context.DrawRectangle(null, SelectedOutlinePen, bounds, 2, 2);
+            AddShape(null, SelectedOutlinePen, bounds, 2);
         }
         else if (hovered)
         {
-            context.DrawRectangle(null, HoverOutlinePen, bounds, 2, 2);
+            AddShape(null, HoverOutlinePen, bounds, 2);
         }
+    }
+
+    private void DrawSegmentPreviewDeferred(DrawingContext context, TimelineViewport viewport)
+    {
+        foreach (PendingSegmentPreview pending in _pendingSegmentPreviews)
+        {
+            Rect bounds = pending.Bounds;
+            TimelineRenderItem item = pending.Item;
+            ITimelineSegmentPreviewSource preview = pending.Preview;
+            long segmentLengthTicks = Math.Max(1, item.EndTick - item.StartTick);
+            double fullLeft = viewport.TickToX(item.StartTick);
+            double fullRight = viewport.TickToX(item.EndTick);
+            Rect fullBounds = new(
+                fullLeft,
+                bounds.Y,
+                Math.Max(1, fullRight - fullLeft),
+                bounds.Height);
+            bool tilesComplete = DrawSegmentPreviewTiles(
+                context,
+                bounds,
+                fullBounds,
+                item,
+                preview,
+                segmentLengthTicks,
+                (int)Math.Clamp(TicksPerQuarterNote, 1, 32767),
+                viewport.PixelsPerTick,
+                Color.SegmentNotePreview,
+                Color.EventPreview);
+            if (!tilesComplete)
+            {
+                DrawSegmentPreview(context, bounds, preview);
+            }
+        }
+
+        _pendingSegmentPreviews.Clear();
     }
 
     private void DrawSegmentPreview(
@@ -254,7 +306,7 @@ public sealed partial class TimelineSurface
                     double pitch = Math.Clamp(note.Pitch, 0, 127);
                     double top = bounds.Y + (127 - pitch) / 127d * bounds.Height;
                     context.FillRectangle(
-                        NoteBrush,
+                        SegmentNotePreviewBrush,
                         new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)),
                         1f);
                 }
@@ -272,7 +324,7 @@ public sealed partial class TimelineSurface
                     double top = bounds.Y
                         + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * bounds.Height;
                     context.FillRectangle(
-                        EventBrush,
+                        EventPreviewBrush,
                         new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)),
                         1f);
                 }
@@ -280,7 +332,7 @@ public sealed partial class TimelineSurface
         }
     }
 
-    private static void DrawConductorPoint(
+    private void DrawConductorPoint(
         DrawingContext context,
         TimelineViewport viewport,
         in TimelineRenderItem item,
@@ -295,7 +347,7 @@ public sealed partial class TimelineSurface
         }
 
         double centerY = laneTop + viewport.LaneHeight / 2;
-        context.DrawEllipse(
+        AddEllipse(
             RedBrush,
             selected || hovered ? SelectedOutlinePen : null,
             new Point(x, centerY),
@@ -324,13 +376,12 @@ public sealed partial class TimelineSurface
             }
 
             double y = laneTop + viewport.LaneHeight / 2;
-            context.FillRectangle(
+            AddFill(
                 selected ? RedBrush : NoteBrush,
-                new Rect(lineLeft, y, lineRight - lineLeft, devicePixel),
-                1f);
+                new Rect(lineLeft, y, lineRight - lineLeft, devicePixel));
             if (selected || hovered)
             {
-                context.DrawRectangle(
+                AddShape(
                     null,
                     SelectedOutlinePen,
                     new Rect(lineLeft, y - 1, lineRight - lineLeft, devicePixel + 2));
@@ -347,17 +398,16 @@ public sealed partial class TimelineSurface
             ? laneTop + viewport.LaneHeight / 2
             : Math.Clamp(configuredY, minimumY, maximumY);
         double x = SnapToDevicePixel(Math.Clamp(left, 0, viewport.Width), devicePixel);
-        context.FillRectangle(
+        AddFill(
             selected ? RedBrush : EventBrush,
             new Rect(
                 x,
                 top,
                 devicePixel,
-                Math.Max(devicePixel, laneTop + viewport.LaneHeight - top)),
-            1f);
+                Math.Max(devicePixel, laneTop + viewport.LaneHeight - top)));
         if (selected || hovered)
         {
-            context.DrawEllipse(null, SelectedOutlinePen, new Point(x, top), 4, 4);
+            AddEllipse(null, SelectedOutlinePen, new Point(x, top), 4, 4);
         }
     }
 
@@ -401,7 +451,8 @@ public sealed partial class TimelineSurface
         string text,
         double x,
         double y,
-        double maximumWidth)
+        double maximumWidth,
+        IBrush? brush = null)
     {
         if (maximumWidth <= 0)
         {
@@ -414,7 +465,7 @@ public sealed partial class TimelineSurface
             FlowDirection.LeftToRight,
             SurfaceTypeface,
             10,
-            TextTertiaryBrush);
+            brush ?? TextTertiaryBrush);
         try
         {
             formatted.MaxTextWidth = maximumWidth;

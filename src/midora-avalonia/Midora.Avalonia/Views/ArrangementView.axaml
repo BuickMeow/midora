@@ -65,8 +65,8 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1" ColumnDefinitions="232,*">
-      <Grid Grid.Column="0" RowDefinitions="32,*">
+    <Grid Grid.Row="1" RowDefinitions="*,10" ColumnDefinitions="232,*,10">
+      <Grid Grid.Row="0" Grid.Column="0" RowDefinitions="32,*">
         <!-- WPF arrangement lane-header corner: Event Instruments, Add Track, vertical zoom, reset monitoring. -->
         <Border Background="{DynamicResource Brush.Surface.1}"
                 BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,1,1">
@@ -105,11 +105,23 @@
         <views:LaneHeaderStrip x:Name="LaneHeaders" Grid.Row="1" RulerHeight="0" />
       </Grid>
       <presentation:TimelineSurface x:Name="Timeline"
-                                    Grid.Column="1"
+                                    Grid.Row="0" Grid.Column="1"
                                     LaneHeight="56"
                                     TicksPerQuarterNote="480"
                                     GridVisible="True"
                                     ShowTrackNames="False" />
+      <ScrollBar Grid.Row="0" Grid.Column="2" Orientation="Vertical" AllowAutoHide="False"
+                 Maximum="{Binding #Timeline.MaximumFirstLane}"
+                 Value="{Binding #Timeline.FirstLane, Mode=TwoWay}"
+                 ViewportSize="{Binding #Timeline.VisibleLaneCount}"
+                 SmallChange="1"
+                 LargeChange="{Binding #Timeline.VisibleLaneCount}" />
+      <ScrollBar Grid.Row="1" Grid.Column="1" Orientation="Horizontal" AllowAutoHide="False"
+                 Maximum="{Binding #Timeline.MaximumStartTick}"
+                 Value="{Binding #Timeline.StartTick, Mode=TwoWay}"
+                 ViewportSize="{Binding #Timeline.TickSpan}"
+                 SmallChange="120"
+                 LargeChange="{Binding #Timeline.TickSpan}" />
     </Grid>
   </Grid>
 </UserControl>

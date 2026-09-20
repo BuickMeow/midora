@@ -17,6 +17,7 @@ public sealed partial class TimelineSurface
         double height)
     {
         DrawLaneBackgrounds(context, viewport, width, height);
+        FlushShapes(context);
         if (Source is null)
         {
             return;
@@ -92,12 +93,12 @@ public sealed partial class TimelineSurface
             double y = ResolveEventLaneY(viewport, laneTop, item.Value);
             if (index > startIndex)
             {
-                context.DrawLine(stepPen, new Point(previousX, previousY), new Point(x, previousY));
-                context.DrawLine(stepPen, new Point(x, previousY), new Point(x, y));
+                AddLine(stepPen, new Point(previousX, previousY), new Point(x, previousY));
+                AddLine(stepPen, new Point(x, previousY), new Point(x, y));
             }
 
             bool selected = SelectedId == item.Id || item.State.HasFlag(TimelineItemState.Selected);
-            context.FillRectangle(selected ? RedBrush : EventBrush, new Rect(x - 1.5, y - 1.5, 3, 3), 1f);
+            AddFill(selected ? RedBrush : EventBrush, new Rect(x - 1.5, y - 1.5, 3, 3));
             previousX = x;
             previousY = y;
         }

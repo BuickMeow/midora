@@ -19,8 +19,7 @@ public sealed partial class TimelineSurface : Control
     private const double GridMinimumPixelSpacing = 6;
     private const double ZoomStep = 1.25;
     private const double WheelPanFraction = 0.1;
-    private const double ConductorPointRadius = 2.5;
-    private const long DefaultTickSpan = 1920;
+    private const double ConductorPointRadius = 2.5;    private const long DefaultTickSpan = 1920;
     private const int DefaultModeTicksPerQuarterNote = 480;
 
     private readonly List<TimelineRenderItem> _visibleItems = [];
@@ -125,6 +124,35 @@ public sealed partial class TimelineSurface : Control
         AvaloniaProperty.Register<TimelineSurface, TimelineSurfaceMode>(
             nameof(SurfaceMode),
             defaultValue: TimelineSurfaceMode.Arrangement);
+
+    public static readonly StyledProperty<int> LaneCountProperty =
+        AvaloniaProperty.Register<TimelineSurface, int>(nameof(LaneCount), 1);
+
+    private static readonly StyledProperty<int> VisibleLaneCountProperty =
+        AvaloniaProperty.Register<TimelineSurface, int>(nameof(VisibleLaneCount));
+
+    private static readonly StyledProperty<int> MaximumFirstLaneProperty =
+        AvaloniaProperty.Register<TimelineSurface, int>(nameof(MaximumFirstLane));
+
+    private static readonly StyledProperty<long> ExtentEndTickProperty =
+        AvaloniaProperty.Register<TimelineSurface, long>(nameof(ExtentEndTick));
+
+    private static readonly StyledProperty<long> MaximumStartTickProperty =
+        AvaloniaProperty.Register<TimelineSurface, long>(nameof(MaximumStartTick));
+
+    public int LaneCount
+    {
+        get => GetValue(LaneCountProperty);
+        set => SetValue(LaneCountProperty, value);
+    }
+
+    public int VisibleLaneCount => GetValue(VisibleLaneCountProperty);
+
+    public int MaximumFirstLane => GetValue(MaximumFirstLaneProperty);
+
+    public long ExtentEndTick => GetValue(ExtentEndTickProperty);
+
+    public long MaximumStartTick => GetValue(MaximumStartTickProperty);
 
     public static readonly StyledProperty<int> FirstPitchProperty =
         AvaloniaProperty.Register<TimelineSurface, int>(nameof(FirstPitch), defaultValue: 48);
@@ -271,6 +299,7 @@ public sealed partial class TimelineSurface : Control
         if (SurfaceMode is not (TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.General))
         {
             RenderModeSurface(context, width, height);
+            UpdateViewportMetrics();
             return;
         }
 
@@ -291,6 +320,7 @@ public sealed partial class TimelineSurface : Control
         {
             DrawGrid(context, viewport, width, height);
         }
+        FlushShapes(context);
 
         DrawRulerMarkerLabels(context, viewport, width);
         if (ShowTrackNames)
@@ -301,10 +331,36 @@ public sealed partial class TimelineSurface : Control
         {
             DrawItems(context, viewport, height);
         }
+        FlushShapes(context);
+        if (Source is not null)
+        {
+            DrawSegmentPreviewDeferred(context, viewport);
+        }
 
         DrawEditCursor(context, viewport, height);
         DrawPlaybackCursor(context, viewport, height);
         DrawMarquee(context, width, height);
+        UpdateViewportMetrics();
+    }
+
+    /// <summary>
+    /// Publishes the read-only scroll metrics consumed by the lane and time scrollbars.
+    /// Mirrors the WPF surface's vertical/horizontal viewport metric refresh.
+    /// </summary>
+    private void UpdateViewportMetrics()    {
+        long extent = Math.Max(0, Source?.MaximumEndTick ?? 0);
+        SetCurrentValue(ExtentEndTickProperty, extent);
+        long span = Math.Clamp(TickSpan, 1, long.MaxValue / 2);
+        SetCurrentValue(MaximumStartTickProperty, Math.Max(0, extent - span));
+        if (!TryCreateViewport(out TimelineViewport viewport))
+        {
+            return;
+        }
+
+        SetCurrentValue(VisibleLaneCountProperty, viewport.LaneCount);
+        SetCurrentValue(
+            MaximumFirstLaneProperty,
+            Math.Max(0, Math.Max(1, LaneCount) - viewport.LaneCount));
     }
 
     private void RenderModeSurface(DrawingContext context, double width, double height)
@@ -324,6 +380,7 @@ public sealed partial class TimelineSurface : Control
         {
             DrawGrid(context, viewport, width, height);
         }
+        FlushShapes(context);
 
         DrawRulerMarkerLabels(context, viewport, width);
 
@@ -584,7 +641,7 @@ public sealed partial class TimelineSurface : Control
         }
 
         int step = Math.Max(1, (int)Math.Round(3 * delta));
-        int maximumFirstLane = Math.Max(0, 128 - viewport.LaneCount);
+        int maximumFirstLane = Math.Max(0, Math.Max(1, LaneCount) - viewport.LaneCount);
         SetCurrentValue(
             FirstLaneProperty,
             Math.Clamp(viewport.FirstLane - step, 0, maximumFirstLane));

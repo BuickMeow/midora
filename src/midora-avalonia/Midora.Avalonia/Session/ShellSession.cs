@@ -257,12 +257,48 @@ public sealed class ShellSession : INotifyPropertyChanged
     private WorkspaceTab CreateArrangementWorkspace()
     {
         _arrangementView = new ArrangementView();
+        _arrangementView.TrackActivated += (_, trackIndex) => OpenMidiTrackWorkspace(trackIndex);
         return new WorkspaceTab(
             WorkspaceKind.Arrangement,
             "Arrangement",
             _arrangementView,
             Icon("Fluent.MusicNote120Regular"),
             canClose: false);
+    }
+
+    /// <summary>
+    /// Opens (or activates) the per-track MIDI editor workspace for the imported project.
+    /// </summary>
+    public void OpenMidiTrackWorkspace(int trackIndex)
+    {
+        if (!HasProject ||
+            _midiSource is null ||
+            trackIndex < 0 ||
+            trackIndex >= _midiSource.Project.Tracks.Count)
+        {
+            return;
+        }
+
+        var workspace = Workspaces.FirstOrDefault(
+            tab => tab.Kind == WorkspaceKind.MidiTrack && tab.TrackIndex == trackIndex);
+        if (workspace is null)
+        {
+            var view = new MidiTrackView();
+            view.SetProject(_midiSource, trackIndex);
+            string name = trackIndex + 1 < _midiSource.TrackNames.Count
+                ? _midiSource.TrackNames[trackIndex + 1]
+                : $"Track {trackIndex + 1}";
+            workspace = new WorkspaceTab(
+                WorkspaceKind.MidiTrack,
+                name,
+                view,
+                Icon("Fluent.Midi20Regular"),
+                canClose: true,
+                trackIndex);
+            Workspaces.Add(workspace);
+        }
+
+        ActivateWorkspace(workspace, pushHistory: true);
     }
 
     /// <summary>

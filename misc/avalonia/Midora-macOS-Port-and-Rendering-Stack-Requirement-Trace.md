@@ -389,3 +389,17 @@
 - `ArrangementView` 接入 surface 与演示数据（缩放按钮、tick 读数、选中提示）。
 - 验证：构建 0 警告 0 错误；shell 冒烟通过。
 - **与 WPF 的差异（诚实记录）**：本版是用移植后核心**新实现**的 Arrangement-only 第一版，尚未接线 tile raster cache、Piano Roll/Velocity/Event Lane/Conductor 模式、编辑手势与真实 Project 数据源；这些依赖 Slice E 的 Application/Domain 适配。
+
+### 2026-09-20（续）Slice E1：真实 MIDI 导入（已提交）
+
+- 新增 `Import/MidiImportModel.cs` + `MidiImporter.cs`：基于 `Midora.Midi.StandardMidiFile.ParseType0Or1` 的真实 SMF 导入（FIFO 同 channel/key 配对、NoteOn-0、轨道尾收口、CC/RPN 归类、PitchBend 14-bit、tempo/拍号/调号/marker、严格 UTF-8 → CP932 文本回退、512 MiB 上限与 `MidiImportException`）。
+- 新增 `Import/MidiTimelineSource.cs`（806 行）：Arrangement 源（lane 0 = Conductor，每轨每 8 小节一个 Segment + 真实 preview）+ 每轨钢琴卷帘源（Note/Channel Event）+ 指纹与区间查询。
+- 新增 `--smoke-shell` 的 `MIDORA_MIDI_SMOKE` 环境变量导入路径；用本地生成的 217 字节 Type 1 SMF 验证 parse → session → arrangement 源全链路，failures=0。
+- `File → Open MIDI as New Project` 现为真实导入（含错误对话框）；`ArrangementView` 支持 `SetSource` 切换演示/真实数据。
+
+### 2026-09-20（续）Slice E2：视图模式与音轨编辑器（已提交）
+
+- `TimelineSurface` 拆分为 partial：core / Arrangement / Helpers；新增 PianoRoll / Velocity / EventLanes / ConductorView 四种模式渲染与 `SurfaceMode`、`FirstPitch`、`PitchCount`、`ValueMinimum/Maximum` 属性、`LaneActivated` 事件。
+- 新增 `Views/MidiTrackView`：轨道选择、Notes/Velocity/Events/Conductor 模式切换、缩放与读数。
+- 新增会话 `WorkspaceKind.MidiTrack` 与 `OpenMidiTrackWorkspace`；Arrangement 双击某轨 lane（`LaneActivated`）打开该轨编辑器工作区。
+- 验证：构建 0 警告 0 错误；shell 冒烟（含真实 MIDI 导入与打开音轨工作区）failures=0。

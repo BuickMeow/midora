@@ -443,6 +443,7 @@ public partial class MainWindow : Window
             }
         }
         Step("open-arrangement", () => Session.OpenWorkspace(WorkspaceKind.Arrangement));
+        Step("open-midi-track", () => Session.OpenMidiTrackWorkspace(0));
         Step("open-diagnostics", () => Session.OpenWorkspace(WorkspaceKind.Diagnostics));
         Step("open-all-tracks", () => Session.OpenWorkspace(WorkspaceKind.AllTracks));
         Step("navigate-back", Session.NavigateBack);

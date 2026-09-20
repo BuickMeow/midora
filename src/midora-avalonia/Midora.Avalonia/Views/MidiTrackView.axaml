@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:Midora.Avalonia.Controls"
+             xmlns:presentation="using:Midora.Avalonia.Presentation.Controls"
+             x:Class="Midora.Avalonia.Views.MidiTrackView"
+             x:CompileBindings="False">
+  <UserControl.Styles>
+    <Style Selector="ToggleButton.mode">
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="MinHeight" Value="24" />
+      <Setter Property="Padding" Value="9,0" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="38,*,22" Background="{DynamicResource Brush.Surface.0}">
+    <Border Background="{DynamicResource Brush.Surface.1}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0" Spacing="3">
+        <ComboBox x:Name="TrackCombo" Width="180" Height="26" IsEnabled="False"
+                  ToolTip.Tip="Track" SelectionChanged="OnTrackSelectionChanged" />
+        <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
+        <ToggleButton x:Name="NotesButton" Classes="mode" Tag="PianoRoll" Content="Notes"
+                      IsEnabled="False" ToolTip.Tip="Piano roll notes" Click="OnModeClick" />
+        <ToggleButton x:Name="VelocityButton" Classes="mode" Tag="Velocity" Content="Velocity"
+                      IsEnabled="False" ToolTip.Tip="Note velocity" Click="OnModeClick" />
+        <ToggleButton x:Name="EventsButton" Classes="mode" Tag="EventLanes" Content="Events"
+                      IsEnabled="False" ToolTip.Tip="MIDI channel events" Click="OnModeClick" />
+        <ToggleButton x:Name="ConductorButton" Classes="mode" Tag="Conductor" Content="Conductor"
+                      IsEnabled="False" ToolTip.Tip="Conductor events" Click="OnModeClick" />
+        <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
+        <Button x:Name="ZoomOutButton" Classes="icon ghost" Width="26" Height="24" Padding="0"
+                IsEnabled="False" ToolTip.Tip="Zoom out" Click="OnZoomOutClick">
+          <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}" />
+        </Button>
+        <Button x:Name="ZoomInButton" Classes="icon ghost" Width="26" Height="24" Padding="0"
+                IsEnabled="False" ToolTip.Tip="Zoom in" Click="OnZoomInClick">
+          <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}" />
+        </Button>
+        <TextBlock x:Name="TickText" Classes="mono" VerticalAlignment="Center" Margin="6,0,0,0"
+                   Text="Bar 1.1.000" />
+      </StackPanel>
+    </Border>
+
+    <presentation:TimelineSurface x:Name="Timeline"
+                                  Grid.Row="1"
+                                  GridVisible="True"
+                                  LaneHeight="12"
+                                  TicksPerQuarterNote="480" />
+
+    <Border Grid.Row="2" Background="{DynamicResource Brush.Surface.1}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+      <TextBlock x:Name="FooterText" Classes="caption" VerticalAlignment="Center" Margin="9,0"
+                 Text="No MIDI project loaded." />
+    </Border>
+  </Grid>
+</UserControl>

@@ -15,6 +15,9 @@ public partial class ArrangementView : UserControl
     private Func<TimelineRenderItem, ITimelineSegmentPreviewSource?>? _previewProvider;
     private long _ticksPerQuarterNote = 480;
 
+    /// <summary>Raised with a zero-based MIDI track index when a lane is double-clicked.</summary>
+    public event EventHandler<int>? TrackActivated;
+
     public ArrangementView()
     {
         InitializeComponent();
@@ -23,6 +26,7 @@ public partial class ArrangementView : UserControl
         _trackNames = _demo.TrackNames;
         _previewProvider = segment => _demo.GetPreviewSource(segment);
 
+        Timeline.LaneActivated += (_, lane) => TrackActivated?.Invoke(this, lane - 1);
         Timeline.PointerTickChanged += (_, tick) => UpdateReadout(tick);
         Timeline.SelectionChanged += (_, item) =>
         {

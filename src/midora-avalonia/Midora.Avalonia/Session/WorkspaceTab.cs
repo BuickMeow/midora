@@ -7,7 +7,8 @@ public enum WorkspaceKind
 {
     Arrangement,
     Diagnostics,
-    AllTracks
+    AllTracks,
+    MidiTrack
 }
 
 /// <summary>
@@ -16,13 +17,14 @@ public enum WorkspaceKind
 /// </summary>
 public sealed class WorkspaceTab
 {
-    public WorkspaceTab(WorkspaceKind kind, string header, Control content, Geometry? icon, bool canClose)
+    public WorkspaceTab(WorkspaceKind kind, string header, Control content, Geometry? icon, bool canClose, int trackIndex = -1)
     {
         Kind = kind;
         Header = header;
         Content = content;
         Icon = icon;
         CanClose = canClose;
+        TrackIndex = trackIndex;
     }
 
     public WorkspaceKind Kind { get; }
@@ -34,4 +36,7 @@ public sealed class WorkspaceTab
     public Geometry? Icon { get; }
 
     public bool CanClose { get; }
+
+    /// <summary>Zero-based MIDI track index for <see cref="WorkspaceKind.MidiTrack"/>; otherwise -1.</summary>
+    public int TrackIndex { get; }
 }

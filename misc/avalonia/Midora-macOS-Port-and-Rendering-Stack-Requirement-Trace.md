@@ -491,3 +491,18 @@
 验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；最大化截图核对标签条横排、键盘黑键右露白、C 标签位置、角块、方形音符、白键底纹。
 
 - **钢琴卷帘仍未接入的 WPF 功能**（下一批）：底部 Lane Tab Host（Inst./CC7/Program Change 等 lane 标签页与各自工具条）、`List/Lanes` 切换与对象列表面板、下半区值编辑 lane、`TimelineOverviewSurface` 水平概览+视口拖动、`Onion` 按钮、PianoNotes/Selection 瓦片缓存（需要 WPF 的 `TimelineRenderSnapshot` 投影层；当前音符走批处理实时绘制）。这些属于新子系统，不是纯视觉微调。
+
+### 2026-09-20（续）Slice K：macOS 标题栏高度平台化，移除红绿灯 interop（本轮）
+
+**问题**：红绿灯偶发落到默认（偏上）位置，必须最大化/还原一次才回到自定义居中位置；有时启动即错位。
+
+**根因**（详见当轮分析）：`MacWindowChrome.CenterTrafficLights` 用**相对位移**（`frame.Origin.Y -= delta`）一次性挪动三个 `standardWindowButton:`，而 `delta` 以“36px 自定义标题栏 / 原生 28px”为假设。AppKit 在 zoom、还原、resize、换屏、DPI 变化、进入/退出全屏等时都会重新布局红绿灯，把我们的位移丢掉；我们只在 `OnOpened` 与 `WindowState` 变化时重施，且相对位移不幂等（重复施加会叠加）。`WindowStartupLocation=CenterScreen` 等启动期布局还会把 `OnOpened` 里做的那一次冲掉，所以启动即错位。
+
+**决定**（产品所有者确认）：macOS 使用**平台化标题栏高度**，不再与 AppKit 抢布局：
+
+- macOS：标题栏行高 = `ExtendClientAreaTitleBarHeightHint` = 原生 **28**，红绿灯由系统自己在原生栏里居中；Windows 仍保持 WPF 基线 **36**。两者**必须严格相等**（行高与 hint），否则又会出现偏移。
+- 删除 `Platform/MacWindowChrome.cs` 及 `RecenterTrafficLights`/`OnOpened`/`WindowState` 分支的全部 interop 调用；`TitleBarHeight` 改为 `OperatingSystem.IsMacOS() ? 28 : 36`，由 `ApplyPlatformChrome` 写 `RootLayout.RowDefinitions[0].Height` 与 `ExtendClientAreaTitleBarHeightHint`。
+- 内容（应用图标、菜单行、工程名 chip）与按钮高度**保持原样不动**（菜单仍 29 高、chip 仍 8,2 边距，28px 行内居中，无裁切）；`TitleBarContent.Margin = 72,0,0,0` 继续给红绿灯让位。菜单栏仍留在窗口内（现阶段不迁到系统菜单栏）。
+- 复核方式：`MIDORA_WINDOW_CYCLE=1` 评审钩子（+5s 最大化 → +15s 还原 → +10s 改尺寸 1200×700），逐状态截图并测量红绿灯：窗口顶边 78 device、红灯中心 103.5 device（按钮高 12 logical）→ 距顶 12.75–13.75 logical，对应 28px 栏的几何中心（14）在测量误差内；**启动态与最大化态数值完全一致**（修复前两者相差 4 logical）。
+
+验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；`MIDORA_WINDOW_CYCLE` 截图 + 像素测量核对。

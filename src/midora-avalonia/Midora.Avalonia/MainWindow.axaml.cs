@@ -4,7 +4,6 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Midora.Avalonia.Import;
-using Midora.Avalonia.Platform;
 using Midora.Avalonia.Session;
 using Midora.Avalonia.Windows;
 
@@ -12,7 +11,11 @@ namespace Midora.Avalonia;
 
 public partial class MainWindow : Window
 {
-    private const double TitleBarHeight = 36;
+    /// <summary>
+    /// Title bar height: macOS keeps the native 28 pt bar so AppKit centers the traffic
+    /// lights itself (no interop, no layout races); Windows keeps the WPF baseline 36.
+    /// </summary>
+    private double TitleBarHeight => OperatingSystem.IsMacOS() ? 28d : 36d;
 
     public MainWindow()
     {
@@ -69,23 +72,11 @@ public partial class MainWindow : Window
 
     // ---- Platform chrome -------------------------------------------------
 
-    protected override void OnOpened(EventArgs e)
-    {
-        base.OnOpened(e);
-        RecenterTrafficLights();
-    }
-
-    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
-    {
-        base.OnPropertyChanged(change);
-        if (change.Property == WindowStateProperty)
-        {
-            RecenterTrafficLights();
-        }
-    }
-
     private void ApplyPlatformChrome()
     {
+        // The custom title bar row must match the extended title bar hint exactly;
+        // otherwise the native traffic lights sit off-center in the custom bar.
+        RootLayout.RowDefinitions[0].Height = new GridLength(TitleBarHeight);
         if (!OperatingSystem.IsMacOS())
         {
             return;
@@ -95,20 +86,6 @@ public partial class MainWindow : Window
         ExtendClientAreaTitleBarHeightHint = TitleBarHeight;
         CaptionButtons.IsVisible = false;
         TitleBarContent.Margin = new Thickness(72, 0, 0, 0);
-    }
-
-    private void RecenterTrafficLights()
-    {
-        if (!OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
-        var handle = TryGetPlatformHandle();
-        if (handle is not null)
-        {
-            MacWindowChrome.CenterTrafficLights(handle.Handle, TitleBarHeight);
-        }
     }
 
     // ---- Title bar / window commands ------------------------------------

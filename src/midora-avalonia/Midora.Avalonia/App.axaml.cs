@@ -79,6 +79,20 @@ public partial class App : Application
                     mainWindow.Opened += (_, _) =>
                         mainWindow.WindowState = WindowState.Maximized;
                 }
+
+                if (Environment.GetEnvironmentVariable("MIDORA_WINDOW_CYCLE") == "1")
+                {
+                    mainWindow.Opened += async (_, _) =>
+                    {
+                        await Task.Delay(5000);
+                        mainWindow.WindowState = WindowState.Maximized;
+                        await Task.Delay(15000);
+                        mainWindow.WindowState = WindowState.Normal;
+                        await Task.Delay(10000);
+                        mainWindow.Width = 1200;
+                        mainWindow.Height = 700;
+                    };
+                }
             }
         }
 

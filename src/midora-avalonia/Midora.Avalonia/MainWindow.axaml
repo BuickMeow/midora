@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterScreen"
         ExtendClientAreaToDecorationsHint="True"
         ExtendClientAreaChromeHints="NoChrome">
-  <Grid RowDefinitions="36,46,Auto,*,25">
+  <Grid x:Name="RootLayout" RowDefinitions="36,46,Auto,*,25">
 
     <!-- Title bar: application mark + main menu + project display name (+ Windows caption buttons). -->
     <Grid Grid.Row="0" Name="TitleBar" Background="{DynamicResource Brush.Black}">

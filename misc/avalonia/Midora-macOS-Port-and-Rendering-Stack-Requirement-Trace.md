@@ -365,3 +365,11 @@
 - **本轮修复**：窗口缺公共无参构造（5 个）、事件处理器签名与 Avalonia 事件委托不匹配（InstrumentSelection/Quantize/Scale）、`OnionSettingsDialog` 的 `PropertyChanged` 隐藏基类成员、`ScaleSelectionDialog` 在 `InitializeComponent` 期间 TextChanged 触发导致的 NRE。
 - **已知近似（子 Agent 报告汇总）**：AvalonEdit 全部替换为等宽 TextBox；Avalonia 无 `DialogResult`，统一 `Close()` + 结果属性；WPF ViewModel/Domain 用本地占位数据；触发器/`VirtualizingPanel`/`DisplayMemberPath` 等按指南降级；各窗口重复手写标题栏；TextBox/ComboBox/TabItem/ListBox/ScrollBar 等仍为 FluentTheme 默认样式，未对齐 StyleGallery 基线。
 - **未移植**：`ConductorWorkspaceView`、`AllTracksView`、`LaneTabHeader`、`InstrumentChangeLane`（Workspace/时间线宿主，属 Slice C/D）。
+
+### 2026-09-20（续）Slice B2：外壳业务接线
+
+- **会话层**：新增 `Session/ShellSession.cs`（项目存在/名称/modified、`Workspaces` 与 `ActiveWorkspace`、前进后退历史、播放/编译占位、Loop/Follow/Snap/Grid 状态、状态栏字段与 Issue 颜色）与 `Session/WorkspaceTab.cs`。
+- **占位视图**：`Views/ArrangementView`（含工具/缩放交互骨架）、`Views/DiagnosticsView`（搜索/筛选/空态）、`Views/AllTracksPlaceholderView`。
+- **主窗口接线**：全部菜单与命令栏按钮接上会话命令；New/Open Project/Open MIDI 用 StorageProvider 建立会话；Save/Save Copy/Reset Playback/Undo 等用 `MessageDialog` 明示“尚未接线”；Preferences/Catalogs/About/MIDI Export/Audio Render/新建轨道对话框接上；工作区 Tab 可切换、关闭与前进后退；欢迎页按钮生效；状态栏/标题栏/项目名绑定。工具栏 Snap/Grid/Follow/Loop 为会话状态。
+- **验证**：构建 0 警告 0 错误；`--smoke-windows` 44/44；新增 `--smoke-shell`（建项目 → 开三个工作区 → 前后导航 → 播放/停止 → 标记修改 → 编译 → 关 Tab → 关项目）failures=0。
+- **诚实边界**：真实 Project/Domain、`.midora` 持久化、Undo/History、Selection/Clipboard、编译与导出实际执行均未接线，需 Slice C（呈现核心）与 Application 适配。

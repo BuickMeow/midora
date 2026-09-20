@@ -23,6 +23,14 @@ public partial class App : Application
                     desktop.Shutdown(exitCode);
                 };
             }
+            else if (desktop.Args?.Contains("--smoke-shell", StringComparer.Ordinal) == true)
+            {
+                mainWindow.Opened += async (_, _) =>
+                {
+                    var exitCode = await mainWindow.RunShellSmokeAsync();
+                    desktop.Shutdown(exitCode);
+                };
+            }
         }
 
         base.OnFrameworkInitializationCompleted();

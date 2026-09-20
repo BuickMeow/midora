@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Midora.Avalonia.Views.DiagnosticsView"
+             x:CompileBindings="False">
+  <Grid RowDefinitions="Auto,Auto,*" Background="{DynamicResource Brush.Surface.0}">
+    <Border Background="{DynamicResource Brush.Surface.1}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1" Padding="10,8">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBox x:Name="SearchBox" Watermark="Search diagnostics" Height="28" Padding="8,0" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0" Spacing="4">
+          <ToggleButton x:Name="ErrorFilter" Height="28" Padding="10,0" Content="Errors" />
+          <ToggleButton x:Name="WarningFilter" Height="28" Padding="10,0" Content="Warnings" />
+          <ToggleButton x:Name="InfoFilter" Height="28" Padding="10,0" Content="Info" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Border Grid.Row="1" Padding="10,6" Background="{DynamicResource Brush.Surface.1}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
+      <TextBlock x:Name="SummaryText" Classes="caption" Text="No diagnostics" />
+    </Border>
+    <Grid Grid.Row="2">
+      <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+        <TextBlock Classes="section" HorizontalAlignment="Center" Text="No diagnostics" />
+        <TextBlock Classes="caption" HorizontalAlignment="Center"
+                   Text="Compile the Project or clear the current search." />
+      </StackPanel>
+    </Grid>
+  </Grid>
+</UserControl>

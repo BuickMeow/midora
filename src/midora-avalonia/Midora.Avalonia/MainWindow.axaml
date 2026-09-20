@@ -2,7 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="using:Midora.Avalonia.Controls"
         x:Class="Midora.Avalonia.MainWindow"
-        Title="Midora"
+        x:CompileBindings="False"
+        Title="{Binding WindowTitle}"
         Width="1440" Height="900" MinWidth="1100" MinHeight="680"
         Background="{DynamicResource Brush.Surface.0}"
         WindowStartupLocation="CenterScreen"
@@ -22,58 +23,80 @@
                  Stretch="Uniform" />
           <Menu Grid.Column="1" Height="29" VerticalAlignment="Center">
             <MenuItem Header="File">
-              <MenuItem Header="New Project…" InputGesture="Ctrl+N" />
-              <MenuItem Header="Open Project…" InputGesture="Ctrl+O" />
-              <MenuItem Header="Open MIDI as New Project…" />
+              <MenuItem Header="New Project…" InputGesture="Ctrl+N" Click="OnNewProjectClick" />
+              <MenuItem Header="Open Project…" InputGesture="Ctrl+O" Click="OnOpenProjectClick" />
+              <MenuItem Header="Open MIDI as New Project…" Click="OnOpenMidiAsNewProjectClick" />
               <Separator />
-              <MenuItem Header="Save Project" InputGesture="Ctrl+S" IsEnabled="False" />
-              <MenuItem Header="Save Copy…" IsEnabled="False" />
+              <MenuItem Header="Save Project" InputGesture="Ctrl+S"
+                        IsEnabled="{Binding CanSaveProject}" Click="OnSaveProjectClick" />
+              <MenuItem Header="Save Copy…" IsEnabled="{Binding HasProject}" Click="OnSaveCopyClick" />
               <Separator />
-              <MenuItem Header="Close Project" IsEnabled="False" />
+              <MenuItem Header="Close Project" IsEnabled="{Binding HasProject}" Click="OnCloseProjectClick" />
               <MenuItem Header="Exit" Click="OnExitClick" />
             </MenuItem>
             <MenuItem Header="Edit">
-              <MenuItem Header="Undo" InputGesture="Ctrl+Z" IsEnabled="False" />
-              <MenuItem Header="Redo" InputGesture="Ctrl+Y" IsEnabled="False" />
+              <MenuItem Header="Undo" InputGesture="Ctrl+Z"
+                        IsEnabled="{Binding CanEditProject}" Click="OnUndoClick" />
+              <MenuItem Header="Redo" InputGesture="Ctrl+Y"
+                        IsEnabled="{Binding CanEditProject}" Click="OnRedoClick" />
               <Separator />
-              <MenuItem Header="Cut" InputGesture="Ctrl+X" IsEnabled="False" />
-              <MenuItem Header="Copy" InputGesture="Ctrl+C" IsEnabled="False" />
-              <MenuItem Header="Paste" InputGesture="Ctrl+V" IsEnabled="False" />
-              <MenuItem Header="Select All" InputGesture="Ctrl+A" IsEnabled="False" />
-              <MenuItem Header="Duplicate Selection" InputGesture="Ctrl+D" IsEnabled="False" />
+              <MenuItem Header="Cut" InputGesture="Ctrl+X"
+                        IsEnabled="{Binding CanEditProject}" Click="OnCutClick" />
+              <MenuItem Header="Copy" InputGesture="Ctrl+C"
+                        IsEnabled="{Binding HasProject}" Click="OnCopyClick" />
+              <MenuItem Header="Paste" InputGesture="Ctrl+V"
+                        IsEnabled="{Binding CanEditProject}" Click="OnPasteClick" />
+              <MenuItem Header="Select All" InputGesture="Ctrl+A"
+                        IsEnabled="{Binding HasProject}" Click="OnSelectAllClick" />
+              <MenuItem Header="Duplicate Selection" InputGesture="Ctrl+D"
+                        IsEnabled="{Binding CanEditProject}" Click="OnDuplicateClick" />
             </MenuItem>
             <MenuItem Header="View">
-              <MenuItem Header="Arrangement" IsEnabled="False" />
-              <MenuItem Header="Diagnostics" IsEnabled="False" />
+              <MenuItem Header="Arrangement" IsEnabled="{Binding HasProject}" Click="OnOpenArrangementClick" />
+              <MenuItem Header="All Tracks" IsEnabled="{Binding HasProject}" Click="OnOpenAllTracksClick" />
+              <MenuItem Header="Diagnostics" IsEnabled="{Binding HasProject}" Click="OnOpenDiagnosticsClick" />
               <Separator />
-              <MenuItem Header="Snap to Grid" IsEnabled="False" />
-              <MenuItem Header="Follow Playback" IsEnabled="False" />
+              <MenuItem Header="Snap to Grid" ToggleType="CheckBox"
+                        IsChecked="{Binding IsSnapEnabled, Mode=TwoWay}" IsEnabled="{Binding HasProject}" />
+              <MenuItem Header="Grid" ToggleType="CheckBox"
+                        IsChecked="{Binding IsGridVisible, Mode=TwoWay}" IsEnabled="{Binding HasProject}" />
+              <MenuItem Header="Follow Playback" ToggleType="CheckBox"
+                        IsChecked="{Binding IsFollowPlaybackEnabled, Mode=TwoWay}" IsEnabled="{Binding HasProject}" />
             </MenuItem>
-            <MenuItem Header="Project" IsEnabled="False">
-              <MenuItem Header="New Event Instrument" />
+            <MenuItem Header="Project" IsEnabled="{Binding HasProject}">
+              <MenuItem Header="New Event Instrument" IsEnabled="{Binding CanEditProject}"
+                        Click="OnNewInstrumentClick" />
               <Separator />
-              <MenuItem Header="New Logical Track" />
-              <MenuItem Header="New Logical Track with Instrument…" />
-              <MenuItem Header="New Raw MIDI Track…" />
+              <MenuItem Header="New Logical Track" IsEnabled="{Binding CanEditProject}"
+                        Click="OnNewTrackClick" />
+              <MenuItem Header="New Logical Track with Instrument…" IsEnabled="{Binding CanEditProject}"
+                        Click="OnNewTrackWithInstrumentClick" />
+              <MenuItem Header="New Raw MIDI Track…" IsEnabled="{Binding CanEditProject}"
+                        Click="OnNewRawMidiTrackClick" />
+              <Separator />
+              <MenuItem Header="Project Settings" Click="OnProjectSettingsClick" />
             </MenuItem>
             <MenuItem Header="Playback">
-              <MenuItem Header="Play" InputGesture="Space" IsEnabled="False" />
-              <MenuItem Header="Stop" InputGesture="Space" IsEnabled="False" />
+              <MenuItem Header="Play" InputGesture="Space"
+                        IsEnabled="{Binding CanPlayback}" Click="OnPlayClick" />
+              <MenuItem Header="Stop" InputGesture="Space"
+                        IsEnabled="{Binding IsPlaying}" Click="OnStopClick" />
               <Separator />
-              <MenuItem Header="Reset Playback Engine" IsEnabled="False" />
+              <MenuItem Header="Reset Playback Engine" IsEnabled="{Binding HasProject}"
+                        Click="OnResetPlaybackClick" />
             </MenuItem>
-            <MenuItem Header="Compile" IsEnabled="False">
-              <MenuItem Header="Compile Project" />
+            <MenuItem Header="Compile" IsEnabled="{Binding CanRunProjectTask}">
+              <MenuItem Header="Compile Project" Click="OnCompileClick" />
             </MenuItem>
-            <MenuItem Header="Export" IsEnabled="False">
-              <MenuItem Header="MIDI Export…" />
-              <MenuItem Header="Audio Export…" />
+            <MenuItem Header="Export" IsEnabled="{Binding CanRunProjectTask}">
+              <MenuItem Header="MIDI Export…" Click="OnMidiExportClick" />
+              <MenuItem Header="Audio Export…" Click="OnAudioRenderClick" />
             </MenuItem>
             <MenuItem Header="Application">
-              <MenuItem Header="Application Preferences…" />
-              <MenuItem Header="Instrument Catalogs…" />
+              <MenuItem Header="Application Preferences…" Click="OnApplicationPreferencesClick" />
+              <MenuItem Header="Instrument Catalogs…" Click="OnInstrumentCatalogsClick" />
               <Separator />
-              <MenuItem Header="About Midora" InputGesture="F12" />
+              <MenuItem Header="About Midora" InputGesture="F12" Click="OnAboutClick" />
             </MenuItem>
             <MenuItem Header="Windows" x:Name="WindowsMenu" />
           </Menu>
@@ -82,7 +105,7 @@
                   Background="Transparent" BorderBrush="{DynamicResource Brush.Border}"
                   BorderThickness="1" CornerRadius="3">
             <TextBlock Margin="8,2" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}"
-                       Text="Untitled Project" TextTrimming="CharacterEllipsis" />
+                       Text="{Binding TitleBarProjectDisplayName}" TextTrimming="CharacterEllipsis" />
           </Border>
         </Grid>
         <StackPanel Name="CaptionButtons" Grid.Column="1" Orientation="Horizontal">
@@ -107,73 +130,90 @@
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
       <Grid ColumnDefinitions="*,Auto,*">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Classes="icon ghost" ToolTip.Tip="Back" IsEnabled="False">
+          <Button Classes="icon ghost" ToolTip.Tip="Back"
+                  IsEnabled="{Binding CanNavigateBack}" Click="OnNavigateBackClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ChevronLeft20Regular}" />
           </Button>
-          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Forward" IsEnabled="False">
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Forward"
+                  IsEnabled="{Binding CanNavigateForward}" Click="OnNavigateForwardClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ChevronRight20Regular}" />
           </Button>
           <Border Width="1" Height="18" Margin="7,0" Background="{DynamicResource Brush.Border}" />
-          <Button Classes="icon ghost" ToolTip.Tip="New Project">
+          <Button Classes="icon ghost" ToolTip.Tip="New Project" Click="OnNewProjectClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Document20Regular}" />
           </Button>
-          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Open Project">
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Open Project" Click="OnOpenProjectClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Folder20Regular}" />
           </Button>
-          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Project Settings" IsEnabled="False">
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Project Settings"
+                  IsEnabled="{Binding HasProject}" Click="OnProjectSettingsClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Settings20Regular}" />
           </Button>
-          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Save Project" IsEnabled="False">
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Save Project"
+                  IsEnabled="{Binding CanSaveProject}" Click="OnSaveProjectClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Save20Regular}" />
           </Button>
           <Border Width="1" Height="18" Margin="7,0" Background="{DynamicResource Brush.Border}" />
-          <Button Classes="icon ghost" ToolTip.Tip="Undo" IsEnabled="False">
+          <Button Classes="icon ghost" ToolTip.Tip="Undo"
+                  IsEnabled="{Binding CanEditProject}" Click="OnUndoClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ArrowUndo20Regular}" />
           </Button>
-          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Redo" IsEnabled="False">
+          <Button Classes="icon ghost" Margin="3,0,0,0" ToolTip.Tip="Redo"
+                  IsEnabled="{Binding CanEditProject}" Click="OnRedoClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ArrowRedo20Regular}" />
           </Button>
           <Border Width="1" Height="18" Margin="7,0" Background="{DynamicResource Brush.Border}" />
-          <Button Classes="icon ghost" ToolTip.Tip="Application Preferences">
+          <Button Classes="icon ghost" ToolTip.Tip="Application Preferences" Click="OnApplicationPreferencesClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.WrenchScrewdriver20Regular}" />
           </Button>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Classes="icon ghost" Width="34" Height="32" ToolTip.Tip="Reset Playback Engine" IsEnabled="False">
+          <Button Classes="icon ghost" Width="34" Height="32" ToolTip.Tip="Reset Playback Engine"
+                  IsEnabled="{Binding HasProject}" Click="OnResetPlaybackClick">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.Flash20Filled}" />
           </Button>
           <Button Classes="primary" Width="34" Height="32" Margin="4,0" Padding="0"
-                  ToolTip.Tip="Play" IsEnabled="False">
-            <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Play20Filled}" />
+                  ToolTip.Tip="Play or stop" IsEnabled="{Binding HasProject}" Click="OnPrimaryTransportClick">
+            <Grid>
+              <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Play20Filled}"
+                                   IsVisible="{Binding !IsPlaying}" />
+              <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Stop20Filled}"
+                                   IsVisible="{Binding IsPlaying}" />
+            </Grid>
           </Button>
-          <Button Classes="icon ghost" Width="34" Height="32" Padding="0"
-                  ToolTip.Tip="Loop Time Range" IsEnabled="False">
+          <ToggleButton Width="34" Height="32" Padding="0" ToolTip.Tip="Loop Time Range"
+                        IsEnabled="{Binding HasProject}"
+                        IsChecked="{Binding IsLoopEnabled, Mode=TwoWay}">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.RepeatAll20Regular}" />
-          </Button>
-          <Button Classes="icon ghost" Width="34" Height="32" Margin="4,0,0,0" Padding="0"
-                  ToolTip.Tip="Follow Playback" IsEnabled="False">
+          </ToggleButton>
+          <ToggleButton Width="34" Height="32" Margin="4,0,0,0" Padding="0" ToolTip.Tip="Follow Playback"
+                        IsEnabled="{Binding HasProject}"
+                        IsChecked="{Binding IsFollowPlaybackEnabled, Mode=TwoWay}">
             <controls:FluentIcon Classes="commandbar" Data="{StaticResource Fluent.ArrowRight20Filled}" />
-          </Button>
+          </ToggleButton>
           <Border Height="32" Margin="9,0,0,0" Padding="9,0" Background="{DynamicResource Brush.Surface.0}"
                   BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <TextBlock Classes="mono" VerticalAlignment="Center" FontSize="12"
-                         Foreground="{DynamicResource Brush.Text.Primary}" Text="1.1.000" />
+                         Foreground="{DynamicResource Brush.Text.Primary}" Text="{Binding PositionText}" />
               <Border Width="1" Height="14" Margin="8,0" Background="{DynamicResource Brush.Border.Strong}" />
               <TextBlock Classes="mono" VerticalAlignment="Center" FontSize="12"
-                         Foreground="{DynamicResource Brush.Text.Primary}" Text="120.00 BPM" />
+                         Foreground="{DynamicResource Brush.Text.Primary}" Text="{Binding TempoText}" />
             </StackPanel>
           </Border>
         </StackPanel>
         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Button Classes="commandbartext" Margin="0,0,4,0" IsEnabled="False">
-            <TextBlock Text="Compile" Foreground="#8A939F" />
+          <Button Classes="commandbartext" Margin="0,0,4,0"
+                  IsEnabled="{Binding CanRunProjectTask}" Click="OnCompileClick">
+            <TextBlock Text="Compile" Foreground="{DynamicResource Brush.Text.Primary}" />
           </Button>
-          <Button Classes="commandbartext" Margin="0,0,4,0" IsEnabled="False">
-            <TextBlock Text="MIDI Export" Foreground="#8A939F" />
+          <Button Classes="commandbartext" Margin="0,0,4,0"
+                  IsEnabled="{Binding CanRunProjectTask}" Click="OnMidiExportClick">
+            <TextBlock Text="MIDI Export" Foreground="{DynamicResource Brush.Text.Primary}" />
           </Button>
-          <Button Classes="commandbartext" IsEnabled="False">
-            <TextBlock Text="Audio Export" Foreground="#8A939F" />
+          <Button Classes="commandbartext"
+                  IsEnabled="{Binding CanRunProjectTask}" Click="OnAudioRenderClick">
+            <TextBlock Text="Audio Export" Foreground="{DynamicResource Brush.Text.Primary}" />
           </Button>
         </StackPanel>
       </Grid>
@@ -185,17 +225,46 @@
 
     <!-- Workspace area: welcome state until a Project session exists. -->
     <Grid Grid.Row="3">
-      <Border Margin="48" HorizontalAlignment="Center" VerticalAlignment="Center" Background="Transparent">
+      <Border Margin="48" HorizontalAlignment="Center" VerticalAlignment="Center" Background="Transparent"
+              IsVisible="{Binding !HasProject}">
         <StackPanel Width="460">
           <TextBlock Margin="0,0,0,18" HorizontalAlignment="Center" FontSize="24" FontWeight="Light"
                      Text="Welcome to Midora" TextAlignment="Center" TextWrapping="Wrap" />
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-            <Button Classes="primary" Margin="0,0,7,0" Content="New Project" />
-            <Button Margin="0,0,7,0" Content="Open Project" />
-            <Button Content="Open MIDI as New Project" />
+            <Button Classes="primary" Margin="0,0,7,0" Content="New Project" Click="OnNewProjectClick" />
+            <Button Margin="0,0,7,0" Content="Open Project" Click="OnOpenProjectClick" />
+            <Button Content="Open MIDI as New Project" Click="OnOpenMidiAsNewProjectClick" />
           </StackPanel>
         </StackPanel>
       </Border>
+
+      <TabControl x:Name="WorkspaceTabs"
+                  IsVisible="{Binding HasProject}"
+                  ItemsSource="{Binding Workspaces}"
+                  SelectedItem="{Binding ActiveWorkspace, Mode=OneWay}"
+                  Background="Transparent">
+        <TabControl.ItemTemplate>
+          <DataTemplate>
+            <StackPanel Orientation="Horizontal">
+              <controls:FluentIcon Width="16" Height="16" Margin="0,0,6,0"
+                                   VerticalAlignment="Center" Data="{Binding Icon}" />
+              <TextBlock VerticalAlignment="Center" Text="{Binding Header}" />
+              <Button Width="20" Height="20" Margin="7,0,0,0" Padding="0" Classes="icon ghost"
+                      ToolTip.Tip="Close Workspace"
+                      IsVisible="{Binding CanClose}"
+                      Tag="{Binding}"
+                      Click="OnCloseWorkspaceClick">
+                <controls:FluentIcon Width="10" Height="10" Data="{StaticResource Fluent.Dismiss20Regular}" />
+              </Button>
+            </StackPanel>
+          </DataTemplate>
+        </TabControl.ItemTemplate>
+        <TabControl.ContentTemplate>
+          <DataTemplate>
+            <ContentControl Content="{Binding Content}" />
+          </DataTemplate>
+        </TabControl.ContentTemplate>
+      </TabControl>
     </Grid>
 
     <!-- Status bar. -->
@@ -203,14 +272,18 @@
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{DynamicResource Brush.Success}" />
-          <TextBlock Classes="caption" VerticalAlignment="Center" Text="No diagnostics" />
+          <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{Binding IssueBrush}" />
+          <Button Classes="icon ghost" Height="22" Padding="0"
+                  IsEnabled="{Binding HasProject}" Click="OnOpenDiagnosticsClick"
+                  ToolTip.Tip="Open Diagnostics">
+            <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding IssueSummary}" />
+          </Button>
           <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
-          <TextBlock Classes="caption" VerticalAlignment="Center" Text="Not compiled" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding CompileState}" />
           <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
-          <TextBlock Classes="caption" VerticalAlignment="Center" Text="SoundFonts: not configured" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding SoundFontState}" />
         </StackPanel>
-        <TextBlock Grid.Column="1" Classes="caption" VerticalAlignment="Center" Text="Ready" />
+        <TextBlock Grid.Column="1" Classes="caption" VerticalAlignment="Center" Text="{Binding StatusText}" />
       </Grid>
     </Border>
   </Grid>

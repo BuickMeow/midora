@@ -2,7 +2,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Midora.Avalonia.Platform;
+using Midora.Avalonia.Session;
 using Midora.Avalonia.Windows;
 
 namespace Midora.Avalonia;
@@ -14,9 +16,297 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Session = new ShellSession();
+        DataContext = Session;
         ApplyPlatformChrome();
         PopulateWindowsMenu();
+        WorkspaceTabs.SelectionChanged += (_, _) =>
+            Session.ActivateFromUi(WorkspaceTabs.SelectedItem as WorkspaceTab);
     }
+
+    internal ShellSession Session { get; }
+
+    // ---- Platform chrome -------------------------------------------------
+
+    protected override void OnOpened(EventArgs e)
+    {
+        base.OnOpened(e);
+        RecenterTrafficLights();
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == WindowStateProperty)
+        {
+            RecenterTrafficLights();
+        }
+    }
+
+    private void ApplyPlatformChrome()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        ExtendClientAreaChromeHints = global::Avalonia.Platform.ExtendClientAreaChromeHints.PreferSystemChrome;
+        ExtendClientAreaTitleBarHeightHint = TitleBarHeight;
+        CaptionButtons.IsVisible = false;
+        TitleBarContent.Margin = new Thickness(72, 0, 0, 0);
+    }
+
+    private void RecenterTrafficLights()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        var handle = TryGetPlatformHandle();
+        if (handle is not null)
+        {
+            MacWindowChrome.CenterTrafficLights(handle.Handle, TitleBarHeight);
+        }
+    }
+
+    // ---- Title bar / window commands ------------------------------------
+
+    private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            BeginMoveDrag(e);
+        }
+    }
+
+    private void OnTitleBarDoubleTapped(object? sender, TappedEventArgs e) =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    private void OnMinimizeClick(object? sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void OnMaximizeClick(object? sender, RoutedEventArgs e) =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    private void OnCloseClick(object? sender, RoutedEventArgs e) => Close();
+
+    private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
+
+    // ---- File menu / command bar ----------------------------------------
+
+    private async void OnNewProjectClick(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new NewProjectDialog();
+        await dialog.ShowDialog(this);
+        if (dialog.Result is { } request)
+        {
+            Session.CreateProject(request.ProjectName);
+        }
+    }
+
+    private async void OnOpenProjectClick(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Open Project",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Midora Project") { Patterns = ["*.midora"] }]
+        });
+
+        if (files.Count > 0)
+        {
+            Session.CreateProject(System.IO.Path.GetFileNameWithoutExtension(files[0].Name));
+            Session.SetStatus("Project opened (port placeholder; persistence is not wired yet).");
+        }
+    }
+
+    private async void OnOpenMidiAsNewProjectClick(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Open MIDI as New Project",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Standard MIDI File") { Patterns = ["*.mid", "*.midi"] }]
+        });
+
+        if (files.Count > 0)
+        {
+            Session.CreateProject(System.IO.Path.GetFileNameWithoutExtension(files[0].Name));
+            Session.SetStatus("MIDI import is not wired yet; session placeholder created.");
+        }
+    }
+
+    private async void OnSaveProjectClick(object? sender, RoutedEventArgs e)
+    {
+        await MessageDialog.ShowAsync(
+            this,
+            "Saving .midora files is not wired in the Avalonia port yet.",
+            "Save Project");
+        Session.SetStatus("Save requested (persistence is not wired yet).");
+    }
+
+    private async void OnSaveCopyClick(object? sender, RoutedEventArgs e)
+    {
+        await MessageDialog.ShowAsync(
+            this,
+            "Save Copy is not wired in the Avalonia port yet.",
+            "Save Copy");
+        Session.SetStatus("Save Copy requested (persistence is not wired yet).");
+    }
+
+    private async void OnCloseProjectClick(object? sender, RoutedEventArgs e)
+    {
+        if (!Session.HasProject)
+        {
+            return;
+        }
+
+        if (Session.IsModified)
+        {
+            var result = await MessageDialog.ShowAsync(
+                this,
+                "Close the Project and discard unsaved changes?",
+                "Close Project",
+                MessageDialogButtons.YesNo,
+                MessageDialogIcon.Warning);
+            if (result != MessageDialogResult.Yes)
+            {
+                return;
+            }
+        }
+
+        Session.CloseProject();
+    }
+
+    // ---- Edit menu -------------------------------------------------------
+
+    private void OnUndoClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Undo is not wired yet (History arrives with the presentation core).");
+
+    private void OnRedoClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Redo is not wired yet (History arrives with the presentation core).");
+
+    private void OnCutClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Cut is not wired yet (Selection/Clipboard arrive with the presentation core).");
+
+    private void OnCopyClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Copy is not wired yet (Selection/Clipboard arrive with the presentation core).");
+
+    private void OnPasteClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Paste is not wired yet (Selection/Clipboard arrive with the presentation core).");
+
+    private void OnSelectAllClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Select All is not wired yet (Selection arrives with the presentation core).");
+
+    private void OnDuplicateClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Duplicate is not wired yet (Selection arrives with the presentation core).");
+
+    // ---- View menu / navigation -----------------------------------------
+
+    private void OnOpenArrangementClick(object? sender, RoutedEventArgs e) =>
+        Session.OpenWorkspace(WorkspaceKind.Arrangement);
+
+    private void OnOpenAllTracksClick(object? sender, RoutedEventArgs e) =>
+        Session.OpenWorkspace(WorkspaceKind.AllTracks);
+
+    private void OnOpenDiagnosticsClick(object? sender, RoutedEventArgs e) =>
+        Session.OpenWorkspace(WorkspaceKind.Diagnostics);
+
+    private void OnNavigateBackClick(object? sender, RoutedEventArgs e) => Session.NavigateBack();
+
+    private void OnNavigateForwardClick(object? sender, RoutedEventArgs e) => Session.NavigateForward();
+
+    private void OnCloseWorkspaceClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: WorkspaceTab tab })
+        {
+            Session.CloseWorkspace(tab);
+        }
+    }
+
+    // ---- Project menu ----------------------------------------------------
+
+    private void OnNewInstrumentClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("New Event Instrument is not wired yet.");
+
+    private void OnNewTrackClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("New Logical Track is not wired yet.");
+
+    private async void OnNewTrackWithInstrumentClick(object? sender, RoutedEventArgs e)
+    {
+        await new NewLogicalTrackWithInstrumentDialog().ShowDialog(this);
+        Session.SetStatus("New Logical Track with Instrument requested (not wired yet).");
+    }
+
+    private async void OnNewRawMidiTrackClick(object? sender, RoutedEventArgs e)
+    {
+        await new NewRawMidiTrackDialog().ShowDialog(this);
+        Session.SetStatus("New Raw MIDI Track requested (not wired yet).");
+    }
+
+    private void OnProjectSettingsClick(object? sender, RoutedEventArgs e) =>
+        Session.SetStatus("Project Settings is not wired yet.");
+
+    // ---- Playback / Compile / Export ------------------------------------
+
+    private void OnPlayClick(object? sender, RoutedEventArgs e) => Session.TogglePlayback();
+
+    private void OnStopClick(object? sender, RoutedEventArgs e) => Session.StopPlayback();
+
+    private void OnPrimaryTransportClick(object? sender, RoutedEventArgs e) => Session.TogglePlayback();
+
+    private async void OnResetPlaybackClick(object? sender, RoutedEventArgs e)
+    {
+        await MessageDialog.ShowAsync(
+            this,
+            "Resetting the playback engine is not wired in the Avalonia port yet.",
+            "Reset Playback Engine");
+        Session.SetStatus("Reset Playback Engine requested (not wired yet).");
+    }
+
+    private async void OnCompileClick(object? sender, RoutedEventArgs e) =>
+        await Session.CompileAsync();
+
+    private async void OnMidiExportClick(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new MidiExportDialog();
+        await dialog.ShowDialog(this);
+        if (dialog.Options is not null)
+        {
+            Session.SetStatus("MIDI export confirmed (encoding is not wired yet).");
+        }
+    }
+
+    private async void OnAudioRenderClick(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new AudioRenderDialog();
+        await dialog.ShowDialog(this);
+        if (dialog.Options is not null)
+        {
+            Session.SetStatus("Audio render confirmed (rendering is not wired yet).");
+        }
+    }
+
+    // ---- Application menu ------------------------------------------------
+
+    private async void OnApplicationPreferencesClick(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new ApplicationPreferencesDialog();
+        await dialog.ShowDialog(this);
+        if (dialog.Result is not null)
+        {
+            Session.SetSoundFontState("SoundFonts: loaded (placeholder)");
+            Session.SetStatus("Application Preferences saved (in-memory placeholder).");
+        }
+    }
+
+    private async void OnInstrumentCatalogsClick(object? sender, RoutedEventArgs e) =>
+        await new InstrumentCatalogDialog().ShowDialog(this);
+
+    private async void OnAboutClick(object? sender, RoutedEventArgs e) =>
+        await new AboutDialog().ShowDialog(this);
+
+    // ---- Temporary Windows catalog menu ---------------------------------
 
     private void PopulateWindowsMenu()
     {
@@ -45,6 +335,8 @@ public partial class MainWindow : Window
             System.Diagnostics.Debug.WriteLine($"Window '{entry.Name}' failed: {ex}");
         }
     }
+
+    // ---- Startup probes ---------------------------------------------------
 
     internal async Task<int> RunWindowSmokeAsync()
     {
@@ -83,66 +375,56 @@ public partial class MainWindow : Window
         return failures.Count == 0 ? 0 : 2;
     }
 
-    protected override void OnOpened(EventArgs e)
+    internal async Task<int> RunShellSmokeAsync()
     {
-        base.OnOpened(e);
-        RecenterTrafficLights();
-    }
+        var failures = new List<string>();
 
-    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
-    {
-        base.OnPropertyChanged(change);
-        if (change.Property == WindowStateProperty)
+        void Step(string name, Action action)
         {
-            RecenterTrafficLights();
-        }
-    }
-
-    private void ApplyPlatformChrome()
-    {
-        if (!OperatingSystem.IsMacOS())
-        {
-            return;
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{name}: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
-        // macOS: keep the native traffic lights inside the extended title bar.
-        ExtendClientAreaChromeHints = global::Avalonia.Platform.ExtendClientAreaChromeHints.PreferSystemChrome;
-        ExtendClientAreaTitleBarHeightHint = TitleBarHeight;
-        CaptionButtons.IsVisible = false;
-        TitleBarContent.Margin = new Thickness(72, 0, 0, 0);
-    }
+        Step("create-project", () => Session.CreateProject("Smoke Project"));
+        Step("open-arrangement", () => Session.OpenWorkspace(WorkspaceKind.Arrangement));
+        Step("open-diagnostics", () => Session.OpenWorkspace(WorkspaceKind.Diagnostics));
+        Step("open-all-tracks", () => Session.OpenWorkspace(WorkspaceKind.AllTracks));
+        Step("navigate-back", Session.NavigateBack);
+        Step("navigate-forward", Session.NavigateForward);
+        Step("play", Session.TogglePlayback);
+        Step("stop", Session.StopPlayback);
+        Step("mark-modified", Session.MarkModified);
 
-    private void RecenterTrafficLights()
-    {
-        if (!OperatingSystem.IsMacOS())
+        try
         {
-            return;
+            await Session.CompileAsync();
+        }
+        catch (Exception ex)
+        {
+            failures.Add($"compile: {ex.GetType().Name}: {ex.Message}");
         }
 
-        var handle = TryGetPlatformHandle();
-        if (handle is not null)
+        Step("close-workspace", () =>
         {
-            MacWindowChrome.CenterTrafficLights(handle.Handle, TitleBarHeight);
-        }
-    }
+            if (Session.Workspaces.Count > 0)
+            {
+                Session.CloseWorkspace(Session.Workspaces[^1]);
+            }
+        });
+        Step("close-project", Session.CloseProject);
 
-    private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        Console.Error.WriteLine($"SHELL-SMOKE failures={failures.Count}");
+        foreach (var failure in failures)
         {
-            BeginMoveDrag(e);
+            Console.Error.WriteLine("FAIL " + failure);
         }
+
+        return failures.Count == 0 ? 0 : 3;
     }
-
-    private void OnTitleBarDoubleTapped(object? sender, TappedEventArgs e) =>
-        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-
-    private void OnMinimizeClick(object? sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
-
-    private void OnMaximizeClick(object? sender, RoutedEventArgs e) =>
-        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-
-    private void OnCloseClick(object? sender, RoutedEventArgs e) => Close();
-
-    private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
 }

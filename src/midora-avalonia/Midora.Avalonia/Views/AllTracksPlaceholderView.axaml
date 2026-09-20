@@ -1,0 +1,12 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Midora.Avalonia.Views.AllTracksPlaceholderView"
+             x:CompileBindings="False">
+  <Grid Background="{DynamicResource Brush.Surface.0}">
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
+      <TextBlock Text="All Tracks" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
+      <TextBlock Classes="caption" HorizontalAlignment="Center"
+                 Text="Placeholder page. Ported with the timeline presentation core." />
+    </StackPanel>
+  </Grid>
+</UserControl>

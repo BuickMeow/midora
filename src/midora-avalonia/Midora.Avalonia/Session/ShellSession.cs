@@ -4,6 +4,8 @@ using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Midora.Avalonia.Import;
+using Midora.Avalonia.Presentation.Rendering;
 using Midora.Avalonia.Views;
 
 namespace Midora.Avalonia.Session;
@@ -36,6 +38,9 @@ public sealed class ShellSession : INotifyPropertyChanged
     private int _warningCount;
     private string _positionText = "1.1.000";
     private string _tempoText = "120.00 BPM";
+    private readonly DemoTimelineSource _demoSource = DemoTimelineSource.Create();
+    private MidiTimelineSource? _midiSource;
+    private ArrangementView? _arrangementView;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -227,6 +232,7 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     public void CreateProject(string name)
     {
+        _midiSource = null;
         Workspaces.Clear();
         _history.Clear();
         _historyIndex = -1;
@@ -245,10 +251,70 @@ public sealed class ShellSession : INotifyPropertyChanged
         StatusText = $"Project '{ProjectName}' created (in-memory port placeholder).";
 
         OpenWorkspace(WorkspaceKind.Arrangement);
+        ApplyArrangementSource();
+    }
+
+    private WorkspaceTab CreateArrangementWorkspace()
+    {
+        _arrangementView = new ArrangementView();
+        return new WorkspaceTab(
+            WorkspaceKind.Arrangement,
+            "Arrangement",
+            _arrangementView,
+            Icon("Fluent.MusicNote120Regular"),
+            canClose: false);
+    }
+
+    /// <summary>
+    /// Replaces the current project with a real imported SMF project and shows it in the
+    /// Arrangement workspace.
+    /// </summary>
+    public void CreateProjectFromMidi(string name, MidiTimelineSource source)
+    {
+        CreateProject(name);
+        _midiSource = source;
+        ApplyArrangementSource();
+
+        if (source.Project.Conductor.FirstOrDefault(
+                conductorEvent => conductorEvent.Kind == ImportedConductorKind.Tempo) is { Value: > 0 } tempo)
+        {
+            TempoText = $"{tempo.Value:0.00} BPM";
+        }
+
+        StatusText =
+            $"Imported '{source.Project.SourceFileName}' · {source.Project.Tracks.Count} track(s) · " +
+            $"{source.Project.TicksPerQuarterNote} TPQN · {source.Project.MaximumEndTick} ticks.";
+    }
+
+    private void ApplyArrangementSource()
+    {
+        if (_arrangementView is null)
+        {
+            return;
+        }
+
+        if (_midiSource is { } midi)
+        {
+            _arrangementView.SetSource(
+                midi,
+                midi.Project.TicksPerQuarterNote,
+                midi.TrackNames,
+                segment => midi.GetPreviewSource(segment));
+        }
+        else
+        {
+            _arrangementView.SetSource(
+                _demoSource,
+                480,
+                _demoSource.TrackNames,
+                segment => _demoSource.GetPreviewSource(segment));
+        }
     }
 
     public void CloseProject()
     {
+        _midiSource = null;
+        _arrangementView = null;
         IsPlaying = false;
         IsCompiling = false;
         HasProject = false;
@@ -291,12 +357,7 @@ public sealed class ShellSession : INotifyPropertyChanged
         {
             workspace = kind switch
             {
-                WorkspaceKind.Arrangement => new WorkspaceTab(
-                    kind,
-                    "Arrangement",
-                    new ArrangementView(),
-                    Icon("Fluent.MusicNote120Regular"),
-                    canClose: false),
+                WorkspaceKind.Arrangement => CreateArrangementWorkspace(),
                 WorkspaceKind.Diagnostics => new WorkspaceTab(
                     kind,
                     "Diagnostics",

@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Midora.Avalonia.Presentation\Midora.Avalonia.Presentation.csproj" />
+    <ProjectReference Include="..\..\midora-midi\Midora.Midi\Midora.Midi.csproj" />
   </ItemGroup>
 
   <ItemGroup>

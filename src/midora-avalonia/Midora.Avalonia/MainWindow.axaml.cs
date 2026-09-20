@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Midora.Avalonia.Import;
 using Midora.Avalonia.Platform;
 using Midora.Avalonia.Session;
 using Midora.Avalonia.Windows;
@@ -129,10 +130,39 @@ public partial class MainWindow : Window
             FileTypeFilter = [new FilePickerFileType("Standard MIDI File") { Patterns = ["*.mid", "*.midi"] }]
         });
 
-        if (files.Count > 0)
+        if (files.Count == 0)
         {
-            Session.CreateProject(System.IO.Path.GetFileNameWithoutExtension(files[0].Name));
-            Session.SetStatus("MIDI import is not wired yet; session placeholder created.");
+            return;
+        }
+
+        string? path = files[0].TryGetLocalPath();
+        if (string.IsNullOrEmpty(path))
+        {
+            await MessageDialog.ShowAsync(
+                this,
+                "The selected MIDI file is not a local file.",
+                "Open MIDI as New Project",
+                MessageDialogButtons.Ok,
+                MessageDialogIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            var project = ImportedMidiProject.Parse(path);
+            var source = new MidiTimelineSource(project);
+            Session.CreateProjectFromMidi(
+                System.IO.Path.GetFileNameWithoutExtension(files[0].Name),
+                source);
+        }
+        catch (Exception ex)
+        {
+            await MessageDialog.ShowAsync(
+                this,
+                $"Could not import the MIDI file.\n\n{ex.Message}",
+                "Open MIDI as New Project",
+                MessageDialogButtons.Ok,
+                MessageDialogIcon.Error);
         }
     }
 
@@ -392,6 +422,26 @@ public partial class MainWindow : Window
         }
 
         Step("create-project", () => Session.CreateProject("Smoke Project"));
+
+        var midiPath = Environment.GetEnvironmentVariable("MIDORA_MIDI_SMOKE");
+        if (!string.IsNullOrEmpty(midiPath) && File.Exists(midiPath))
+        {
+            try
+            {
+                var imported = ImportedMidiProject.Parse(midiPath);
+                Session.CreateProjectFromMidi(
+                    System.IO.Path.GetFileNameWithoutExtension(midiPath),
+                    new MidiTimelineSource(imported));
+                if (!Session.HasProject || Session.Workspaces.Count == 0)
+                {
+                    failures.Add("midi-import: imported project did not open a workspace");
+                }
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"midi-import: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
         Step("open-arrangement", () => Session.OpenWorkspace(WorkspaceKind.Arrangement));
         Step("open-diagnostics", () => Session.OpenWorkspace(WorkspaceKind.Diagnostics));
         Step("open-all-tracks", () => Session.OpenWorkspace(WorkspaceKind.AllTracks));

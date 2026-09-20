@@ -84,7 +84,7 @@ public sealed partial class TimelineSurface
             }
 
             string label = map.GetBarBounds(line.Tick).Bar.ToString(CultureInfo.InvariantCulture);
-            nextLabelX = x + DrawLabel(context, label, x + 2, 4, width - x - 4) + 8;
+            nextLabelX = x + DrawLabel(context, label, x + 2, RulerHeight - 14, width - x - 4) + 8;
         }
     }
 

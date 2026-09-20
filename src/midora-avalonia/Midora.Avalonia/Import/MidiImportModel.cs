@@ -1,5 +1,18 @@
 namespace Midora.Avalonia.Import;
 
+public enum ImportedMidiDiagnosticSeverity : byte
+{
+    Info,
+    Warning,
+}
+
+public sealed record ImportedMidiDiagnostic(
+    ImportedMidiDiagnosticSeverity Severity,
+    string Code,
+    string Message,
+    int? SourceTrackIndex = null,
+    long? Tick = null);
+
 public enum ImportedMidiEventKind : byte
 {
     ControlChange,
@@ -65,6 +78,8 @@ public sealed record ImportedMidiProject(
     IReadOnlyList<ImportedMidiConductorEvent> Conductor)
 {
     public string SourceFileName { get; init; } = string.Empty;
+
+    public IReadOnlyList<ImportedMidiDiagnostic> Diagnostics { get; init; } = [];
 
     public static ImportedMidiProject Parse(string path) => MidiImporter.Import(path);
 

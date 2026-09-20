@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -33,9 +35,12 @@ public sealed class ShellSession : INotifyPropertyChanged
     private bool _isGridVisible = true;
     private bool _isCompiling;
     private string _projectName = "Untitled Project";
-    private string _compileState = "Not compiled";
+    private string _compileState = "Not Compiled";
     private string _soundFontState = "No SoundFonts Enabled";
-    private string _statusText = "Ready";
+    private string? _statusMessage;
+    private string? _statusMessageDetails;
+    private string? _statusMessageDetailsTitle;
+    private bool _statusMessageIsError;
     private string _issueSummary = "0 Errors, 0 Warnings";
     private string _notice = string.Empty;
     private int _errorCount;
@@ -158,10 +163,36 @@ public sealed class ShellSession : INotifyPropertyChanged
         private set => Set(ref _soundFontState, value);
     }
 
-    public string StatusText
+    public string? StatusMessage
     {
-        get => _statusText;
-        private set => Set(ref _statusText, value);
+        get => _statusMessage;
+        private set
+        {
+            if (Set(ref _statusMessage, value))
+            {
+                OnPropertyChanged(nameof(HasStatusMessage));
+            }
+        }
+    }
+
+    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(_statusMessage);
+
+    public string? StatusMessageDetails
+    {
+        get => _statusMessageDetails;
+        private set => Set(ref _statusMessageDetails, value);
+    }
+
+    public string? StatusMessageDetailsTitle
+    {
+        get => _statusMessageDetailsTitle;
+        private set => Set(ref _statusMessageDetailsTitle, value);
+    }
+
+    public bool StatusMessageIsError
+    {
+        get => _statusMessageIsError;
+        private set => Set(ref _statusMessageIsError, value);
     }
 
     public string IssueSummary
@@ -184,9 +215,10 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     public bool HasNotice => !string.IsNullOrEmpty(_notice);
 
-    public string ModifiedState => HasProject
-        ? IsModified ? "Unsaved" : "Saved"
-        : string.Empty;
+    /// <summary>WPF <c>ProjectState</c>: a port Project always has an in-memory document.</summary>
+    public string ProjectState => HasProject
+        ? IsModified ? "Modified · Unsaved" : "Unsaved"
+        : "No Project";
 
     public string PlaybackState => IsPlaying ? "Playing" : "Stopped";
 
@@ -246,7 +278,7 @@ public sealed class ShellSession : INotifyPropertyChanged
         : "Midora";
 
     public string TitleBarProjectDisplayName => HasProject
-        ? $"{ProjectName}{(IsModified ? "  ●" : string.Empty)}"
+        ? $"{ProjectName}{(IsModified ? " *" : string.Empty)}"
         : "No Project";
 
     public bool CanEditProject => HasProject;
@@ -271,6 +303,10 @@ public sealed class ShellSession : INotifyPropertyChanged
             ? Brush("Brush.Warning", "#E8B34B")
             : Brush("Brush.Success", "#58C487");
 
+    public IBrush PlaybackBrush => IsPlaying
+        ? Brush("Brush.Success", "#58C487")
+        : Brush("Brush.Text.Tertiary", "#747E8C");
+
     // Project lifecycle.
 
     public void CreateProject(string name)
@@ -287,14 +323,14 @@ public sealed class ShellSession : INotifyPropertyChanged
         IsModified = false;
         IsPlaying = false;
         IsCompiling = false;
-        CompileState = "Not compiled";
+        CompileState = "Not Compiled";
         ErrorCount = 0;
         WarningCount = 0;
         IssueSummary = "0 Errors, 0 Warnings";
         PositionText = "0001 : 01 : 0000";
         TempoText = "120.00 BPM";
-        StatusText = $"Project '{ProjectName}' created (in-memory port placeholder).";
-        SetNotice($"Project '{ProjectName}' created.");
+        Notice = string.Empty;
+        SetStatusMessage(null);
 
         OpenWorkspace(WorkspaceKind.Arrangement);
         ApplyArrangementSource();
@@ -302,10 +338,17 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     private WorkspaceTab CreateArrangementWorkspace()
     {
-        _arrangementView = new ArrangementView();
+        _arrangementView = new ArrangementView { DataContext = this };
         _arrangementView.TrackActivated += (_, trackIndex) => OpenMidiTrackWorkspace(trackIndex);
         _arrangementView.SegmentActivated += (_, activation) =>
             OpenMidiSegmentWorkspace(activation.TrackIndex, activation.StartTick);
+        _arrangementView.AllTracksRequested += (_, _) => OpenWorkspace(WorkspaceKind.AllTracks);
+        _arrangementView.CreateTrackRequested += (_, kind) => SetStatus(kind switch
+        {
+            "Instrument" => "New Logical Track with Instrument requested (not wired yet).",
+            "Midi" => "New Raw MIDI Track requested (not wired yet).",
+            _ => "New Logical Track is not wired yet.",
+        });
         return new WorkspaceTab(
             WorkspaceKind.Arrangement,
             "Arrangement",
@@ -430,9 +473,46 @@ public sealed class ShellSession : INotifyPropertyChanged
 
         PlaybackTick = -1;
 
-        StatusText =
-            $"Imported '{project.SourceFileName}' · {project.Tracks.Count} track(s) · " +
-            $"{project.TicksPerQuarterNote} TPQN · {project.MaximumEndTick} ticks.";
+        int warningCount = project.Diagnostics.Count(
+            diagnostic => diagnostic.Severity == ImportedMidiDiagnosticSeverity.Warning);
+        int informationCount = project.Diagnostics.Count(
+            diagnostic => diagnostic.Severity == ImportedMidiDiagnosticSeverity.Info);
+        SetStatusMessage(
+            $"MIDI import completed with {warningCount} warning(s) and {informationCount} information notice(s).",
+            isError: false,
+            details: BuildMidiImportReport(project, warningCount, informationCount),
+            detailsTitle: "MIDI Import Report");
+    }
+
+    private static string BuildMidiImportReport(
+        ImportedMidiProject project,
+        int warningCount,
+        int informationCount)
+    {
+        StringBuilder report = new();
+        report.AppendLine(
+            "The MIDI file was imported successfully after applying compatibility or preservation handling.");
+        report.AppendLine();
+        report.Append("Warnings: ").AppendLine(warningCount.ToString(CultureInfo.InvariantCulture));
+        report.Append("Information: ").AppendLine(informationCount.ToString(CultureInfo.InvariantCulture));
+        foreach (ImportedMidiDiagnostic diagnostic in project.Diagnostics)
+        {
+            report.AppendLine();
+            report.Append('[').Append(diagnostic.Severity).Append("] ").AppendLine(diagnostic.Code);
+            report.AppendLine(diagnostic.Message);
+            if (diagnostic.SourceTrackIndex is int trackIndex)
+            {
+                report.Append("Source: MTrk ").Append(trackIndex);
+                if (diagnostic.Tick is long tick)
+                {
+                    report.Append(", tick ").Append(tick);
+                }
+
+                report.AppendLine();
+            }
+        }
+
+        return report.ToString().TrimEnd();
     }
 
     private void RefreshArrangementSource()
@@ -492,11 +572,11 @@ public sealed class ShellSession : INotifyPropertyChanged
         _history.Clear();
         _historyIndex = -1;
         ActiveWorkspace = null;
-        CompileState = "Not compiled";
+        CompileState = "Not Compiled";
         ErrorCount = 0;
         WarningCount = 0;
         IssueSummary = "0 Errors, 0 Warnings";
-        StatusText = "Project closed.";
+        SetStatusMessage(null);
     }
 
     public void MarkModified()
@@ -507,7 +587,27 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
     }
 
-    public void SetStatus(string text) => StatusText = text;
+    public void SetStatus(string text) => SetStatusMessage(text);
+
+    public void SetStatusMessage(
+        string? text,
+        bool isError = false,
+        string? details = null,
+        string? detailsTitle = null)
+    {
+        StatusMessageDetails = details;
+        StatusMessageDetailsTitle = detailsTitle;
+        StatusMessageIsError = isError;
+        StatusMessage = text;
+    }
+
+    public void DismissStatusMessage()
+    {
+        StatusMessage = null;
+        StatusMessageDetails = null;
+        StatusMessageDetailsTitle = null;
+        StatusMessageIsError = false;
+    }
 
     public void SetNotice(string text) => Notice = text;
 
@@ -650,12 +750,10 @@ public sealed class ShellSession : INotifyPropertyChanged
         if (IsPlaying)
         {
             StartPlaybackClock();
-            StatusText = "Playing.";
         }
         else
         {
             StopPlaybackClock();
-            StatusText = "Stopped.";
         }
     }
 
@@ -665,7 +763,6 @@ public sealed class ShellSession : INotifyPropertyChanged
         {
             IsPlaying = false;
             StopPlaybackClock();
-            StatusText = "Stopped.";
         }
     }
 
@@ -723,14 +820,12 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
 
         IsCompiling = true;
-        CompileState = "Compiling…";
-        StatusText = "Compiling Project…";
+        CompileState = "Compiling";
         try
         {
             await Task.Delay(600);
             CompileState = "Compile Succeeded";
-            StatusText = "Compile succeeded. The current canonical result is consumable (port placeholder).";
-            SetNotice("Compile succeeded. The current canonical result is consumable.");
+            SetStatusMessage("Compilation completed successfully.");
         }
         finally
         {
@@ -742,9 +837,7 @@ public sealed class ShellSession : INotifyPropertyChanged
     {
         ErrorCount = errors;
         WarningCount = warnings;
-        IssueSummary = errors == 0 && warnings == 0
-            ? "No diagnostics"
-            : $"{errors} error(s), {warnings} warning(s)";
+        IssueSummary = $"{errors} Errors, {warnings} Warnings";
         OnPropertyChanged(nameof(IssueBrush));
     }
 
@@ -775,7 +868,8 @@ public sealed class ShellSession : INotifyPropertyChanged
         OnPropertyChanged(nameof(HasErrors));
         OnPropertyChanged(nameof(HasWarnings));
         OnPropertyChanged(nameof(IssueBrush));
-        OnPropertyChanged(nameof(ModifiedState));
+        OnPropertyChanged(nameof(PlaybackBrush));
+        OnPropertyChanged(nameof(ProjectState));
         OnPropertyChanged(nameof(PlaybackState));
     }
 

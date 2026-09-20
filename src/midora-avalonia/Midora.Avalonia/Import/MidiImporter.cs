@@ -78,12 +78,13 @@ public static class MidiImporter
         }
 
         List<ImportedMidiConductorEvent> conductor = [];
+        List<ImportedMidiDiagnostic> diagnostics = [];
         ImportedMidiTrack[] tracks = new ImportedMidiTrack[parsed.Tracks.Count];
         long maximumEndTick = 0;
         for (int index = 0; index < parsed.Tracks.Count; index++)
         {
             ParsedStandardMidiFileTrack source = parsed.Tracks[index];
-            tracks[index] = BuildTrack(source, conductor);
+            tracks[index] = BuildTrack(source, conductor, diagnostics);
             if (source.EndTick > maximumEndTick)
             {
                 maximumEndTick = source.EndTick;
@@ -101,17 +102,22 @@ public static class MidiImporter
             conductorEvents)
         {
             SourceFileName = sourceFileName,
+            Diagnostics = diagnostics,
         };
     }
 
     private static ImportedMidiTrack BuildTrack(
         ParsedStandardMidiFileTrack source,
-        List<ImportedMidiConductorEvent> conductor)
+        List<ImportedMidiConductorEvent> conductor,
+        List<ImportedMidiDiagnostic> diagnostics)
     {
         List<ImportedMidiNote> notes = [];
         List<ImportedMidiEvent> events = [];
         Dictionary<int, Queue<(long StartTick, int Velocity)>> openNotes = [];
         int channelMask = 0;
+        int systemExclusiveCount = 0;
+        int unmatchedNoteOffCount = 0;
+        int textDecodeFailureCount = 0;
         string? trackName = null;
 
         foreach (ParsedStandardMidiFileEvent item in source.Events)
@@ -120,14 +126,23 @@ public static class MidiImporter
             {
                 case StandardMidiFileEventKind.ChannelVoice:
                     channelMask |= 1 << item.Message.ChannelNumber;
-                    HandleChannelVoice(item, notes, events, openNotes);
+                    HandleChannelVoice(
+                        item,
+                        notes,
+                        events,
+                        openNotes,
+                        ref unmatchedNoteOffCount);
                     break;
                 case StandardMidiFileEventKind.Meta:
-                    HandleMeta(item, conductor, ref trackName);
+                    HandleMeta(item, conductor, ref trackName, ref textDecodeFailureCount);
+                    break;
+                case StandardMidiFileEventKind.SystemExclusive:
+                    systemExclusiveCount++;
                     break;
             }
         }
 
+        int unterminatedNoteCount = 0;
         foreach (int pair in openNotes.Keys.Order())
         {
             Queue<(long StartTick, int Velocity)> queue = openNotes[pair];
@@ -143,8 +158,47 @@ public static class MidiImporter
                         velocity,
                         0,
                         pair >> 8));
+                    unterminatedNoteCount++;
                 }
             }
+        }
+
+        if (unterminatedNoteCount > 0)
+        {
+            diagnostics.Add(new ImportedMidiDiagnostic(
+                ImportedMidiDiagnosticSeverity.Info,
+                "MidiImportUnterminatedNotes",
+                $"{unterminatedNoteCount} note(s) were still active at the end of the track and were "
+                + "closed at the track end.",
+                source.SourceTrackIndex));
+        }
+
+        if (unmatchedNoteOffCount > 0)
+        {
+            diagnostics.Add(new ImportedMidiDiagnostic(
+                ImportedMidiDiagnosticSeverity.Warning,
+                "MidiImportUnmatchedNoteOff",
+                $"{unmatchedNoteOffCount} NoteOff event(s) had no matching NoteOn and were ignored.",
+                source.SourceTrackIndex));
+        }
+
+        if (textDecodeFailureCount > 0)
+        {
+            diagnostics.Add(new ImportedMidiDiagnostic(
+                ImportedMidiDiagnosticSeverity.Warning,
+                "MidiImportTextDecodeSkipped",
+                $"{textDecodeFailureCount} text meta event(s) could not be decoded as UTF-8 or "
+                + "CP932 and were ignored.",
+                source.SourceTrackIndex));
+        }
+
+        if (systemExclusiveCount > 0)
+        {
+            diagnostics.Add(new ImportedMidiDiagnostic(
+                ImportedMidiDiagnosticSeverity.Info,
+                "MidiImportOpaqueNotPreserved",
+                $"{systemExclusiveCount} System Exclusive event(s) are not preserved in this port yet.",
+                source.SourceTrackIndex));
         }
 
         ImportedMidiNote[] sortedNotes = notes
@@ -167,7 +221,8 @@ public static class MidiImporter
         ParsedStandardMidiFileEvent item,
         List<ImportedMidiNote> notes,
         List<ImportedMidiEvent> events,
-        Dictionary<int, Queue<(long StartTick, int Velocity)>> openNotes)
+        Dictionary<int, Queue<(long StartTick, int Velocity)>> openNotes,
+        ref int unmatchedNoteOffCount)
     {
         MidiMessage message = item.Message;
         int channel = message.ChannelNumber;
@@ -185,10 +240,16 @@ public static class MidiImporter
                 queue.Enqueue((item.Tick, message.Byte2));
                 break;
             case MidiMessageType.NoteOff:
-                CloseNote(notes, openNotes, pair, item.Tick, message.Byte2);
+                if (!CloseNote(notes, openNotes, pair, item.Tick, message.Byte2))
+                {
+                    unmatchedNoteOffCount++;
+                }
                 break;
             case MidiMessageType.NoteOn:
-                CloseNote(notes, openNotes, pair, item.Tick, 0);
+                if (!CloseNote(notes, openNotes, pair, item.Tick, 0))
+                {
+                    unmatchedNoteOffCount++;
+                }
                 break;
             case MidiMessageType.PolyphonicKeyPressure:
                 events.Add(CreateEvent(
@@ -240,7 +301,7 @@ public static class MidiImporter
         }
     }
 
-    private static void CloseNote(
+    private static bool CloseNote(
         List<ImportedMidiNote> notes,
         Dictionary<int, Queue<(long StartTick, int Velocity)>> openNotes,
         int pair,
@@ -252,7 +313,7 @@ public static class MidiImporter
             out Queue<(long StartTick, int Velocity)>? queue)
             || queue.Count == 0)
         {
-            return;
+            return false;
         }
 
         (long startTick, int velocity) = queue.Dequeue();
@@ -266,20 +327,30 @@ public static class MidiImporter
                 noteOffVelocity,
                 pair >> 8));
         }
+
+        return true;
     }
 
     private static void HandleMeta(
         ParsedStandardMidiFileEvent item,
         List<ImportedMidiConductorEvent> conductor,
-        ref string? trackName)
+        ref string? trackName,
+        ref int textDecodeFailureCount)
     {
         ReadOnlySpan<byte> data = item.Data.Span;
         switch (item.Type)
         {
             case StandardMidiFile.TrackNameMetaType:
-                if (trackName is null && TryDecodeText(data) is { Length: > 0 } name)
+                if (trackName is null)
                 {
-                    trackName = name;
+                    if (TryDecodeText(data) is { Length: > 0 } name)
+                    {
+                        trackName = name;
+                    }
+                    else if (data.Length > 0)
+                    {
+                        textDecodeFailureCount++;
+                    }
                 }
                 break;
             case StandardMidiFile.SetTempoMetaType:
@@ -312,13 +383,18 @@ public static class MidiImporter
                 }
                 break;
             case StandardMidiFile.MarkerMetaType:
+                string? marker = TryDecodeText(data);
+                if (marker is null && data.Length > 0)
+                {
+                    textDecodeFailureCount++;
+                }
                 conductor.Add(new ImportedMidiConductorEvent(
                     item.Tick,
                     ImportedConductorKind.Marker,
                     0d,
                     0,
                     0,
-                    TryDecodeText(data) ?? string.Empty));
+                    marker ?? string.Empty));
                 break;
             case StandardMidiFile.KeySignatureMetaType:
                 if (data.Length >= 2)

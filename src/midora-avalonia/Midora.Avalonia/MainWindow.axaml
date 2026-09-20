@@ -53,13 +53,10 @@
             </MenuItem>
             <MenuItem Header="View">
               <MenuItem Header="Arrangement" IsEnabled="{Binding HasProject}" Click="OnOpenArrangementClick" />
-              <MenuItem Header="All Tracks" IsEnabled="{Binding HasProject}" Click="OnOpenAllTracksClick" />
               <MenuItem Header="Diagnostics" IsEnabled="{Binding HasProject}" Click="OnOpenDiagnosticsClick" />
               <Separator />
               <MenuItem Header="Snap to Grid" ToggleType="CheckBox"
                         IsChecked="{Binding IsSnapEnabled, Mode=TwoWay}" IsEnabled="{Binding HasProject}" />
-              <MenuItem Header="Grid" ToggleType="CheckBox"
-                        IsChecked="{Binding IsGridVisible, Mode=TwoWay}" IsEnabled="{Binding HasProject}" />
               <MenuItem Header="Follow Playback" ToggleType="CheckBox"
                         IsChecked="{Binding IsFollowPlaybackEnabled, Mode=TwoWay}" IsEnabled="{Binding HasProject}" />
             </MenuItem>
@@ -97,8 +94,9 @@
               <MenuItem Header="Instrument Catalogs…" Click="OnInstrumentCatalogsClick" />
               <Separator />
               <MenuItem Header="About Midora" InputGesture="F12" Click="OnAboutClick" />
+              <Separator />
+              <MenuItem Header="Windows (port catalog)" x:Name="WindowsMenu" />
             </MenuItem>
-            <MenuItem Header="Windows" x:Name="WindowsMenu" />
           </Menu>
           <Border Grid.Column="2" Margin="8,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
                   IsHitTestVisible="False"
@@ -219,20 +217,16 @@
       </Grid>
     </Border>
 
-    <!-- Transient notice banner (compile/import/status summaries). -->
-    <Border Grid.Row="2" Padding="10,6" Background="{DynamicResource Brush.Surface.1}"
-            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
+    <!-- Transient notice banner (special shell notices only). -->
+    <Border Grid.Row="2" Padding="10,6" Background="{DynamicResource Brush.Red.Subtle}"
+            BorderBrush="{DynamicResource Brush.Red.Dark}" BorderThickness="0,0,0,1"
             IsVisible="{Binding HasNotice}">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
-        <controls:FluentIcon Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center"
-                             Foreground="{DynamicResource Brush.Success}"
-                             Data="{StaticResource Fluent.CheckmarkCircle20Regular}" />
-        <TextBlock Grid.Column="1" VerticalAlignment="Center" TextWrapping="Wrap"
-                   Text="{Binding Notice}" />
-        <Button Grid.Column="2" Classes="ghost" Height="22" Margin="10,0,0,0" Padding="8,0"
-                Content="View Full Message" Click="OnViewFullNoticeClick" />
-        <Button Grid.Column="3" Classes="ghost" Height="22" Margin="10,0,0,0" Padding="8,0"
-                Content="Dismiss" Click="OnDismissNoticeClick" />
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding Notice}" />
+        <Button Grid.Column="1" Width="26" Height="24" Padding="0" Classes="ghost"
+                ToolTip.Tip="Dismiss notice" Click="OnDismissNoticeClick">
+          <controls:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.Dismiss20Regular}" />
+        </Button>
       </Grid>
     </Border>
 
@@ -256,6 +250,29 @@
                   ItemsSource="{Binding Workspaces}"
                   SelectedItem="{Binding ActiveWorkspace, Mode=OneWay}"
                   Background="Transparent">
+        <TabControl.Template>
+          <ControlTemplate>
+            <Grid RowDefinitions="Auto,*">
+              <Grid Background="{DynamicResource Brush.Surface.1}" ColumnDefinitions="*,32">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                  <ItemsPresenter Name="PART_ItemsPresenter" HorizontalAlignment="Left" />
+                </ScrollViewer>
+                <Button Grid.Column="1" Width="28" Height="28" Margin="2" Padding="0" Classes="icon ghost"
+                        ToolTip.Tip="Workspace list">
+                  <TextBlock FontSize="14" Text="▾" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                </Button>
+              </Grid>
+              <ContentPresenter Name="PART_SelectedContentHost" Grid.Row="1"
+                                Content="{TemplateBinding SelectedContent}"
+                                ContentTemplate="{TemplateBinding SelectedContentTemplate}" />
+            </Grid>
+          </ControlTemplate>
+        </TabControl.Template>
+        <TabControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <StackPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </TabControl.ItemsPanel>
         <TabControl.ItemTemplate>
           <DataTemplate>
             <StackPanel Orientation="Horizontal">
@@ -285,24 +302,36 @@
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{Binding IssueBrush}" />
-          <Button Classes="ghost" Height="22" Padding="0"
-                  IsEnabled="{Binding HasProject}" Click="OnOpenDiagnosticsClick"
-                  ToolTip.Tip="Open Diagnostics">
-            <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding IssueSummary}" />
-          </Button>
+          <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{Binding IssueBrush}"
+                   ToolTip.Tip="{Binding IssueSummary}" />
+          <TextBlock Classes="caption statuslink" VerticalAlignment="Center" Text="{Binding IssueSummary}"
+                     ToolTip.Tip="Open Diagnostics" PointerReleased="OnOpenDiagnosticsPointerReleased" />
           <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
           <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding CompileState}" />
           <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
-          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding SoundFontState}" />
-          <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}"
-                  IsVisible="{Binding HasProject}" />
-          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding ModifiedState}"
-                     IsVisible="{Binding HasProject}" />
+          <TextBlock Classes="caption statuslink" VerticalAlignment="Center" Text="{Binding SoundFontState}"
+                     ToolTip.Tip="Open SoundFont Settings" PointerReleased="OnSoundFontStatusPointerReleased" />
           <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
-          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding PlaybackState}" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding ProjectState}" />
+          <Border Width="1" Height="11" Margin="9,0" Background="{DynamicResource Brush.Border}" />
+          <TextBlock Classes="caption" VerticalAlignment="Center" Text="{Binding PlaybackState}"
+                     Foreground="{Binding PlaybackBrush}" />
         </StackPanel>
-        <TextBlock Grid.Column="1" Classes="caption" VerticalAlignment="Center" Text="{Binding StatusText}" />
+        <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center"
+                    Orientation="Horizontal">
+          <TextBlock Classes="caption" MaxWidth="520" VerticalAlignment="Center"
+                     Foreground="{DynamicResource Brush.Text.Tertiary}"
+                     TextTrimming="CharacterEllipsis" Text="{Binding StatusMessage}"
+                     IsVisible="{Binding !StatusMessageIsError}" />
+          <TextBlock Classes="caption" MaxWidth="520" VerticalAlignment="Center"
+                     Foreground="{DynamicResource Brush.Red.Hover}"
+                     TextTrimming="CharacterEllipsis" Text="{Binding StatusMessage}"
+                     IsVisible="{Binding StatusMessageIsError}" />
+          <Button Height="20" Margin="7,0,0,0" Padding="6,0" Classes="ghost" Content="View Full Message"
+                  IsVisible="{Binding HasStatusMessage}" Click="OnViewStatusMessageClick" />
+          <Button Height="20" Margin="7,0,0,0" Padding="6,0" Classes="ghost" Content="Dismiss"
+                  IsVisible="{Binding HasStatusMessage}" Click="OnDismissStatusMessageClick" />
+        </StackPanel>
       </Grid>
     </Border>
   </Grid>

@@ -19,6 +19,12 @@ namespace Midora.Avalonia.Views;
 /// </summary>
 public partial class MidiTrackView : UserControl
 {
+    private static readonly string[] SubdivisionPresets =
+    [
+        "Bar", "1/1", "1/2", "1/3", "1/4", "1/6", "3/16", "1/8", "1/12", "3/32",
+        "1/16", "1/24", "3/64", "1/32", "1/48", "1/64", "1/128", "1/256",
+    ];
+
     private const long DefaultTicksPerQuarterNote = 480;
     private const int DefaultFirstPitch = 36;
     private const int DefaultPitchCount = 60;
@@ -27,35 +33,39 @@ public partial class MidiTrackView : UserControl
     private const double NotesLaneHeight = 12d;
     private const double ConductorLaneHeight = 20d;
     private const double HorizontalZoomStep = 1.25;
-    private const string TimelineHint =
-        "Wheel: pan · Ctrl+wheel: zoom · Drag: select · Middle-drag: pan · S/D/E: tool · Ctrl+Z: undo";
 
     private EditableMidiProject? _project;
     private EditableMidiSource? _source;
     private int _trackIndex;
     private long _ticksPerQuarterNote = DefaultTicksPerQuarterNote;
     private TimelineSurfaceMode _mode = TimelineSurfaceMode.PianoRoll;
-    private TimelineToolMode _tool = TimelineToolMode.Select;
     private bool _suppressTrackSelection;
-    private string? _selectionText;
-    private string? _laneText;
 
     public MidiTrackView()
     {
         InitializeComponent();
 
+        SubdivisionBox.ItemsSource = SubdivisionPresets;
+        SubdivisionBox.Text = "1/8";
+
         Timeline.PointerTickChanged += OnPointerTickChanged;
+        Timeline.PropertyChanged += (_, change) =>
+        {
+            if (change.Property == TimelineSurface.FirstLaneProperty)
+            {
+                Keyboard.FirstLane = Timeline.FirstLane;
+            }
+        };
         Timeline.SelectionChanged += OnSelectionChanged;
         Timeline.LaneActivated += OnLaneActivated;
         Timeline.EditCommitted += OnEditCommitted;
         Keyboard.KeyPressed += OnKeyboardKeyPressed;
-        Keyboard.KeyReleased += (_, _) => RefreshFooter();
+        Keyboard.KeyReleased += (_, _) => { };
 
         SetTool(TimelineToolMode.Select);
         SetToolbarEnabled(false);
         SetMode(TimelineSurfaceMode.PianoRoll);
-        UpdateTickReadout(0);
-        RefreshFooter();
+        ShowPointerTick(-1);
     }
 
     /// <summary>
@@ -212,7 +222,7 @@ public partial class MidiTrackView : UserControl
             _source = null;
             Timeline.Source = null;
             Timeline.EditHost = null;
-            RefreshFooter();
+            ShowPointerTick(-1);
             return;
         }
 
@@ -221,15 +231,12 @@ public partial class MidiTrackView : UserControl
             _source = null;
             Timeline.Source = null;
             Timeline.EditHost = null;
-            _selectionText = null;
-            _laneText = null;
-            RefreshFooter();
+            ShowPointerTick(-1);
             return;
         }
 
         _trackIndex = Math.Clamp(_trackIndex, 0, _project.TrackCount - 1);
-        _selectionText = null;
-        _laneText = null;
+        LengthBox.Text = Math.Max(1, _ticksPerQuarterNote).ToString(CultureInfo.InvariantCulture);
 
         EditableMidiSource source = new(_project, _trackIndex);
         _source = source;
@@ -251,8 +258,7 @@ public partial class MidiTrackView : UserControl
         Timeline.SelectedId = null;
 
         SetMode(DefaultModeForTrack(_trackIndex));
-        UpdateTickReadout(0);
-        RefreshFooter();
+        ShowPointerTick(-1);
     }
 
     /// <summary>
@@ -313,13 +319,11 @@ public partial class MidiTrackView : UserControl
 
     private void SetTool(TimelineToolMode tool)
     {
-        _tool = tool;
         Timeline.ToolMode = tool;
         SelectButton.IsChecked = tool == TimelineToolMode.Select;
         DrawButton.IsChecked = tool == TimelineToolMode.Draw;
         EraseButton.IsChecked = tool == TimelineToolMode.Erase;
         SplitButton.IsChecked = tool == TimelineToolMode.Split;
-        RefreshFooter();
     }
 
     private void SetToolbarEnabled(bool enabled)
@@ -329,6 +333,11 @@ public partial class MidiTrackView : UserControl
         VelocityButton.IsEnabled = enabled;
         EventsButton.IsEnabled = enabled;
         ConductorButton.IsEnabled = enabled;
+        GridToggle.IsEnabled = enabled;
+        SnapToggle.IsEnabled = enabled;
+        SubdivisionBox.IsEnabled = enabled;
+        LengthBox.IsEnabled = enabled;
+        VelocityBox.IsEnabled = enabled;
         SelectButton.IsEnabled = enabled;
         DrawButton.IsEnabled = enabled;
         EraseButton.IsEnabled = enabled;
@@ -388,77 +397,34 @@ public partial class MidiTrackView : UserControl
     {
         Timeline.StartTick = Math.Max(0, startTick);
         Timeline.TickSpan = Math.Max(1, spanTicks);
-        UpdateTickReadout(Timeline.StartTick);
+        ShowPointerTick(-1);
     }
 
     public void SetPlaybackTick(long tick) => Timeline.PlaybackTick = tick;
 
-    private void OnPointerTickChanged(object? sender, long tick) => UpdateTickReadout(tick);
+    private void OnPointerTickChanged(object? sender, long tick) => ShowPointerTick(tick);
 
-    private void OnKeyboardKeyPressed(object? sender, int pitch) =>
-        FooterText.Text = $"Preview MIDI {pitch} · audio preview is not wired yet";
+    private void OnKeyboardKeyPressed(object? sender, int pitch)
+    {
+        // Instrument audition is not wired to the audio backend yet; the key press still
+        // highlights the pressed key through PianoKeyboardStrip.
+    }
 
     private void OnSelectionChanged(object? sender, TimelineRenderItem? item)
     {
-        _selectionText = item is { } selected
-            ? "Selected " + selected.Kind
-              + " #" + selected.Id.Value.ToString(CultureInfo.InvariantCulture)
-              + " · start " + selected.StartTick.ToString(CultureInfo.InvariantCulture)
-              + " · end " + selected.EndTick.ToString(CultureInfo.InvariantCulture)
-              + " · value " + selected.Value.ToString("0.##", CultureInfo.InvariantCulture)
-            : null;
-        RefreshFooter();
     }
 
     private void OnLaneActivated(object? sender, int lane)
     {
-        string? name = Timeline.TrackNames?.Invoke(lane);
-        _laneText = name is { Length: > 0 }
-            ? "Lane " + lane.ToString(CultureInfo.InvariantCulture) + " · " + name
-            : "Lane " + lane.ToString(CultureInfo.InvariantCulture);
-        RefreshFooter();
     }
 
-    private void UpdateTickReadout(long tick)
+    private void ShowPointerTick(long tick)
     {
-        long ticksPerQuarterNote = Math.Max(1, _ticksPerQuarterNote);
-        long ticksPerBar = ticksPerQuarterNote * 4;
-        long bar = tick / ticksPerBar + 1;
-        long beat = tick % ticksPerBar / ticksPerQuarterNote + 1;
-        TickText.Text = "Bar " + bar.ToString(CultureInfo.InvariantCulture)
-            + "." + beat.ToString(CultureInfo.InvariantCulture)
-            + "." + (tick % ticksPerQuarterNote).ToString("000", CultureInfo.InvariantCulture);
-    }
-
-    private string ToolLabel => _tool switch
-    {
-        TimelineToolMode.Draw => "Tool: Draw",
-        TimelineToolMode.Erase => "Tool: Erase",
-        TimelineToolMode.Split => "Tool: Split",
-        _ => "Tool: Select"
-    };
-
-    private void RefreshFooter()
-    {
-        string tool = ToolLabel;
-        if (_project is null)
-        {
-            FooterText.Text = tool + " · No MIDI project loaded.";
-            return;
-        }
-
-        if (_project.TrackCount == 0)
-        {
-            FooterText.Text = tool + " · No MIDI tracks in this project.";
-            return;
-        }
-
-        if (_selectionText is { } selection)
-        {
-            FooterText.Text = tool + " · " + selection;
-            return;
-        }
-
-        FooterText.Text = tool + " · " + (_laneText ?? TimelineHint);
+        bool visible = tick >= 0;
+        PointerText.IsVisible = visible;
+        PointerSeparator.IsVisible = visible;
+        PointerText.Text = visible
+            ? tick.ToString(CultureInfo.InvariantCulture)
+            : string.Empty;
     }
 }

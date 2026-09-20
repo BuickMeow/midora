@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -52,6 +53,13 @@ public sealed partial class TimelineSurface
     private static readonly SolidColorBrush NoteBrush = new(Color.Note);
     private static readonly SolidColorBrush EventBrush = new(Color.Event);
     private static readonly SolidColorBrush TextTertiaryBrush = new(Color.TextTertiary);
+    private static readonly SolidColorBrush TextSecondaryBrush = new(
+        global::Avalonia.Media.Color.FromRgb(0xA7, 0xAF, 0xBB));
+    private static readonly SolidColorBrush MarkerChipTextBrush = new(
+        global::Avalonia.Media.Color.FromRgb(0xB7, 0xBF, 0xCC));
+    private static readonly SolidColorBrush MarkerChipBackgroundBrush = new(
+        global::Avalonia.Media.Color.FromRgb(0x0E, 0x11, 0x15));
+    private static readonly Pen MarkerChipPen = new(TextTertiaryBrush, 1);
     private static readonly SolidColorBrush RedBrush = new(Color.Red);
     private static readonly SolidColorBrush MarqueeFillBrush = new(Color.MarqueeFill);
     private static readonly SolidColorBrush LaneDimBrush = new(
@@ -66,6 +74,11 @@ public sealed partial class TimelineSurface
         FontFamily.Default,
         FontStyle.Normal,
         FontWeight.Normal,
+        FontStretch.Normal);
+    private static readonly Typeface SurfaceSemiBoldTypeface = new(
+        FontFamily.Default,
+        FontStyle.Normal,
+        FontWeight.SemiBold,
         FontStretch.Normal);
 
     private readonly Dictionary<(uint Accent, bool Selected), SolidColorBrush> _segmentFillCache = [];
@@ -131,6 +144,7 @@ public sealed partial class TimelineSurface
 
         _rulerMarkerScratch.Clear();
         Source.QueryInto(viewport.StartTick, viewport.EndTick, 0, 1, _rulerMarkerScratch);
+        bool arrangement = SurfaceMode == TimelineSurfaceMode.Arrangement;
         foreach (TimelineRenderItem item in _rulerMarkerScratch)
         {
             if (item.Kind != TimelineItemKind.Marker || string.IsNullOrEmpty(item.Label))
@@ -144,7 +158,50 @@ public sealed partial class TimelineSurface
                 continue;
             }
 
-            DrawLabel(context, item.Label, x + 3, 3, Math.Max(0, width - x - 5));
+            if (!arrangement)
+            {
+                DrawLabel(context, item.Label, x + 3, 3, Math.Max(0, width - x - 5));
+                continue;
+            }
+
+            DrawMarkerChip(context, item.Label, x, width);
+        }
+    }
+
+    /// <summary>WPF arrangement ruler draws markers as bordered chips on the ruler top row.</summary>
+    private void DrawMarkerChip(DrawingContext context, string label, double x, double width)
+    {
+        FormattedText formatted = new(
+            label,
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            SurfaceSemiBoldTypeface,
+            9,
+            MarkerChipTextBrush);
+        try
+        {
+            double chipWidth = Math.Clamp(formatted.Width + 10, 12, 90);
+            Rect chip = new(
+                Math.Round(x) + 0.5,
+                1.5,
+                Math.Min(chipWidth, Math.Max(0, width - x)),
+                15);
+            if (chip.Width <= 1)
+            {
+                return;
+            }
+
+            context.DrawRectangle(MarkerChipBackgroundBrush, MarkerChipPen, chip, 3, 3);
+            using (context.PushClip(new RoundedRect(chip)))
+            {
+                context.DrawText(
+                    formatted,
+                    new Point(chip.X + 5, chip.Y + Math.Max(0, (chip.Height - formatted.Height) / 2)));
+            }
+        }
+        finally
+        {
+            (formatted as IDisposable)?.Dispose();
         }
     }
 

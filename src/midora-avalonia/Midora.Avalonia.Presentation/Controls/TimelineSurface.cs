@@ -9,7 +9,11 @@ namespace Midora.Avalonia.Presentation.Controls;
 
 public sealed partial class TimelineSurface : Control
 {
-    private const double RulerHeight = 24;
+    private const double DefaultRulerHeight = 24;
+    private const double ArrangementRulerHeight = 32;
+    private double RulerHeight => SurfaceMode == TimelineSurfaceMode.Arrangement
+        ? ArrangementRulerHeight
+        : DefaultRulerHeight;
     private const double DefaultLaneHeight = 28;
     private const double MarqueeDragThreshold = 3;
     private const double GridMinimumPixelSpacing = 6;
@@ -536,6 +540,7 @@ public sealed partial class TimelineSurface : Control
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
+        RaisePointerTickChanged(default, isInside: false);
         if (_hoverItemId is null)
         {
             return;
@@ -645,8 +650,20 @@ public sealed partial class TimelineSurface : Control
         InvalidateVisual();
     }
 
-    private void RaisePointerTickChanged(Point position)
+    private void RaisePointerTickChanged(Point position, bool isInside = true)
     {
+        if (!isInside)
+        {
+            if (_lastPointerTick == -1)
+            {
+                return;
+            }
+
+            _lastPointerTick = -1;
+            PointerTickChanged?.Invoke(this, -1);
+            return;
+        }
+
         if (!TryCreateViewport(out TimelineViewport viewport))
         {
             return;

@@ -110,6 +110,19 @@ public sealed class LaneHeaderStrip : Control
 
     public event EventHandler<LaneToggleEventArgs>? SoloToggled;
 
+    /// <summary>Clears every runtime mute/solo state and repaints.</summary>
+    public void ClearStates()
+    {
+        if (_mutedLanes.Count == 0 && _soloedLanes.Count == 0)
+        {
+            return;
+        }
+
+        _mutedLanes.Clear();
+        _soloedLanes.Clear();
+        InvalidateVisual();
+    }
+
     public sealed record LaneToggleEventArgs(int Lane, bool Active);
 
     public override void Render(DrawingContext context)
@@ -170,15 +183,15 @@ public sealed class LaneHeaderStrip : Control
                 : TrackNames is { } names && lane < names.Count && !string.IsNullOrWhiteSpace(names[lane])
                     ? names[lane]
                     : $"Track {lane}";
-            string summary = lane == 0 ? "Tempo & markers" : $"P1 Ch{lane} Melodic";
+            string summary = lane == 0 ? "Tempo & markers" : $"P1 Ch.{lane} Melodic";
 
-            DrawText(context, name, 10, laneTop + 3, PrimaryBrush, 12, 600);
-            DrawText(context, summary, 10, laneTop + 17, TertiaryBrush, 10, 400);
+            DrawText(context, name, 10, laneTop + 6, PrimaryBrush, 12, 600);
+            DrawText(context, summary, 10, laneTop + 22, TertiaryBrush, 10, 400);
 
             bool muted = _mutedLanes.Contains(lane);
             bool soloed = _soloedLanes.Contains(lane);
-            Rect muteRect = new(width - 47, laneTop + 7, 18, 14);
-            Rect soloRect = new(width - 25, laneTop + 7, 18, 14);
+            Rect muteRect = new(width - 53, laneTop + 17, 25, 22);
+            Rect soloRect = new(width - 26, laneTop + 17, 25, 22);
             _chipHitRects.Add((muteRect, lane, true));
             _chipHitRects.Add((soloRect, lane, false));
             DrawChip(context, "M", muteRect, muted);
@@ -214,7 +227,25 @@ public sealed class LaneHeaderStrip : Control
                 : global::Avalonia.Media.Color.FromRgb(0xF2, 0x55, 0x5A))
             : SecondaryBrush;
         context.DrawRectangle(fill, pen, chip, 3, 3);
-        DrawText(context, glyph, chip.X + 5.5, chip.Y + 0.5, textBrush, 10, 600);
+        FormattedText glyphText = new(
+            glyph,
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            ResolveTypeface(700),
+            10,
+            textBrush);
+        try
+        {
+            context.DrawText(
+                glyphText,
+                new Point(
+                    chip.X + Math.Max(0, (chip.Width - glyphText.Width) / 2),
+                    chip.Y + Math.Max(0, (chip.Height - glyphText.Height) / 2)));
+        }
+        finally
+        {
+            (glyphText as IDisposable)?.Dispose();
+        }
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)

@@ -126,15 +126,35 @@ public partial class MainWindow : Window
 
     private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
 
-    private async void OnViewFullNoticeClick(object? sender, RoutedEventArgs e)
+    private void OnDismissNoticeClick(object? sender, RoutedEventArgs e) => Session.DismissNotice();
+
+    private async void OnViewStatusMessageClick(object? sender, RoutedEventArgs e)
     {
-        if (!string.IsNullOrEmpty(Session.Notice))
+        if (Session.StatusMessageDetails is { Length: > 0 } details)
         {
-            await MessageDialog.ShowAsync(this, Session.Notice, "Notice");
+            await new TextDetailsDialog(
+                Session.StatusMessageDetailsTitle ?? "Details",
+                details).ShowDialog(this);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(Session.StatusMessage))
+        {
+            await MessageDialog.ShowAsync(
+                this,
+                Session.StatusMessage,
+                Session.StatusMessageDetailsTitle ?? "Details");
         }
     }
 
-    private void OnDismissNoticeClick(object? sender, RoutedEventArgs e) => Session.DismissNotice();
+    private void OnDismissStatusMessageClick(object? sender, RoutedEventArgs e) =>
+        Session.DismissStatusMessage();
+
+    private void OnOpenDiagnosticsPointerReleased(object? sender, PointerReleasedEventArgs e) =>
+        Session.OpenWorkspace(WorkspaceKind.Diagnostics);
+
+    private void OnSoundFontStatusPointerReleased(object? sender, PointerReleasedEventArgs e) =>
+        OnApplicationPreferencesClick(sender, e);
 
     // ---- File menu / command bar ----------------------------------------
 

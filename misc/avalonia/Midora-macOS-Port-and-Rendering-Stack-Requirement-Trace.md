@@ -441,4 +441,20 @@
 - **M/S 运行期过滤**：轨道头 M/S 芯片可点击（含选中配色），Arrangement 泳道按 Mute/Solo 变暗并隐藏内容；仅运行期，不持久化、不进 canonical。
 - **评审入口**（仅用于截图验收）：`MIDORA_MIDI_OPEN`、`MIDORA_OPEN_TRACK`、`MIDORA_OPEN_SEGMENT`、`MIDORA_TRACK_MODE`、`MIDORA_AUTOPLAY`、`MIDORA_NEW_PROJECT`。
 - **验证**：构建 0 警告 0 错误；shell 冒烟（真实 MIDI、编辑、Undo/Redo、合并拖动）failures=0；逐项截图确认布局、颜色（无 Fluent 默认蓝）、钢琴键盘、Velocity 渲染（像素采样 3,736 命中）、播放指针与位置读数。
+### 2026-09-20（续）Slice H：按 WPF 原版纠偏布局与状态文案（本轮）
+
+对照产品所有者提供的 WPF 原版截图，逐项纠正此前自造/错位的界面结构：
+
+1. **Notice 与状态消息分家**：`Notice` 只在真正需要横幅提示时出现（红色 `Brush.Red.Subtle` 底 + `Brush.Red.Dark` 底线 + 右侧 X 关闭），不再有伪造的 “Project created”。`StatusMessage` / `View Full Message` / `Dismiss` 回到底部状态栏右侧（`HasStatusMessage` 时显示），详情用 `TextDetailsDialog`（标题 + 等宽正文 + Copy/Close）。
+2. **工作区标签栏**：改为 WPF `SingleLineWorkspaceTabs` 结构（32px `Surface.1` 条 + 右侧 32px ▾ 工作区列表按钮），TabItem 采用 WPF 基线（12,8 内边距、选中红色 2px 下划线、悬停 `Surface.2`），不再另起一行“多余栏”。
+3. **Arrangement 头部**：按 WPF `PanelHeader`（34px）实现：左侧上下文文案 `N tracks · N segments`，右侧依序为指针 tick 文本、`Grid`（44 宽，选中红）、`Snap`、可编辑细分 `1/8`、`Length 1920`、`Zoom out/in`、`All Tracks`、分隔线、`Draw/Select/Split/Erase`（30×24）。新增通用 `ToggleButton` 基线样式（WPF `Toggle.Segment`：28 高、1px `Brush.Border`、选中 `Red.Subtle/Red.Dark/Red.Hover`）。
+4. **轨道高度与列宽**：`LaneHeight` 由 28 改为 WPF 的 56，轨道头列宽由 190 改为 `ArrangementLaneHeaderWidth = 232`；标题上移、`P1 Ch.N Melodic` 明细、M/S 芯片按 `Toggle.TrackState`（25×22、10 号加粗、居中）绘制。
+5. **删除多余底栏**：移除 Arrangement 与音轨编辑器的 “Tick … · Wheel: pan …” 提示条与占位页脚，仅保留 WPF 的 25px 状态栏。
+6. **导入文案**：改为 WPF 原文 `MIDI import completed with {w} warning(s) and {i} information notice(s).` + 详情报告（`Warnings:`/`Information:` + 逐条 `[Severity] Code`、`Source: MTrk n`），并新增真实导入诊断（未闭合音符=Info、无匹配 NoteOff=Warning、文本解码失败=Warning、SysEx 未保留=Info）。
+7. **状态栏字段**：`CompileState` 使用 WPF 文案（`Not Compiled` 等），`ProjectState` 使用 `No Project / Unsaved / Modified · Unsaved / Modified / Saved`，标题栏修改标记由 `●` 改为 WPF 的 ` *`。
+8. **Arrangement 左上角**：补上 WPF 的轨道头角块（Event Instruments 开关、Add Track 菜单、纵向缩放、重置全部 Mute/Solo）；纵向缩放范围 28–112，重置同时清空渲染过滤与芯片状态。标尺 Marker 改为 WPF 的带边框圆角 chip（高 15、9 号 SemiBold），小节号下移，避免与 chip 重叠。
+9. **菜单**：View 菜单去掉自造的 All Tracks/Grid 项（All Tracks 走 Arrangement 工具栏按钮），开发用的窗口目录移入 Application 菜单的 “Windows (port catalog)” 子菜单。
+
+验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；截图核对空工程、真实 MIDI 导入与 Chords 音轨编辑三种场景（标签栏、头部工具栏、56px 轨道、M/S 芯片、Marker chip、状态栏按钮、无横幅/无多余底栏）。
+
 - **仍存的功能级差距（需新子系统，不是纯视觉）**：Conductor 专用编辑器工作区（事件列表 + Tempo 阶梯图）、Track/All Tracks 概览条与导航、钢琴卷帘对象列表面板、Event/Parameter Lane 的增删与管理栏、播放键盘试听（依赖音频引擎）、Diagnostics 实际内容。

@@ -15,42 +15,73 @@
     </Style>
   </UserControl.Styles>
 
-  <Grid RowDefinitions="38,*,22" Background="{DynamicResource Brush.Surface.0}">
+  <Grid RowDefinitions="34,*" Background="{DynamicResource Brush.Surface.0}">
+    <!-- Workspace header (WPF segment PanelHeader). -->
     <Border Background="{DynamicResource Brush.Surface.1}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0" Spacing="3">
-        <ComboBox x:Name="TrackCombo" Width="180" Height="26" IsEnabled="False"
-                  ToolTip.Tip="Track" SelectionChanged="OnTrackSelectionChanged" />
-        <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
-        <ToggleButton x:Name="NotesButton" Classes="mode" Tag="PianoRoll" Content="Notes"
-                      IsEnabled="False" ToolTip.Tip="Piano roll notes" Click="OnModeClick" />
-        <ToggleButton x:Name="VelocityButton" Classes="mode" Tag="Velocity" Content="Velocity"
-                      IsEnabled="False" ToolTip.Tip="Note velocity" Click="OnModeClick" />
-        <ToggleButton x:Name="EventsButton" Classes="mode" Tag="EventLanes" Content="Events"
-                      IsEnabled="False" ToolTip.Tip="MIDI channel events" Click="OnModeClick" />
-        <ToggleButton x:Name="ConductorButton" Classes="mode" Tag="Conductor" Content="Conductor"
-                      IsEnabled="False" ToolTip.Tip="Conductor events" Click="OnModeClick" />
-        <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
-        <ToggleButton x:Name="SelectButton" Classes="mode" Tag="Select" Content="Select"
-                      IsEnabled="False" ToolTip.Tip="Select (S)" Click="OnToolClick" />
-        <ToggleButton x:Name="DrawButton" Classes="mode" Tag="Draw" Content="Draw"
-                      IsEnabled="False" ToolTip.Tip="Draw (D)" Click="OnToolClick" />
-        <ToggleButton x:Name="EraseButton" Classes="mode" Tag="Erase" Content="Erase"
-                      IsEnabled="False" ToolTip.Tip="Erase (E)" Click="OnToolClick" />
-        <ToggleButton x:Name="SplitButton" Classes="mode" Tag="Split" Content="Split"
-                      IsEnabled="False" ToolTip.Tip="Split note" Click="OnToolClick" />
-        <Border Width="1" Height="18" Margin="4,0" Background="{DynamicResource Brush.Border}" />
-        <Button x:Name="ZoomOutButton" Classes="icon ghost" Width="26" Height="24" Padding="0"
-                IsEnabled="False" ToolTip.Tip="Zoom out" Click="OnZoomOutClick">
-          <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}" />
-        </Button>
-        <Button x:Name="ZoomInButton" Classes="icon ghost" Width="26" Height="24" Padding="0"
-                IsEnabled="False" ToolTip.Tip="Zoom in" Click="OnZoomInClick">
-          <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}" />
-        </Button>
-        <TextBlock x:Name="TickText" Classes="mono" VerticalAlignment="Center" Margin="6,0,0,0"
-                   Text="Bar 1.1.000" />
-      </StackPanel>
+      <Grid ColumnDefinitions="*,Auto" Margin="10,0">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="4">
+          <ComboBox x:Name="TrackCombo" Width="180" Height="24" IsEnabled="False"
+                    ToolTip.Tip="Track" SelectionChanged="OnTrackSelectionChanged" />
+          <Border Width="1" Height="18" Margin="3,0" Background="{DynamicResource Brush.Border}" />
+          <ToggleButton x:Name="NotesButton" Classes="mode" Tag="PianoRoll" Content="Notes"
+                        IsEnabled="False" ToolTip.Tip="Piano roll notes" Click="OnModeClick" />
+          <ToggleButton x:Name="VelocityButton" Classes="mode" Tag="Velocity" Content="Velocity"
+                        IsEnabled="False" ToolTip.Tip="Note velocity" Click="OnModeClick" />
+          <ToggleButton x:Name="EventsButton" Classes="mode" Tag="EventLanes" Content="Events"
+                        IsEnabled="False" ToolTip.Tip="MIDI channel events" Click="OnModeClick" />
+          <ToggleButton x:Name="ConductorButton" Classes="mode" Tag="Conductor" Content="Conductor"
+                        IsEnabled="False" ToolTip.Tip="Conductor events" Click="OnModeClick" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock x:Name="PointerText" Classes="mono" MinWidth="82" Margin="0,0,7,0"
+                     VerticalAlignment="Center" TextAlignment="Right"
+                     Foreground="{DynamicResource Brush.Text.Primary}" IsVisible="False" />
+          <Border x:Name="PointerSeparator" Width="1" Height="18" Margin="0,0,7,0"
+                  Background="{DynamicResource Brush.Border}" IsVisible="False" />
+          <ToggleButton x:Name="GridToggle" Width="44" Height="24" Margin="0,0,4,0" Padding="0"
+                        Content="Grid" ToolTip.Tip="Show subdivision grid"
+                        IsChecked="{Binding #Timeline.GridVisible, Mode=TwoWay}" />
+          <Border Width="1" Height="18" Margin="3,0,7,0" Background="{DynamicResource Brush.Border}" />
+          <ToggleButton x:Name="SnapToggle" Height="24" Margin="0,0,4,0" Padding="9,0" Content="Snap"
+                        ToolTip.Tip="Enable/Disable Snap (A)" />
+          <ComboBox x:Name="SubdivisionBox" Width="92" Height="24" Margin="0,0,4,0" IsEditable="True"
+                    ToolTip.Tip="Operation subdivision; enter any positive n in 1/n" />
+          <Border Width="1" Height="18" Margin="3,0,7,0" Background="{DynamicResource Brush.Border}" />
+          <TextBlock Margin="3,0" VerticalAlignment="Center" Classes="caption" Text="Length" />
+          <TextBox x:Name="LengthBox" Width="58" Height="24" Margin="0,0,4,0" Padding="5,0" Text="768"
+                   ToolTip.Tip="Default creation length in ticks" />
+          <TextBlock Margin="3,0" VerticalAlignment="Center" Classes="caption" Text="Vel" />
+          <TextBox x:Name="VelocityBox" Width="42" Height="24" Margin="0,0,4,0" Padding="5,0" Text="100"
+                   ToolTip.Tip="Default note velocity (1–127)" />
+          <Border Width="1" Height="18" Margin="3,0,7,0" Background="{DynamicResource Brush.Border}" />
+          <Button x:Name="ZoomOutButton" Classes="icon ghost" Width="26" Height="24" Margin="0,0,2,0"
+                  Padding="0" IsEnabled="False" ToolTip.Tip="Zoom out" Click="OnZoomOutClick">
+            <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomOut20Regular}" />
+          </Button>
+          <Button x:Name="ZoomInButton" Classes="icon ghost" Width="26" Height="24" Margin="0,0,6,0"
+                  Padding="0" IsEnabled="False" ToolTip.Tip="Zoom in" Click="OnZoomInClick">
+            <controls:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.ZoomIn20Regular}" />
+          </Button>
+          <Border Width="1" Height="18" Margin="0,0,7,0" Background="{DynamicResource Brush.Border}" />
+          <ToggleButton x:Name="DrawButton" Classes="mode" Width="30" Height="24" Padding="0"
+                        Tag="Draw" IsEnabled="False" ToolTip.Tip="Draw (D)" Click="OnToolClick">
+            <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Pen20Regular}" />
+          </ToggleButton>
+          <ToggleButton x:Name="SelectButton" Classes="mode" Width="30" Height="24" Padding="0"
+                        Tag="Select" IsEnabled="False" ToolTip.Tip="Select (S)" Click="OnToolClick">
+            <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.SelectObject20Regular}" />
+          </ToggleButton>
+          <ToggleButton x:Name="SplitButton" Classes="mode" Width="30" Height="24" Padding="0"
+                        Tag="Split" IsEnabled="False" ToolTip.Tip="Split note" Click="OnToolClick">
+            <controls:FluentIcon Width="16" Height="16" Data="{StaticResource Fluent.SplitVertical20Regular}" />
+          </ToggleButton>
+          <ToggleButton x:Name="EraseButton" Classes="mode" Width="30" Height="24" Padding="0"
+                        Tag="Erase" IsEnabled="False" ToolTip.Tip="Erase (E)" Click="OnToolClick">
+            <controls:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Eraser20Regular}" />
+          </ToggleButton>
+        </StackPanel>
+      </Grid>
     </Border>
 
     <Grid Grid.Row="1" ColumnDefinitions="Auto,*">
@@ -62,11 +93,5 @@
                                     LaneHeight="12"
                                     TicksPerQuarterNote="480" />
     </Grid>
-
-    <Border Grid.Row="2" Background="{DynamicResource Brush.Surface.1}"
-            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
-      <TextBlock x:Name="FooterText" Classes="caption" VerticalAlignment="Center" Margin="9,0"
-                 Text="No MIDI project loaded." />
-    </Border>
   </Grid>
 </UserControl>

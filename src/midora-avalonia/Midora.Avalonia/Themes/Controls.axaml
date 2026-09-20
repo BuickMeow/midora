@@ -40,6 +40,48 @@
     <Setter Property="Foreground" Value="{DynamicResource Brush.Red.Hover}" />
   </Style>
 
+  <Style Selector="TextBlock.statuslink">
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+
+  <Style Selector="TextBlock.statuslink:pointerover">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+  </Style>
+
+  <!-- Workspace tab strip: approved baseline (12,8 padding, 2px red underline when selected). -->
+  <Style Selector="TabControl > TabItem">
+    <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Padding" Value="12,8" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Chrome"
+                Padding="{TemplateBinding Padding}"
+                Background="{TemplateBinding Background}"
+                BorderBrush="Transparent"
+                BorderThickness="0,0,0,2">
+          <ContentPresenter Content="{TemplateBinding Header}"
+                            ContentTemplate="{TemplateBinding HeaderTemplate}" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="TabControl > TabItem:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface.2}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+  </Style>
+
+  <Style Selector="TabControl > TabItem:selected">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+  </Style>
+
+  <Style Selector="TabControl > TabItem:selected /template/ Border#Chrome">
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red}" />
+  </Style>
+
   <Style Selector="controls|FluentIcon">
     <Setter Property="Width" Value="16" />
     <Setter Property="Height" Value="16" />
@@ -200,13 +242,72 @@
     <Setter Property="Foreground" Value="#8A939F" />
   </Style>
 
+  <!-- ToggleButtons: approved baseline (WPF Toggle.Segment). -->
+
+  <Style Selector="ToggleButton">
+    <Setter Property="FontFamily" Value="{DynamicResource Font.UI}" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Transitions">
+      <Transitions />
+    </Setter>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Chrome"
+                Padding="{TemplateBinding Padding}"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="3">
+          <ContentPresenter Name="PART_Content"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="ToggleButton:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface.3}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+  </Style>
+
+  <Style Selector="ToggleButton:checked">
+    <Setter Property="Background" Value="{DynamicResource Brush.Red.Subtle}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red.Dark}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Red.Hover}" />
+  </Style>
+
+  <Style Selector="ToggleButton:pressed">
+    <Setter Property="Background" Value="{DynamicResource Brush.Black}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Red.Dark}" />
+  </Style>
+
+  <Style Selector="ToggleButton:pressed /template/ ContentPresenter#PART_Content">
+    <Setter Property="Margin" Value="0,1,0,-1" />
+  </Style>
+
+  <Style Selector="ToggleButton:disabled">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+    <Setter Property="Cursor" Value="Arrow" />
+  </Style>
+
   <!-- Timeline tool toggles: active tool uses the Midora red accent. -->
 
   <Style Selector="ToggleButton.tool">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderThickness" Value="0" />
     <Setter Property="Padding" Value="0" />
-    <Setter Property="CornerRadius" Value="3" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
   </Style>
 

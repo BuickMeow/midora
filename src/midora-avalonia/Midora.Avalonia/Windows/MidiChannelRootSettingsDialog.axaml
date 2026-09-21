@@ -10,7 +10,7 @@
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome">
+        WindowDecorations="BorderOnly">
   <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
     <Grid RowDefinitions="38,*,Auto">
       <Grid Grid.Row="0" Background="{DynamicResource Brush.Black}"

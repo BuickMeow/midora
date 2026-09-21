@@ -368,7 +368,7 @@ public sealed class LaneHeaderStrip : Control
         }
 
         Geometry? geometry = null;
-        if (Application.Current is { } app && app.TryFindResource(resourceKey, out object? value))
+        if (global::Avalonia.Application.Current is { } app && app.TryFindResource(resourceKey, out object? value))
         {
             geometry = value as Geometry;
         }

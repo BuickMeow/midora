@@ -8,7 +8,7 @@
         Background="{DynamicResource Brush.Surface.0}"
         WindowStartupLocation="CenterScreen"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome">
+        WindowDecorations="BorderOnly">
   <Grid x:Name="RootLayout" RowDefinitions="36,46,Auto,*,25">
 
     <!-- Title bar: application mark + main menu + project display name (+ Windows caption buttons). -->

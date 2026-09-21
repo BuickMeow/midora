@@ -152,7 +152,18 @@ public partial class HumanizeSelectionDialog : Window
 
     private void UpdateEnabledState()
     {
-        if (!IsInitialized) return;
+        // Avalonia 12 raises SelectionChanged/IsCheckedChanged while the compiled XAML populator
+        // is still running, before every named field has been assigned. Only touch the controls
+        // once the whole tree exists.
+        if (!IsInitialized
+            || TickModeBox is null || TickMinimumBox is null || TickMaximumBox is null
+            || GateModeBox is null || GateMinimumBox is null || GateMaximumBox is null
+            || VelocityModeBox is null || VelocityMinimumBox is null || VelocityMaximumBox is null
+            || SeedBox is null || ExplicitSeedButton is null)
+        {
+            return;
+        }
+
         SeedBox.IsEnabled = ExplicitSeedButton.IsChecked == true;
         SetRangeEnabled(TickModeBox, TickMinimumBox, TickMaximumBox);
         SetRangeEnabled(GateModeBox, GateMinimumBox, GateMaximumBox);

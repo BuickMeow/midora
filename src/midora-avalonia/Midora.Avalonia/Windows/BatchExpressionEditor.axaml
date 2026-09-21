@@ -10,7 +10,7 @@
         ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome">
+        WindowDecorations="BorderOnly">
   <Window.Styles>
     <!-- WPF Border.Style triggers: default / hover / keyboard-focus-within border. -->
     <Style Selector="Border#ExpressionChrome">

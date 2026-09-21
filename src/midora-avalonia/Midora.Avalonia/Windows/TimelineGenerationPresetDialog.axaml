@@ -11,7 +11,7 @@
         ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome"
+        WindowDecorations="BorderOnly"
         KeyDown="OnDialogKeyDown">
   <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
     <Grid RowDefinitions="36,*,62">

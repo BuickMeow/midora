@@ -10,7 +10,7 @@
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome">
+        WindowDecorations="BorderOnly">
   <Window.Styles>
     <Style Selector="ListBox.transparentDisabled">
       <Setter Property="Background" Value="Transparent" />

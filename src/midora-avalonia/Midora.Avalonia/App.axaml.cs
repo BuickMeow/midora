@@ -5,7 +5,7 @@ using Avalonia.Markup.Xaml;
 
 namespace Midora.Avalonia;
 
-public partial class App : Application
+public partial class App : global::Avalonia.Application
 {
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -72,6 +72,12 @@ public partial class App : Application
                 if (Environment.GetEnvironmentVariable("MIDORA_NEW_PROJECT") == "1")
                 {
                     mainWindow.Opened += (_, _) => mainWindow.NewProjectForReview();
+                }
+
+                if (Environment.GetEnvironmentVariable("MIDORA_DIAGNOSTICS") == "1")
+                {
+                    mainWindow.Opened += async (_, _) =>
+                        await mainWindow.ShowDiagnosticsForReviewAsync();
                 }
 
                 if (Environment.GetEnvironmentVariable("MIDORA_MAXIMIZE") == "1")

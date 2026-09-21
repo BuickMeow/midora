@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Midora.Domain;
 
 namespace Midora.Avalonia.Windows;
 
@@ -17,7 +18,7 @@ public partial class MidiExportDialog : Window
     {
     }
 
-    public MidiExportDialog(string? initialDirectory = null)
+    public MidiExportDialog(string? initialDirectory = null, IReadOnlyList<ExportTrackRow>? tracks = null)
     {
         InitializeComponent();
         ModeBox.ItemsSource = Enum.GetValues<ExportMode>();
@@ -29,11 +30,19 @@ public partial class MidiExportDialog : Window
         ReadmeCheck.IsChecked = true;
         WarningsCheck.IsChecked = false;
         SelectedTracksCheck.IsChecked = false;
-        _allTrackRows.Add(new("Logical · Piano", isPureMidi: false));
-        _allTrackRows.Add(new("Logical · Strings", isPureMidi: false));
-        _allTrackRows.Add(new("Logical · Drums", isPureMidi: false));
-        _allTrackRows.Add(new("MIDI · Conductor Sketch", isPureMidi: true));
-        _allTrackRows.Add(new("MIDI · External Hardware", isPureMidi: true));
+        if (tracks is null)
+        {
+            _allTrackRows.Add(new("Logical · Piano", isPureMidi: false));
+            _allTrackRows.Add(new("Logical · Strings", isPureMidi: false));
+            _allTrackRows.Add(new("Logical · Drums", isPureMidi: false));
+            _allTrackRows.Add(new("MIDI · Conductor Sketch", isPureMidi: true));
+            _allTrackRows.Add(new("MIDI · External Hardware", isPureMidi: true));
+        }
+        else
+        {
+            _allTrackRows.AddRange(tracks);
+        }
+
         RefreshTrackRows();
         OutputDirectoryBox.Text = initialDirectory ?? string.Empty;
         DataContext = this;
@@ -68,15 +77,18 @@ public partial class MidiExportDialog : Window
         long? EndTick,
         bool IncludeReadme,
         bool TreatWarningsAsErrors,
-        IReadOnlyList<string>? SelectedTrackNames);
+        IReadOnlyList<MidoraId>? SelectedTrackIds);
 
     public sealed class ExportTrackRow
     {
-        public ExportTrackRow(string name, bool isPureMidi)
+        public ExportTrackRow(string name, bool isPureMidi, MidoraId stableId = default)
         {
             Name = name;
             IsPureMidi = isPureMidi;
+            StableId = stableId;
         }
+
+        public MidoraId StableId { get; }
 
         public string Name { get; }
 
@@ -173,10 +185,10 @@ public partial class MidiExportDialog : Window
             end = parsed;
         }
 
-        List<string>? selectedTrackNames = SelectedTracksCheck.IsChecked == true
-            ? TrackRows.Where(item => item.IsSelected).Select(item => item.Name).ToList()
+        List<MidoraId>? selectedTrackIds = SelectedTracksCheck.IsChecked == true
+            ? TrackRows.Where(item => item.IsSelected).Select(item => item.StableId).ToList()
             : null;
-        if (selectedTrackNames is { Count: 0 })
+        if (selectedTrackIds is { Count: 0 })
         {
             ValidationText.Text = ModeBox.SelectedItem is ExportMode.PerLogicalTrack
                 ? "Check at least one Logical Track, or disable explicit Track selection."
@@ -200,7 +212,7 @@ public partial class MidiExportDialog : Window
             end,
             ReadmeCheck.IsChecked == true,
             WarningsCheck.IsChecked == true,
-            selectedTrackNames);
+            selectedTrackIds);
         Close();
     }
 

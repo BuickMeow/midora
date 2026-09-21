@@ -20,6 +20,7 @@
   <Project Path="Midora.AudioRender/Midora.AudioRender.csproj" />
   <Project Path="Midora.AudioRender.Tests/Midora.AudioRender.Tests.csproj" />
   <Project Path="Midora.Application/Midora.Application.csproj" />
+  <Project Path="Midora.Session/Midora.Session.csproj" />
   <Project Path="Midora.Application.Tests/Midora.Application.Tests.csproj" />
   <Project Path="Midora.MidiExport/Midora.MidiExport.csproj" />
   <Project Path="Midora.MidiExport.Tests/Midora.MidiExport.Tests.csproj" />

@@ -11,7 +11,7 @@
         ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome"
+        WindowDecorations="BorderOnly"
         KeyDown="OnDialogKeyDown">
   <Window.Styles>
     <!-- WPF BatchExpressionEditor expression chrome: default / hover / focus-within border. -->
@@ -62,7 +62,7 @@
 
           <Grid Margin="0,0,0,15" ColumnDefinitions="*,180">
             <CheckBox x:Name="LimitRelativeTickBox" Content="Maximum Relative Start Tick" VerticalAlignment="Center"
-                      Checked="OnLimitChanged" Unchecked="OnLimitChanged" />
+                      IsCheckedChanged="OnLimitChanged" />
             <TextBox x:Name="MaximumRelativeTickBox" Grid.Column="1" Text="0" IsEnabled="False"
                      TextChanged="OnInputChanged"
                      ToolTip.Tip="Inclusive limit. Stop before the first candidate whose rounded relative start exceeds it." />
@@ -158,7 +158,7 @@
               </Grid>
 
               <CheckBox x:Name="CreateInitialBox" Content="Create first object from initial values"
-                        Checked="OnInputChanged" Unchecked="OnInputChanged"
+                        IsCheckedChanged="OnInputChanged"
                         ToolTip.Tip="Off: evaluate candidate 0. On: Initial directly creates candidate 0; expressions begin at i=1." />
             </StackPanel>
           </Border>

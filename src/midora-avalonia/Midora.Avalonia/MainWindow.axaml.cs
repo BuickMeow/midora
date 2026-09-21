@@ -6,6 +6,10 @@ using Avalonia.Platform.Storage;
 using Midora.Avalonia.Import;
 using Midora.Avalonia.Session;
 using Midora.Avalonia.Windows;
+using Midora.Domain;
+using Midora.Midi;
+using Midora.MidiExport;
+using Midora.Session;
 
 namespace Midora.Avalonia;
 
@@ -42,10 +46,12 @@ public partial class MainWindow : Window
     {
         try
         {
-            var project = ImportedMidiProject.Parse(path);
+            byte[] bytes = File.ReadAllBytes(path);
+            var project = ImportedMidiProject.Parse(bytes, System.IO.Path.GetFileName(path));
             Session.CreateProjectFromMidi(
                 System.IO.Path.GetFileNameWithoutExtension(path),
-                project);
+                project,
+                bytes);
         }
         catch (Exception ex)
         {
@@ -70,6 +76,16 @@ public partial class MainWindow : Window
     /// <summary>Review-only entry point used by the <c>MIDORA_NEW_PROJECT</c> env var.</summary>
     internal void NewProjectForReview() => Session.CreateProject("Untitled Project");
 
+    /// <summary>
+    /// Review-only entry point used by the <c>MIDORA_DIAGNOSTICS</c> env var: compiles the
+    /// current Project and opens the Diagnostics workspace.
+    /// </summary>
+    internal async Task ShowDiagnosticsForReviewAsync()
+    {
+        await Session.CompileAsync();
+        Session.OpenWorkspace(WorkspaceKind.Diagnostics);
+    }
+
     // ---- Platform chrome -------------------------------------------------
 
     private void ApplyPlatformChrome()
@@ -82,7 +98,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        ExtendClientAreaChromeHints = global::Avalonia.Platform.ExtendClientAreaChromeHints.PreferSystemChrome;
+        // Avalonia 12 replaced ExtendClientAreaChromeHints with WindowDecorations. Full keeps
+        // the native title bar and traffic lights, and is also what makes the platform report
+        // the extended title bar margin the custom 28 pt row relies on.
+        WindowDecorations = WindowDecorations.Full;
         ExtendClientAreaTitleBarHeightHint = TitleBarHeight;
         CaptionButtons.IsVisible = false;
         TitleBarContent.Margin = new Thickness(72, 0, 0, 0);
@@ -148,7 +167,18 @@ public partial class MainWindow : Window
         await dialog.ShowDialog(this);
         if (dialog.Result is { } request)
         {
-            Session.CreateProject(request.ProjectName);
+            await Session.CreateProjectAsync(new Midora.Application.NewProjectCreationRequest
+            {
+                TicksPerQuarterNote = request.TicksPerQuarterNote,
+                ProjectName = request.ProjectName,
+                ProjectVersion = request.ProjectVersion,
+                AuthorOrTeam = request.AuthorOrTeam,
+                PersistenceMode = request.CreateAndSave
+                    ? Midora.Application.NewProjectPersistenceMode.CreateAndSave
+                    : Midora.Application.NewProjectPersistenceMode.CreateUnsaved,
+                TargetPath = request.TargetPath,
+                OverwriteAuthorized = request.OverwriteAuthorized
+            });
         }
     }
 
@@ -161,11 +191,44 @@ public partial class MainWindow : Window
             FileTypeFilter = [new FilePickerFileType("Midora Project") { Patterns = ["*.midora"] }]
         });
 
-        if (files.Count > 0)
+        if (files.Count > 0 && files[0].TryGetLocalPath() is { Length: > 0 } path)
         {
-            Session.CreateProject(System.IO.Path.GetFileNameWithoutExtension(files[0].Name));
-            Session.SetStatus("Project opened (port placeholder; persistence is not wired yet).");
+            await Session.OpenProjectAsync(path);
         }
+    }
+
+    /// <summary>Picks the first-save target and confirms an existing file before overwriting.</summary>
+    private async Task<string?> PickSaveTargetAsync(string title, string suggestedName)
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = title,
+            SuggestedFileName = suggestedName,
+            DefaultExtension = "midora",
+            FileTypeChoices = [new FilePickerFileType("Midora Project") { Patterns = ["*.midora"] }]
+        });
+
+        string? path = file?.TryGetLocalPath();
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        if (File.Exists(path))
+        {
+            var confirm = await MessageDialog.ShowAsync(
+                this,
+                $"{System.IO.Path.GetFileName(path)} already exists. Overwrite it?",
+                title,
+                MessageDialogButtons.YesNo,
+                MessageDialogIcon.Warning);
+            if (confirm != MessageDialogResult.Yes)
+            {
+                return null;
+            }
+        }
+
+        return path;
     }
 
     private async void OnOpenMidiAsNewProjectClick(object? sender, RoutedEventArgs e)
@@ -196,10 +259,12 @@ public partial class MainWindow : Window
 
         try
         {
-            var project = ImportedMidiProject.Parse(path);
+            byte[] bytes = await File.ReadAllBytesAsync(path);
+            var project = ImportedMidiProject.Parse(bytes, System.IO.Path.GetFileName(path));
             Session.CreateProjectFromMidi(
                 System.IO.Path.GetFileNameWithoutExtension(files[0].Name),
-                project);
+                project,
+                bytes);
         }
         catch (Exception ex)
         {
@@ -214,20 +279,29 @@ public partial class MainWindow : Window
 
     private async void OnSaveProjectClick(object? sender, RoutedEventArgs e)
     {
-        await MessageDialog.ShowAsync(
-            this,
-            "Saving .midora files is not wired in the Avalonia port yet.",
-            "Save Project");
-        Session.SetStatus("Save requested (persistence is not wired yet).");
+        if (Session.CurrentProjectPath is { } current)
+        {
+            await Session.SaveProjectAsync(overwriteAuthorized: true);
+            return;
+        }
+
+        string? path = await PickSaveTargetAsync("Save Project", $"{Session.ProjectName}.midora");
+        if (path is not null)
+        {
+            await Session.SaveProjectAsync(path, overwriteAuthorized: true);
+        }
     }
 
     private async void OnSaveCopyClick(object? sender, RoutedEventArgs e)
     {
-        await MessageDialog.ShowAsync(
-            this,
-            "Save Copy is not wired in the Avalonia port yet.",
-            "Save Copy");
-        Session.SetStatus("Save Copy requested (persistence is not wired yet).");
+        string suggested = Session.CurrentProjectPath is { } current
+            ? $"{System.IO.Path.GetFileNameWithoutExtension(current)} copy.midora"
+            : $"{Session.ProjectName}.midora";
+        string? path = await PickSaveTargetAsync("Save Copy", suggested);
+        if (path is not null)
+        {
+            await Session.SaveCopyAsync(path, overwriteAuthorized: true);
+        }
     }
 
     private async void OnCloseProjectClick(object? sender, RoutedEventArgs e)
@@ -349,11 +423,132 @@ public partial class MainWindow : Window
 
     private async void OnMidiExportClick(object? sender, RoutedEventArgs e)
     {
-        var dialog = new MidiExportDialog();
-        await dialog.ShowDialog(this);
-        if (dialog.Options is not null)
+        if (!Session.HasProjectSession || Session.DomainProject is not { } project)
         {
-            Session.SetStatus("MIDI export confirmed (encoding is not wired yet).");
+            Session.SetStatus("MIDI Export needs a Project-backed session.");
+            return;
+        }
+
+        var trackRows = new List<MidiExportDialog.ExportTrackRow>();
+        foreach (LogicalTrack track in project.Tracks)
+        {
+            trackRows.Add(new(track.Name, isPureMidi: false, track.Id));
+        }
+
+        foreach (PureMidiTrack track in project.PureMidiTracks)
+        {
+            trackRows.Add(new(track.Name, isPureMidi: true, track.Id));
+        }
+
+        var dialog = new MidiExportDialog(initialDirectory: null, trackRows);
+        await dialog.ShowDialog(this);
+        if (dialog.Options is not { } options)
+        {
+            return;
+        }
+
+        try
+        {
+            MidiExportSessionOptions exportOptions = new(
+                options.Mode switch
+                {
+                    MidiExportDialog.ExportMode.PerLogicalTrack => MidiExportMode.PerLogicalTrack,
+                    MidiExportDialog.ExportMode.PerPort => MidiExportMode.PerPort,
+                    _ => MidiExportMode.WholeProject
+                },
+                options.Routing == MidiExportDialog.ExportRouting.Preserve
+                    ? MidiExportRoutingStrategy.Preserve
+                    : MidiExportRoutingStrategy.Compact,
+                options.OutputDirectory,
+                options.StartTick,
+                options.EndTick,
+                options.IncludeReadme,
+                options.TreatWarningsAsErrors,
+                options.SelectedTrackIds is { Count: > 0 } ids ? ids.ToHashSet() : null);
+
+            PreparedMidiExport prepared = await Task.Run(() => MidiExportSessionService.Prepare(
+                project,
+                Session.CurrentProjectPath,
+                Session.ProjectFileInformation,
+                ShellSession.SoftwareVersion,
+                exportOptions));
+
+            if (!prepared.Succeeded)
+            {
+                await MessageDialog.ShowAsync(
+                    this,
+                    "The MIDI export plan is not valid:\n\n"
+                    + string.Join("\n", prepared.Problems.Take(12)),
+                    "MIDI Export",
+                    MessageDialogButtons.Ok,
+                    MessageDialogIcon.Error);
+                Session.SetStatus("MIDI export plan failed.");
+                return;
+            }
+
+            bool overwriteAuthorized = false;
+            if (prepared.RequiresOverwriteAuthorization)
+            {
+                string targets = string.Join("\n", prepared.PlannedPaths.Take(12));
+                if (prepared.PlannedPaths.Count > 12)
+                {
+                    targets += $"\n… and {prepared.PlannedPaths.Count - 12} more";
+                }
+
+                var confirm = await MessageDialog.ShowAsync(
+                    this,
+                    "These files already exist and will be overwritten:\n\n" + targets,
+                    "MIDI Export",
+                    MessageDialogButtons.YesNo,
+                    MessageDialogIcon.Warning);
+                if (confirm != MessageDialogResult.Yes)
+                {
+                    return;
+                }
+
+                overwriteAuthorized = true;
+            }
+
+            MidiExportSessionOutcome outcome = await Task.Run(
+                () => MidiExportSessionService.ExecuteAsync(prepared, overwriteAuthorized));
+            if (!outcome.Succeeded)
+            {
+                await MessageDialog.ShowAsync(
+                    this,
+                    outcome.FailureMessage ?? "MIDI export failed.",
+                    "MIDI Export",
+                    MessageDialogButtons.Ok,
+                    MessageDialogIcon.Error);
+                Session.SetStatus("MIDI export failed: " + (outcome.FailureMessage ?? "unknown"));
+                return;
+            }
+
+            string details = string.Join("\n", outcome.WrittenPaths);
+            if (outcome.PaddingSummary.HasPadding)
+            {
+                details += "\n\n" + outcome.PaddingSummary.Message;
+            }
+
+            if (outcome.Messages.Count > 0)
+            {
+                details += "\n\n" + string.Join("\n", outcome.Messages.Take(20));
+            }
+
+            Session.SetStatusMessage(
+                $"MIDI export wrote {outcome.WrittenPaths.Count} file(s) to {options.OutputDirectory}.",
+                isError: false,
+                details: details,
+                detailsTitle: "MIDI Export Report");
+        }
+        catch (Exception exception)
+        {
+            await MessageDialog.ShowAsync(
+                this,
+                $"MIDI export failed.\n\n{exception.Message}",
+                "MIDI Export",
+                MessageDialogButtons.Ok,
+                MessageDialogIcon.Error);
+            Session.SetStatus("MIDI export failed: " + exception.Message);
         }
     }
 
@@ -433,7 +628,7 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                failures.Add($"{entry.Name}: {ex.GetType().Name}: {ex.Message}");
+                failures.Add($"{entry.Name}: {ex}");
                 try
                 {
                     window?.Close();
@@ -471,20 +666,67 @@ public partial class MainWindow : Window
             }
         }
 
-        Step("create-project", () => Session.CreateProject("Smoke Project"));
+        Step("create-project", () =>
+        {
+            Session.CreateProject("Smoke Project");
+            if (!Session.HasProject)
+            {
+                throw new InvalidOperationException("New Project did not open a Project.");
+            }
+        });
+
+        try
+        {
+            string smokeDirectory = Path.Combine(Path.GetTempPath(), "midora-avalonia-smoke");
+            Directory.CreateDirectory(smokeDirectory);
+            string savePath = Path.Combine(smokeDirectory, "smoke-project.midora");
+            if (File.Exists(savePath))
+            {
+                File.Delete(savePath);
+            }
+
+            await Session.SaveProjectAsync(savePath, overwriteAuthorized: true);
+            if (!File.Exists(savePath))
+            {
+                throw new InvalidOperationException("Save Project did not create the package.");
+            }
+
+            await Session.OpenProjectAsync(savePath);
+            if (!Session.HasProjectSession)
+            {
+                throw new InvalidOperationException("Re-opened Project has no Project session.");
+            }
+
+            await Session.CompileAsync();
+            if (Session.CompileState != "Compile Succeeded")
+            {
+                throw new InvalidOperationException($"Compile state is '{Session.CompileState}'.");
+            }
+        }
+        catch (Exception ex)
+        {
+            failures.Add($"project-lifecycle: {ex.GetType().Name}: {ex.Message}");
+        }
 
         var midiPath = Environment.GetEnvironmentVariable("MIDORA_MIDI_SMOKE");
         if (!string.IsNullOrEmpty(midiPath) && File.Exists(midiPath))
         {
             try
             {
-                var imported = ImportedMidiProject.Parse(midiPath);
+                byte[] midiBytes = File.ReadAllBytes(midiPath);
+                var imported = ImportedMidiProject.Parse(midiBytes, Path.GetFileName(midiPath));
                 Session.CreateProjectFromMidi(
                     System.IO.Path.GetFileNameWithoutExtension(midiPath),
-                    imported);
+                    imported,
+                    midiBytes);
                 if (!Session.HasProject || Session.Workspaces.Count == 0)
                 {
                     failures.Add("midi-import: imported project did not open a workspace");
+                }
+
+                if (!Session.HasProjectSession)
+                {
+                    failures.Add("midi-import: imported project was not adopted into a Project session");
                 }
             }
             catch (Exception ex)
@@ -492,6 +734,53 @@ public partial class MainWindow : Window
                 failures.Add($"midi-import: {ex.GetType().Name}: {ex.Message}");
             }
         }
+        string exportSummary = string.Empty;
+        if (Session.HasProjectSession && Session.DomainProject is { } exportProject)
+        {
+            try
+            {
+                string exportDirectory = Path.Combine(
+                    Path.GetTempPath(), "midora-avalonia-smoke", "midi-export");
+                Directory.CreateDirectory(exportDirectory);
+                PreparedMidiExport prepared = MidiExportSessionService.Prepare(
+                    exportProject,
+                    Session.CurrentProjectPath,
+                    Session.ProjectFileInformation,
+                    ShellSession.SoftwareVersion,
+                    new MidiExportSessionOptions(
+                        MidiExportMode.WholeProject,
+                        MidiExportRoutingStrategy.Compact,
+                        exportDirectory,
+                        0,
+                        null,
+                        IncludeReadme: true,
+                        TreatWarningsAsErrors: false));
+                if (!prepared.Succeeded)
+                {
+                    throw new InvalidOperationException(
+                        "MIDI export plan failed: " + string.Join("; ", prepared.Problems.Take(5)));
+                }
+
+                MidiExportSessionOutcome outcome = await MidiExportSessionService.ExecuteAsync(
+                    prepared,
+                    overwriteAuthorized: true);
+                if (!outcome.Succeeded || outcome.WrittenPaths.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        outcome.FailureMessage ?? "MIDI export wrote no files.");
+                }
+
+                string exportedMidiPath = outcome.WrittenPaths.First(
+                    path => path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase));
+                StandardMidiFile.ParseType0Or1(File.ReadAllBytes(exportedMidiPath));
+                exportSummary = $" midi-export={outcome.WrittenPaths.Count}";
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"midi-export: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         Step("open-arrangement", () => Session.OpenWorkspace(WorkspaceKind.Arrangement));
         Step("segment-preview-content", () =>
         {
@@ -577,9 +866,17 @@ public partial class MainWindow : Window
         Step("stop", Session.StopPlayback);
         Step("mark-modified", Session.MarkModified);
 
+        string compileSummary = Session.CompileState;
         try
         {
             await Session.CompileAsync();
+            compileSummary = $"{Session.CompileState}"
+                + $" diagnostics={Session.Diagnostics.Count}"
+                + $" errors={Session.ErrorCount} warnings={Session.WarningCount}";
+            if (Session.HasProjectSession && Session.CompileState != "Compile Succeeded")
+            {
+                failures.Add($"compile: state is '{Session.CompileState}'.");
+            }
         }
         catch (Exception ex)
         {
@@ -595,7 +892,7 @@ public partial class MainWindow : Window
         });
         Step("close-project", Session.CloseProject);
 
-        Console.Error.WriteLine($"SHELL-SMOKE failures={failures.Count}");
+        Console.Error.WriteLine($"SHELL-SMOKE failures={failures.Count} {compileSummary}{exportSummary}");
         foreach (var failure in failures)
         {
             Console.Error.WriteLine("FAIL " + failure);

@@ -11,7 +11,7 @@
         ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome"
+        WindowDecorations="BorderOnly"
         KeyDown="OnDialogKeyDown">
   <Window.Styles>
     <!-- WPF BatchExpressionEditor expression chrome: default / hover / focus-within border. -->

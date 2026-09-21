@@ -11,7 +11,7 @@
         ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome">
+        WindowDecorations="BorderOnly">
   <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
     <Grid RowDefinitions="36,*,62">
 
@@ -37,9 +37,9 @@
               <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Seed" />
               <RadioButton x:Name="AutomaticSeedButton" Grid.Column="1" VerticalAlignment="Center"
                            GroupName="SeedMode" IsChecked="True" Content="Automatic"
-                           Checked="OnSeedModeChanged" />
+                           IsCheckedChanged="OnSeedModeChanged" />
               <RadioButton x:Name="ExplicitSeedButton" Grid.Column="3" VerticalAlignment="Center"
-                           GroupName="SeedMode" Content="Explicit" Checked="OnSeedModeChanged" />
+                           GroupName="SeedMode" Content="Explicit" IsCheckedChanged="OnSeedModeChanged" />
               <TextBox x:Name="SeedBox" Grid.Column="5" IsEnabled="False" Text="0" TextChanged="OnInputChanged" />
             </Grid>
           </Border>

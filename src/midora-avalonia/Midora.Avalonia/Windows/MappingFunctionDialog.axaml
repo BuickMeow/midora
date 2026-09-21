@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome">
+        WindowDecorations="BorderOnly">
   <Window.Styles>
     <!-- The WPF AvalonEdit editor is replaced by a monospace TextBox. -->
     <Style Selector="TextBox.mono">

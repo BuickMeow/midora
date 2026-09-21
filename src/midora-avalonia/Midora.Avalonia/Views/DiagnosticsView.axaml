@@ -6,7 +6,7 @@
     <Border Background="{DynamicResource Brush.Surface.1}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1" Padding="10,8">
       <Grid ColumnDefinitions="*,Auto">
-        <TextBox x:Name="SearchBox" Watermark="Search diagnostics" Height="28" Padding="8,0" />
+        <TextBox x:Name="SearchBox" PlaceholderText="Search diagnostics" Height="28" Padding="8,0" />
         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0" Spacing="4">
           <ToggleButton x:Name="ErrorFilter" Height="28" Padding="10,0" Content="Errors" />
           <ToggleButton x:Name="WarningFilter" Height="28" Padding="10,0" Content="Warnings" />
@@ -16,10 +16,28 @@
     </Border>
     <Border Grid.Row="1" Padding="10,6" Background="{DynamicResource Brush.Surface.1}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
-      <TextBlock x:Name="SummaryText" Classes="caption" Text="No diagnostics" />
+      <TextBlock x:Name="SummaryText" Classes="caption" Text="{Binding IssueSummary}" />
     </Border>
     <Grid Grid.Row="2">
-      <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+      <ListBox ItemsSource="{Binding Diagnostics}"
+               Background="Transparent" BorderThickness="0" Padding="0"
+               ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+               IsVisible="{Binding HasDiagnostics}">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <Grid ColumnDefinitions="64,96,*" Margin="10,6">
+              <TextBlock Text="{Binding Severity}" FontWeight="SemiBold" VerticalAlignment="Top" />
+              <TextBlock Grid.Column="1" Classes="mono" Text="{Binding Code}" VerticalAlignment="Top" />
+              <StackPanel Grid.Column="2" Spacing="2">
+                <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+                <TextBlock Classes="caption" Text="{Binding SourceText}" />
+              </StackPanel>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4"
+                  IsVisible="{Binding !HasDiagnostics}">
         <TextBlock Classes="section" HorizontalAlignment="Center" Text="No diagnostics" />
         <TextBlock Classes="caption" HorizontalAlignment="Center"
                    Text="Compile the Project or clear the current search." />

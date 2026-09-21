@@ -11,7 +11,7 @@
         ShowInTaskbar="False"
         CanResize="True"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome">
+        WindowDecorations="BorderOnly">
   <Border BorderBrush="{DynamicResource Brush.Border.Strong}" BorderThickness="1">
     <Grid RowDefinitions="36,*,58">
 
@@ -44,7 +44,7 @@
             <StackPanel Grid.Column="2">
               <TextBlock Classes="overline" Text="CREATION" />
               <CheckBox x:Name="SaveNowCheck" Margin="0,12,0,0" Content="Save Project immediately"
-                        Checked="OnSaveNowChanged" Unchecked="OnSaveNowChanged" />
+                        IsCheckedChanged="OnSaveNowChanged" />
               <TextBlock Margin="0,12,0,4" Classes="caption" Text="TARGET FILE" />
               <Grid ColumnDefinitions="*,Auto">
                 <TextBox x:Name="PathBox" IsReadOnly="True" />

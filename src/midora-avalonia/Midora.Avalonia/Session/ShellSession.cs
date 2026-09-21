@@ -8,10 +8,15 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Midora.Application;
 using Midora.Avalonia.Editing;
 using Midora.Avalonia.Import;
 using Midora.Avalonia.Presentation.Rendering;
 using Midora.Avalonia.Views;
+using Midora.Compiler;
+using Midora.Domain;
+using Midora.Persistence;
+using Midora.Session;
 
 namespace Midora.Avalonia.Session;
 
@@ -56,10 +61,48 @@ public sealed class ShellSession : INotifyPropertyChanged
     private EditableMidiProject? _editableProject;
     private ArrangementView? _arrangementView;
     private MidiTrackView? _activeEditView;
+    private readonly ProjectSessionHost? _projectHost;
+    private readonly string? _projectHostError;
+
+    public ShellSession()
+    {
+        try
+        {
+            _projectHost = new ProjectSessionHost("0.1.0-avalonia-port");
+        }
+        catch (Exception exception)
+        {
+            // Avalonia port: the portable data root probe mirrors the WPF fail-closed
+            // behaviour without aborting the whole shell; Project features report the error.
+            _projectHostError = exception.Message;
+        }
+
+        Diagnostics.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasDiagnostics));
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ObservableCollection<WorkspaceTab> Workspaces { get; } = [];
+
+    /// <summary>Compiler diagnostics of the last Project compilation, for the Diagnostics view.</summary>
+    public ObservableCollection<ShellDiagnostic> Diagnostics { get; } = [];
+
+    public bool HasDiagnostics => Diagnostics.Count > 0;
+
+    internal ProjectSessionHost? ProjectHost => _projectHost;
+
+    internal bool HasProjectSession => _projectHost?.HasProject == true;
+
+    internal string? ProjectHostError => _projectHostError;
+
+    internal string? CurrentProjectPath => _projectHost?.Persistence?.CurrentProjectPath;
+
+    internal MidoraProject? DomainProject => _projectHost?.Document?.Project;
+
+    internal MidoraProjectFileInformationV1? ProjectFileInformation =>
+        _projectHost?.Persistence?.FileInformation;
+
+    internal const string SoftwareVersion = "0.1.0-avalonia-port";
 
     public WorkspaceTab? ActiveWorkspace
     {
@@ -215,10 +258,25 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     public bool HasNotice => !string.IsNullOrEmpty(_notice);
 
-    /// <summary>WPF <c>ProjectState</c>: a port Project always has an in-memory document.</summary>
-    public string ProjectState => HasProject
-        ? IsModified ? "Modified · Unsaved" : "Unsaved"
-        : "No Project";
+    /// <summary>WPF <c>ProjectState</c> wording, derived from the real document origin.</summary>
+    public string ProjectState
+    {
+        get
+        {
+            if (!HasProject)
+            {
+                return "No Project";
+            }
+
+            bool persisted = _projectHost?.Document?.HasPersistentOrigin == true;
+            if (IsModified)
+            {
+                return persisted ? "Modified" : "Modified · Unsaved";
+            }
+
+            return persisted ? "Saved" : "Unsaved";
+        }
+    }
 
     public string PlaybackState => IsPlaying ? "Playing" : "Stopped";
 
@@ -283,11 +341,12 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     public bool CanEditProject => HasProject;
 
-    public bool CanSaveProject => HasProject && IsModified;
+    public bool CanSaveProject =>
+        HasProject && IsModified && (_projectHost?.Persistence?.CanSaveProject ?? false);
 
     public bool CanPlayback => HasProject && !IsPlaying;
 
-    public bool CanRunProjectTask => HasProject && !IsCompiling;
+    public bool CanRunProjectTask => HasProject && !IsCompiling && HasProjectSession;
 
     public bool CanNavigateBack => _historyIndex > 0;
 
@@ -309,7 +368,158 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     // Project lifecycle.
 
+    /// <summary>
+    /// Creates a real unsaved Domain Project through the Application layer and resets the shell
+    /// surfaces. Used by the review hooks and the smoke probes.
+    /// </summary>
     public void CreateProject(string name)
+    {
+        string normalized = string.IsNullOrWhiteSpace(name) ? "Untitled Project" : name.Trim();
+        ProjectActivation? activation = null;
+        if (_projectHost is null)
+        {
+            SetStatusMessage(
+                $"New Project is unavailable: {_projectHostError ?? "portable storage is unavailable"}.",
+                isError: true);
+        }
+        else
+        {
+            try
+            {
+                activation = _projectHost.CreateUnsaved(new NewProjectCreationRequest
+                {
+                    ProjectName = normalized
+                });
+            }
+            catch (Exception exception)
+            {
+                SetStatusMessage($"New Project failed: {exception.Message}", isError: true);
+            }
+        }
+
+        ResetShellForProject(activation, normalized);
+        if (activation is not null)
+        {
+            AttachProjectDocument();
+            SetStatusMessage($"New Project '{activation.ProjectName}' created.");
+        }
+    }
+
+    /// <summary>Creates a Project from the New Project dialog, including its optional first save.</summary>
+    public async Task<bool> CreateProjectAsync(NewProjectCreationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (_projectHost is null)
+        {
+            SetStatusMessage(
+                $"New Project is unavailable: {_projectHostError ?? "portable storage is unavailable"}.",
+                isError: true);
+            return false;
+        }
+
+        try
+        {
+            ProjectActivation activation = await _projectHost.CreateAsync(request);
+            ResetShellForProject(activation, activation.ProjectName);
+            AttachProjectDocument();
+            SetStatusMessage(activation.IsPersisted
+                ? $"New Project '{activation.ProjectName}' saved to {activation.CurrentPath}."
+                : $"New Project '{activation.ProjectName}' created.");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            SetStatusMessage($"New Project failed: {exception.Message}", isError: true);
+            return false;
+        }
+    }
+
+    /// <summary>Opens a persisted .midora Project through the Application layer.</summary>
+    public async Task<bool> OpenProjectAsync(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (_projectHost is null)
+        {
+            SetStatusMessage(
+                $"Open Project is unavailable: {_projectHostError ?? "portable storage is unavailable"}.",
+                isError: true);
+            return false;
+        }
+
+        try
+        {
+            ProjectActivation activation = await _projectHost.OpenAsync(path);
+            ResetShellForProject(activation, Path.GetFileNameWithoutExtension(path));
+            AttachProjectDocument();
+            string note = activation.RequiresFormatUpgrade
+                ? " Older file format: the first save will migrate it."
+                : activation.HasDamagedObjects
+                    ? " Some damaged objects are isolated; saving stays disabled."
+                    : string.Empty;
+            SetStatusMessage(
+                $"Project opened: {activation.ProjectName}."
+                + note
+                + " Timeline lanes for Domain project data are still being ported.");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            SetStatusMessage($"Open Project failed: {exception.Message}", isError: true);
+            return false;
+        }
+    }
+
+    /// <summary>Persists the current Project (first save uses the supplied target path).</summary>
+    public async Task<bool> SaveProjectAsync(
+        string? firstTargetPath = null,
+        bool overwriteAuthorized = false)
+    {
+        if (_projectHost?.Persistence is not { } persistence)
+        {
+            SetStatusMessage("Save requires a Project-backed session.", isError: true);
+            return false;
+        }
+
+        try
+        {
+            MidoraProjectSaveResultV1 result = await persistence
+                .SaveProjectAsync(firstTargetPath, overwriteAuthorized);
+            IsModified = _projectHost.Document?.IsModified == true;
+            RaiseDerived();
+            SetStatusMessage($"Project saved to {result.TargetPath}.");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            SetStatusMessage($"Save failed: {exception.Message}", isError: true);
+            return false;
+        }
+    }
+
+    /// <summary>Writes a separate copy without clearing the current Project's modified state.</summary>
+    public async Task<bool> SaveCopyAsync(string targetPath, bool overwriteAuthorized = false)
+    {
+        if (_projectHost?.Persistence is not { } persistence)
+        {
+            SetStatusMessage("Save Copy requires a Project-backed session.", isError: true);
+            return false;
+        }
+
+        try
+        {
+            MidoraProjectSaveResultV1 result = await persistence
+                .SaveCopyAsync(targetPath, overwriteAuthorized);
+            SetStatusMessage($"Project copy saved to {result.TargetPath}.");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            SetStatusMessage($"Save Copy failed: {exception.Message}", isError: true);
+            return false;
+        }
+    }
+
+    private void ResetShellForProject(ProjectActivation? activation, string fallbackName)
     {
         _midiSource = null;
         _editableProject = null;
@@ -318,15 +528,12 @@ public sealed class ShellSession : INotifyPropertyChanged
         _history.Clear();
         _historyIndex = -1;
 
-        ProjectName = string.IsNullOrWhiteSpace(name) ? "Untitled Project" : name.Trim();
+        ProjectName = activation?.ProjectName is { Length: > 0 } name ? name : fallbackName;
         HasProject = true;
-        IsModified = false;
+        IsModified = _projectHost?.Document?.IsModified == true;
         IsPlaying = false;
         IsCompiling = false;
-        CompileState = "Not Compiled";
-        ErrorCount = 0;
-        WarningCount = 0;
-        IssueSummary = "0 Errors, 0 Warnings";
+        ClearDiagnostics();
         PositionText = "0001 : 01 : 0000";
         TempoText = "120.00 BPM";
         Notice = string.Empty;
@@ -334,6 +541,27 @@ public sealed class ShellSession : INotifyPropertyChanged
 
         OpenWorkspace(WorkspaceKind.Arrangement);
         ApplyArrangementSource();
+    }
+
+    private void AttachProjectDocument()
+    {
+        if (_projectHost?.Document is not { } document)
+        {
+            return;
+        }
+
+        document.ContentChanged += (_, _) => MarkModified();
+        document.HistoryChanged += (_, _) => RaiseDerived();
+    }
+
+    private void ClearDiagnostics()
+    {
+        Diagnostics.Clear();
+        CompileState = "Not Compiled";
+        ErrorCount = 0;
+        WarningCount = 0;
+        IssueSummary = "0 Errors, 0 Warnings";
+        OnPropertyChanged(nameof(IssueBrush));
     }
 
     private WorkspaceTab CreateArrangementWorkspace()
@@ -452,9 +680,31 @@ public sealed class ShellSession : INotifyPropertyChanged
     /// Replaces the current project with a real imported SMF project and shows it in the
     /// Arrangement workspace.
     /// </summary>
-    public void CreateProjectFromMidi(string name, ImportedMidiProject project)
+    public void CreateProjectFromMidi(
+        string name,
+        ImportedMidiProject project,
+        byte[]? sourceBytes = null)
     {
-        CreateProject(name);
+        ProjectActivation? activation = null;
+        string? adoptionError = null;
+        if (sourceBytes is not null && _projectHost is not null)
+        {
+            try
+            {
+                activation = _projectHost.ImportMidi(sourceBytes, name);
+            }
+            catch (Exception exception)
+            {
+                adoptionError = exception.Message;
+            }
+        }
+
+        ResetShellForProject(activation, name);
+        if (activation is not null)
+        {
+            AttachProjectDocument();
+        }
+
         _editableProject = new EditableMidiProject(project);
         _editableProject.Changed += (_, _) =>
         {
@@ -477,10 +727,26 @@ public sealed class ShellSession : INotifyPropertyChanged
             diagnostic => diagnostic.Severity == ImportedMidiDiagnosticSeverity.Warning);
         int informationCount = project.Diagnostics.Count(
             diagnostic => diagnostic.Severity == ImportedMidiDiagnosticSeverity.Info);
+        string report = BuildMidiImportReport(project, warningCount, informationCount);
+        if (adoptionError is not null)
+        {
+            report = "The Project could not be adopted from the MIDI import; "
+                + "this session stays preview-only.\n\n"
+                + adoptionError
+                + "\n\n"
+                + report;
+        }
+        else if (activation is null)
+        {
+            report = "The Project could not be adopted because portable storage is unavailable; "
+                + "this session stays preview-only.\n\n"
+                + report;
+        }
+
         SetStatusMessage(
             $"MIDI import completed with {warningCount} warning(s) and {informationCount} information notice(s).",
-            isError: false,
-            details: BuildMidiImportReport(project, warningCount, informationCount),
+            isError: adoptionError is not null,
+            details: report,
             detailsTitle: "MIDI Import Report");
     }
 
@@ -562,6 +828,7 @@ public sealed class ShellSession : INotifyPropertyChanged
     {
         StopPlaybackClock();
         PlaybackTick = -1;
+        _projectHost?.Close();
         _midiSource = null;
         _editableProject = null;
         _activeEditView = null;
@@ -580,10 +847,7 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
 
         ActiveWorkspace = null;
-        CompileState = "Not Compiled";
-        ErrorCount = 0;
-        WarningCount = 0;
-        IssueSummary = "0 Errors, 0 Warnings";
+        ClearDiagnostics();
         SetStatusMessage(null);
     }
 
@@ -831,20 +1095,36 @@ public sealed class ShellSession : INotifyPropertyChanged
         PositionText = $"{bar:0000} : {beat:00} : {remainder:0000}";
     }
 
+    /// <summary>
+    /// Runs the real compiler through the Project compilation session and publishes its
+    /// diagnostics. The compile runs on a worker thread; the result is applied on the caller.
+    /// </summary>
     public async Task CompileAsync()
     {
         if (!CanRunProjectTask)
         {
+            if (HasProject && !HasProjectSession)
+            {
+                SetStatusMessage(
+                    "Compile needs a Project-backed session; imported MIDI is still preview data.",
+                    isError: true);
+            }
+
             return;
         }
 
+        ProjectSessionHost host = _projectHost!;
         IsCompiling = true;
         CompileState = "Compiling";
         try
         {
-            await Task.Delay(600);
-            CompileState = "Compile Succeeded";
-            SetStatusMessage("Compilation completed successfully.");
+            CanonicalCompiledResult result = await Task.Run(host.Compile).ConfigureAwait(true);
+            ApplyCompilationResult(result);
+        }
+        catch (Exception exception)
+        {
+            CompileState = "Compile Failed";
+            SetStatusMessage($"Compilation failed: {exception.Message}", isError: true);
         }
         finally
         {
@@ -852,12 +1132,51 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
     }
 
-    public void ResetDiagnostics(int errors, int warnings)
+    private void ApplyCompilationResult(CanonicalCompiledResult result)
     {
+        Diagnostics.Clear();
+        int errors = 0;
+        int warnings = 0;
+        long count = result.Diagnostics.Count;
+        for (long index = 0; index < count; index++)
+        {
+            CompilerDiagnostic diagnostic = result.Diagnostics[index];
+            switch (diagnostic.Severity)
+            {
+                case DiagnosticSeverity.Error:
+                    errors++;
+                    break;
+                case DiagnosticSeverity.Warning:
+                    warnings++;
+                    break;
+                default:
+                    break;
+            }
+
+            Diagnostics.Add(new ShellDiagnostic(
+                diagnostic.Severity.ToString(),
+                diagnostic.Code,
+                diagnostic.Message,
+                diagnostic.Source.Tick >= 0 ? $"tick {diagnostic.Source.Tick}" : string.Empty));
+        }
+
         ErrorCount = errors;
         WarningCount = warnings;
         IssueSummary = $"{errors} Errors, {warnings} Warnings";
         OnPropertyChanged(nameof(IssueBrush));
+        if (result.IsConsumable)
+        {
+            CompileState = "Compile Succeeded";
+            SetStatusMessage($"Compilation completed with {errors} error(s) and {warnings} warning(s).");
+        }
+        else
+        {
+            CompileState = "Compile Failed";
+            SetStatusMessage(
+                $"Compilation failed{(result.FailureStage is { } stage ? $" at {stage}" : string.Empty)}"
+                + $" with {errors} error(s) and {warnings} warning(s).",
+                isError: true);
+        }
     }
 
     // INotifyPropertyChanged plumbing.
@@ -894,7 +1213,7 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     private static IBrush Brush(string resourceKey, string fallback)
     {
-        if (Application.Current is { } app &&
+        if (global::Avalonia.Application.Current is { } app &&
             app.TryFindResource(resourceKey, out object? value) &&
             value is IBrush brush)
         {
@@ -906,7 +1225,7 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     private static Geometry? Icon(string resourceKey)
     {
-        return Application.Current is { } app &&
+        return global::Avalonia.Application.Current is { } app &&
                app.TryFindResource(resourceKey, out object? value)
             ? value as Geometry
             : null;
@@ -915,3 +1234,10 @@ public sealed class ShellSession : INotifyPropertyChanged
     private void OnPropertyChanged(string? propertyName) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
+
+/// <summary>One row of the Diagnostics workspace, projected from the compiler result.</summary>
+public sealed record ShellDiagnostic(
+    string Severity,
+    string Code,
+    string Message,
+    string SourceText);

@@ -319,11 +319,18 @@ public static partial class MidiProjectImportService
             phasePoller.Start();
         }
 
-        CanonicalCompiledResult validation = compiler.CompileFull(
-            project,
-            compileProgress is null
-                ? new CompilationRequest()
-                : new CompilationRequest { Progress = compileProgress });
+        // Validation-only compile: an empty range runs the whole semantic validation, instance
+        // expansion, overlap and channel allocation path but publishes nothing, so importing a large
+        // Pure MIDI project does not materialize and sort every canonical event just to decide
+        // whether the project is consumable. Publication happens on first consumption.
+        CompilationRequest validationRequest = new()
+        {
+            Purpose = CompilationPurpose.Range,
+            StartTick = 0,
+            EndTick = 0,
+            Progress = compileProgress,
+        };
+        CanonicalCompiledResult validation = compiler.CompileFull(project, validationRequest);
         phasePollStop.Cancel();
         phasePoller?.Join(1000);
         if (importTrace && phaseLog is not null)

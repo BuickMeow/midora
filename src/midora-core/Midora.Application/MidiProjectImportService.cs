@@ -289,7 +289,52 @@ public static partial class MidiProjectImportService
         }
 
         using MidoraCompiler compiler = new();
-        CanonicalCompiledResult validation = compiler.CompileFull(project);
+        CompilationProgress? compileProgress = importTrace ? new CompilationProgress() : null;
+        List<(CompilationPhase Phase, long Milliseconds)>? phaseLog =
+            compileProgress is null ? null : [];
+        using CancellationTokenSource phasePollStop = new();
+        Thread? phasePoller = null;
+        if (compileProgress is not null && phaseLog is not null)
+        {
+            phasePoller = new Thread(() =>
+            {
+                CompilationPhase last = compileProgress.Current.Phase;
+                long lastAt = System.Environment.TickCount64;
+                while (!phasePollStop.IsCancellationRequested)
+                {
+                    CompilationPhase phase = compileProgress.Current.Phase;
+                    if (phase != last)
+                    {
+                        phaseLog.Add((last, System.Environment.TickCount64 - lastAt));
+                        last = phase;
+                        lastAt = System.Environment.TickCount64;
+                    }
+
+                    Thread.Sleep(5);
+                }
+
+                phaseLog.Add((last, System.Environment.TickCount64 - lastAt));
+            })
+            { IsBackground = true };
+            phasePoller.Start();
+        }
+
+        CanonicalCompiledResult validation = compiler.CompileFull(
+            project,
+            compileProgress is null
+                ? new CompilationRequest()
+                : new CompilationRequest { Progress = compileProgress });
+        phasePollStop.Cancel();
+        phasePoller?.Join(1000);
+        if (importTrace && phaseLog is not null)
+        {
+            foreach ((CompilationPhase phase, long milliseconds) in phaseLog)
+            {
+                Console.Out.WriteLine($"MIDORA-IMPORT compilePhase={phase} ms={milliseconds}");
+            }
+
+            Console.Out.Flush();
+        }
         if (importTrace)
         {
             Console.Out.WriteLine(

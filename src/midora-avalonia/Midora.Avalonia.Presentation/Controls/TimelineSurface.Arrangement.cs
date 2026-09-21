@@ -275,7 +275,11 @@ public sealed partial class TimelineSurface
     /// small previews while a frame full of large ones cannot accumulate an unbounded primitive
     /// count (the vertex batch costs roughly six nanoseconds per primitive instead of a hundred).
     /// </summary>
-    private static readonly int GpuNoteBatchThreshold = ReadGpuNoteBatchThreshold();
+    /// <summary>
+    /// Per-frame primitive budget of the exact shape path. Settable so a review run can compare the
+    /// shape path and the GPU batch path inside one process.
+    /// </summary>
+    public static int GpuNoteBatchThreshold { get; set; } = ReadGpuNoteBatchThreshold();
 
     private static int ReadGpuNoteBatchThreshold() =>
         int.TryParse(
@@ -283,6 +287,13 @@ public sealed partial class TimelineSurface
             out int value) && value >= 0
             ? value
             : 20_000;
+
+    /// <summary>Review-only: drops cached GPU batches so a path change takes effect.</summary>
+    public void ClearGpuBatchCaches()
+    {
+        _noteBatchCache.Clear();
+        _pianoRollBatchCache.Clear();
+    }
 
     private readonly TimelineNoteBatchCache _noteBatchCache = new();
     private readonly List<TimelineNoteDrawEntry> _noteDrawEntries = [];

@@ -11,8 +11,7 @@ public sealed class EditableMidiSource :
     private readonly EditableMidiProject _project;
     private readonly int _trackIndex;
     private TimelineRenderItem[]? _items;
-    private int[][]? _laneItems;
-    private long[][]? _laneMaximumEndPrefix;
+    private TimelineLaneChunkIndex? _index;
     private ulong _fingerprint;
     private long _maximumEndTick;
     private long _builtProjectVersion = -1;
@@ -70,37 +69,20 @@ public sealed class EditableMidiSource :
         List<TimelineRenderItem> destination)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        long effectiveStart = Math.Max(0, startTick);
-        if (endTick <= effectiveStart || firstLane >= lastLaneExclusive) return;
         EnsureBuilt();
-        int[][] lanes = _laneItems!;
-        long[][] prefixes = _laneMaximumEndPrefix!;
-        int first = Math.Max(0, firstLane);
-        int last = Math.Min(lastLaneExclusive, lanes.Length);
-        for (int lane = first; lane < last; lane++)
-        {
-            int[] laneItems = lanes[lane];
-            if (laneItems.Length == 0)
-            {
-                continue;
-            }
+        _index!.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
+    }
 
-            long[] prefix = prefixes[lane];
-            int index = FirstPrefixEndGreaterThan(prefix, effectiveStart);
-            for (; index < laneItems.Length; index++)
-            {
-                TimelineRenderItem item = _items![laneItems[index]];
-                if (item.StartTick >= endTick)
-                {
-                    break;
-                }
-
-                if (item.EndTick > effectiveStart)
-                {
-                    destination.Add(item);
-                }
-            }
-        }
+    public void VisitInto(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        Action<TimelineRenderItem> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        EnsureBuilt();
+        _index!.VisitInto(startTick, endTick, firstLane, lastLaneExclusive, visitor);
     }
 
     public ulong GetRangeFingerprint(
@@ -178,79 +160,9 @@ public sealed class EditableMidiSource :
             TimelineContentFingerprint.ForRenderItems(items),
             unchecked((ulong)projectVersion));
         _maximumEndTick = ComputeMaximumEndTick();
-        BuildLaneIndex(items);
+        _index = TimelineLaneChunkIndex.BuildSorted(items);
         _builtProjectVersion = projectVersion;
         _builtTrackVersion = trackVersion;
-    }
-
-    private void BuildLaneIndex(TimelineRenderItem[] items)
-    {
-        int laneCount = 0;
-        foreach (TimelineRenderItem item in items)
-        {
-            if (item.Lane >= laneCount)
-            {
-                laneCount = item.Lane + 1;
-            }
-        }
-
-        laneCount = Math.Max(1, laneCount);
-        int[] counts = new int[laneCount];
-        foreach (TimelineRenderItem item in items)
-        {
-            int lane = item.Lane < 0 ? 0 : item.Lane;
-            counts[lane < laneCount ? lane : laneCount - 1]++;
-        }
-
-        int[][] lanes = new int[laneCount][];
-        long[][] prefixes = new long[laneCount][];
-        for (int lane = 0; lane < laneCount; lane++)
-        {
-            lanes[lane] = new int[counts[lane]];
-            prefixes[lane] = new long[counts[lane]];
-        }
-
-        int[] fill = new int[laneCount];
-        for (int index = 0; index < items.Length; index++)
-        {
-            int lane = items[index].Lane < 0 ? 0 : items[index].Lane;
-            lane = lane < laneCount ? lane : laneCount - 1;
-            lanes[lane][fill[lane]++] = index;
-        }
-
-        for (int lane = 0; lane < laneCount; lane++)
-        {
-            int[] laneItems = lanes[lane];
-            long maximumEnd = long.MinValue;
-            for (int index = 0; index < laneItems.Length; index++)
-            {
-                maximumEnd = Math.Max(maximumEnd, items[laneItems[index]].EndTick);
-                prefixes[lane][index] = maximumEnd;
-            }
-        }
-
-        _laneItems = lanes;
-        _laneMaximumEndPrefix = prefixes;
-    }
-
-    private static int FirstPrefixEndGreaterThan(long[] prefix, long value)
-    {
-        int low = 0;
-        int high = prefix.Length;
-        while (low < high)
-        {
-            int middle = low + ((high - low) >> 1);
-            if (prefix[middle] > value)
-            {
-                high = middle;
-            }
-            else
-            {
-                low = middle + 1;
-            }
-        }
-
-        return low;
     }
 
     private long ComputeMaximumEndTick()

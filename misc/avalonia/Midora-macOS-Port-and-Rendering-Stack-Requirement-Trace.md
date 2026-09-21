@@ -893,3 +893,28 @@ Skia lease 绘制；批自持 paint；批缓存按字节预算 LRU 淘汰并**�
 - 整轨展开时仍有约 20 ms/帧：主要来自可见项遍历（20 万项查询与可见性判断），
   可改为 visitor 直写顶点或引入密度摘要层。
 - `MIDORA_GPU_NOTE_THRESHOLD` 同时覆盖 Arrangement 与 Piano Roll 的每帧预算，如需分别调优再拆分。
+
+### Slice V 补充：分块 lane 索引（yinhe 式中期逻辑）与同进程 A/B
+
+- 新增 `TimelineLaneChunkIndex`（Presentation，可测）：item 按 (lane, start, end, kind, id) 排序后，每 lane 是
+  共享数组的**连续区间**，按 256 项分 chunk；每 64 chunk 存**块前缀 max**（单调，二分找第一个可能相交的 chunk）
+  与单调的 `chunkStart`（二分找最后一个起始早于区间末的 chunk）。长音符只影响自己所在块，
+  访问范围 O(可见项) 而非 O(lane 前缀)。
+- 索引内存：约 `n/256*16 + n/16384*8` 字节 ≈ 每项 0.06 字节（原先"每项一个 8 字节前缀"→ **约 128×** 降低，
+  1257 万项时约 0.8MB vs 100MB）。
+- 遍历改为**结构体 sink + 泛型约束**（`IItemSink`），`QueryInto`/`VisitInto`/`Count` 共用同一遍历且
+  热路径**无委托、无闭包**（此前 `destination.Add` 会逐项产生委托调用）。
+- 新增 7 项索引测试（随机区间对照朴素过滤、跨块长音符、chunk 边界、空/越界 lane、开区间音符、
+  拒绝未排序输入、索引体积断言），`Midora.Avalonia.Presentation.Tests` **24/24**。
+- **同进程 A/B**（20 万可见音符，`MIDORA_TRACK_BENCH=150 MIDORA_TRACK_BENCH_AB=1`）：
+
+| 运行 | GPU 批 p50 | 形状路径 p50 | 倍数 |
+| --- | --- | --- | --- |
+| 1 | 36.63 ms | 194.69 ms | 5.3× |
+| 2 | 43.87 ms | 220.83 ms | 5.0× |
+
+  跨进程测量波动可达 ±30%（GPU/驱动状态、机器负载），因此结论以**同进程 A/B** 为准。
+- 评审钩子新增：`MIDORA_TRACK_BENCH_AB=1`（同进程双路径对比）、`MIDORA_TRACK_BENCH` 改报 p50。
+- 经验记录：**visitor + 委托/闭包在本平台比"列表拷贝"更慢**（实测 GPU 26.75→43.92ms、形状 106→194ms），
+  因此钢琴卷帘保留列表路径，仅把遍历下沉到结构体 sink；若要进一步去列表化，需要 `ITimelineRenderItemSource`
+  增加泛型 struct visitor 重载（公共接口变更，暂不做）。

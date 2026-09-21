@@ -292,15 +292,31 @@ public partial class MidiTrackView : UserControl
                 () =>
                 {
                     Timeline.BenchmarkRenderFrames(2);
-                    (double average, double maximum, bool hasBounds) =
+                    (double average, double median, double maximum, bool hasBounds) =
                         Timeline.BenchmarkRenderFrames(benchFrames);
+                    if (Environment.GetEnvironmentVariable("MIDORA_TRACK_BENCH_AB") == "1")
+                    {
+                        int budget = TimelineSurface.GpuNoteBatchThreshold;
+                        TimelineSurface.GpuNoteBatchThreshold = int.MaxValue;
+                        Timeline.ClearGpuBatchCaches();
+                        Timeline.BenchmarkRenderFrames(2);
+                        (double shapeAverage, double shapeMedian, double shapeMaximum, _) =
+                            Timeline.BenchmarkRenderFrames(benchFrames);
+                        TimelineSurface.GpuNoteBatchThreshold = budget;
+                        Timeline.ClearGpuBatchCaches();
+                        Console.Out.WriteLine(
+                            $"MIDORA-TRACK-BENCH-AB gpuAvg={average:F2} gpuP50={median:F2} "
+                            + $"gpuMax={maximum:F1} shapeAvg={shapeAverage:F2} "
+                            + $"shapeP50={shapeMedian:F2} shapeMax={shapeMaximum:F1}");
+                        Console.Out.Flush();
+                    }
                     (int rollBatches, long rollVertexBytes, int rollVisible, long rollHits, long rollMisses) =
                         Timeline.PianoRollBatchDiagnostics;
                     (long spanTicks, long gridMs, long rulerMs, long modeMs) =
                         Timeline.ModePhaseDiagnostics;
                     Console.Out.WriteLine(
                         $"MIDORA-TRACK-BENCH frames={benchFrames} hasBounds={hasBounds} "
-                        + $"avg={average:F2} ms max={maximum:F0} ms "
+                        + $"avg={average:F2} ms p50={median:F2} ms max={maximum:F1} ms "
                         + $"span={Timeline.TickSpan} mode={Timeline.SurfaceMode} "
                         + $"rollVisible={rollVisible} rollBatches={rollBatches} "
                         + $"rollVertexMB={rollVertexBytes / (1024.0 * 1024.0):F1} "

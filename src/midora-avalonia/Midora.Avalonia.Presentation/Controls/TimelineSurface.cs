@@ -448,12 +448,13 @@ public sealed partial class TimelineSurface : Control
     /// deterministically, without depending on window visibility or compositor throttling. The caller
     /// must run it after layout, otherwise the surface has no bounds and nothing is rendered.
     /// </summary>
-    public (double Average, double Maximum, bool HasBounds) BenchmarkRenderFrames(int frames)
+    public (double Average, double Median, double Maximum, bool HasBounds) BenchmarkRenderFrames(
+        int frames)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(frames, 1);
         if (Bounds.Width <= 0 || Bounds.Height <= 0)
         {
-            return (0, 0, false);
+            return (0, 0, 0, false);
         }
 
         double scaling = (VisualRoot as TopLevel)?.RenderScaling ?? 1.0;
@@ -462,18 +463,20 @@ public sealed partial class TimelineSurface : Control
                 Math.Max(1, (int)Math.Round(Bounds.Width * scaling)),
                 Math.Max(1, (int)Math.Round(Bounds.Height * scaling))),
             new Vector(96 * scaling, 96 * scaling));
+        double[] samples = new double[frames];
         double total = 0;
-        double maximum = 0;
         for (int frame = 0; frame < frames; frame++)
         {
-            long start = Environment.TickCount64;
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
             target.Render(this);
-            double elapsed = Environment.TickCount64 - start;
+            double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            samples[frame] = elapsed;
             total += elapsed;
-            maximum = Math.Max(maximum, elapsed);
         }
 
-        return (total / frames, maximum, true);
+        double[] sorted = [.. samples];
+        Array.Sort(sorted);
+        return (total / frames, sorted[frames / 2], sorted[^1], true);
     }
 
     /// <summary>

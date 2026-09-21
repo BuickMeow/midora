@@ -100,20 +100,15 @@ public sealed partial class TimelineSurface
         FlushShapes(context);
     }
 
+    /// <summary>
+    /// Pixel visibility only: the tick and lane ranges are already applied by the source query, so
+    /// this only rejects lanes that fall outside the painted area.
+    /// </summary>
     private bool IsVisiblePianoRollNote(
         TimelineRenderItem item,
         TimelineViewport viewport,
         double height)
     {
-        if (!IsNoteKind(item.Kind)
-            || item.Lane < viewport.FirstLane
-            || item.Lane >= viewport.LastLaneExclusive
-            || item.EndTick <= viewport.StartTick
-            || item.StartTick >= viewport.EndTick)
-        {
-            return false;
-        }
-
         double laneTop = GetLaneTop(viewport, item.Lane);
         return laneTop < height && laneTop + viewport.LaneHeight > RulerHeight;
     }

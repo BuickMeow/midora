@@ -303,10 +303,10 @@ public sealed partial class TimelineSurface
         (_noteBatchCache.Count, _noteBatchCache.TotalVertexBytes);
 
     /// <summary>Review-only: piano roll GPU batch cache and last visible note count.</summary>
-    public (int Batches, long VertexBytes, int VisibleNotes, long Hits, long Misses, int MergeFactor)
+    public (int Batches, long VertexBytes, int VisibleNotes, long Hits, long Misses, int BlockTicks)
         PianoRollBatchDiagnostics =>
         (_pianoRollBatchCache.Count, _pianoRollBatchCache.TotalVertexBytes, _pianoRollVisibleCount,
-            _pianoRollBatchCache.Hits, _pianoRollBatchCache.Misses, _pianoRollMergeFactor);
+            _pianoRollBatchCache.Hits, _pianoRollBatchCache.Misses, _pianoRollBlockTicks);
 
     /// <summary>
     /// Draws every pending Segment preview. Notes are horizontal bars in their pitch row and events

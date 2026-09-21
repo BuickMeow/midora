@@ -1,42 +1,45 @@
 namespace Midora.Avalonia.Presentation.Rendering;
 
 /// <summary>
-/// Level of detail policy for the piano roll. It is a pure function of the average note width so it
-/// can be tested and reasoned about without a control, and it never caps displayed content: every
-/// level merges consecutive notes into one conservative envelope, so no note is dropped.
+/// Level of detail policy for the piano roll, mirroring the reference implementation: notes are
+/// merged per fixed tick block, and a block is only merged while it is at most
+/// <see cref="MaxBlockPixels"/> wide on screen. Inside such a block the remaining gaps are
+/// sub-pixel, so merging is visually equivalent to drawing the notes, while a merged segment can
+/// never smear across a wide tick range the way note-count grouping does. The ladder is fixed in
+/// ticks (16, 64, 256, 1024, ... with 4x steps) and has no upper bound, so no displayed content is
+/// ever capped; the segment count follows the block width, not a budget.
 /// </summary>
 public static class TimelinePianoRollLod
 {
-    /// <summary>Target width in pixels of one drawn unit.</summary>
-    public const double TargetPixels = 16.0;
+    /// <summary>Maximum width in pixels of one merged block; above this the exact layer is used.</summary>
+    public const double MaxBlockPixels = 4.0;
 
-    /// <summary>First merged level: 16 consecutive notes share one envelope.</summary>
-    public const int FirstMergeLevel = 16;
+    /// <summary>Finest merged block, in ticks.</summary>
+    public const int FinestBlockTicks = 16;
 
     /// <summary>
-    /// Largest ladder value (1, 16, 32, 64, 128, ... with 2x steps) whose merged unit stays within
-    /// <see cref="TargetPixels"/>. Notes at least a pixel wide are drawn exactly, merging starts at
-    /// 16 items per envelope, each merged unit stays between half and the full target width, and
-    /// there is no upper level: fully zoomed out content merges into a few large blocks.
+    /// Returns the tick block to merge by, or 0 when the exact note layer must be used because even
+    /// the finest block would be wider than <see cref="MaxBlockPixels"/> (the view is zoomed in far
+    /// enough that individual notes are distinguishable).
     /// </summary>
-    public static int SelectMergeFactor(double averageNoteWidthPixels)
+    public static int SelectBlockTicks(double pixelsPerTick)
     {
-        if (!double.IsFinite(averageNoteWidthPixels) || averageNoteWidthPixels <= 0)
+        if (!double.IsFinite(pixelsPerTick) || pixelsPerTick <= 0)
         {
-            return 1;
+            return 0;
         }
 
-        int factor = 1;
-        if (averageNoteWidthPixels * FirstMergeLevel <= TargetPixels)
+        int block = FinestBlockTicks;
+        if (block * pixelsPerTick > MaxBlockPixels)
         {
-            factor = FirstMergeLevel;
-            while (factor <= int.MaxValue / 2
-                && averageNoteWidthPixels * (factor * 2L) <= TargetPixels)
-            {
-                factor *= 2;
-            }
+            return 0;
         }
 
-        return factor;
+        while (block <= int.MaxValue / 4 && block * 4L * pixelsPerTick <= MaxBlockPixels)
+        {
+            block *= 4;
+        }
+
+        return block;
     }
 }

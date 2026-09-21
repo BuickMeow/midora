@@ -16,7 +16,7 @@ public sealed class EditableMidiSource :
     private long _maximumEndTick;
     private long _builtProjectVersion = -1;
     private long _builtTrackVersion = -1;
-    private readonly Dictionary<int, TimelineLaneChunkIndex> _levelIndexes = [];
+
 
     public EditableMidiSource(EditableMidiProject project, int trackIndex)
     {
@@ -84,56 +84,16 @@ public sealed class EditableMidiSource :
         return _index!.Count(startTick, endTick, firstLane, lastLaneExclusive);
     }
 
-    public void VisitMergedEnvelopes<TEnvelopeSink>(
-        int mergeFactor,
+    public void VisitItems<TItemSink>(
         long startTick,
         long endTick,
         int firstLane,
         int lastLaneExclusive,
-        ref TEnvelopeSink sink)
-        where TEnvelopeSink : struct, TimelineLaneChunkIndex.IChunkSink
+        ref TItemSink sink)
+        where TItemSink : struct, TimelineLaneChunkIndex.IItemSink
     {
         EnsureBuilt();
-        GetOrBuildLevel(mergeFactor).VisitChunks(
-            startTick,
-            endTick,
-            firstLane,
-            lastLaneExclusive,
-            ref sink);
-    }
-
-    /// <summary>
-    /// Returns the index for a level of detail, building it on demand. A level groups mergeFactor
-    /// consecutive items of a lane into one envelope, so coarser levels cost O(items / mergeFactor)
-    /// to build and to traverse while covering exactly the same notes.
-    /// </summary>
-    private TimelineLaneChunkIndex GetOrBuildLevel(int mergeFactor)
-    {
-        if (mergeFactor <= 1)
-        {
-            return _index!;
-        }
-
-        if (_levelIndexes.TryGetValue(mergeFactor, out TimelineLaneChunkIndex? level))
-        {
-            return level;
-        }
-
-        level = TimelineLaneChunkIndex.BuildSorted(_items!, mergeFactor);
-        _levelIndexes[mergeFactor] = level;
-        return level;
-    }
-
-    public void VisitChunks<TChunkSink>(
-        long startTick,
-        long endTick,
-        int firstLane,
-        int lastLaneExclusive,
-        ref TChunkSink sink)
-        where TChunkSink : struct, TimelineLaneChunkIndex.IChunkSink
-    {
-        EnsureBuilt();
-        _index!.VisitChunks(startTick, endTick, firstLane, lastLaneExclusive, ref sink);
+        _index!.VisitItems(startTick, endTick, firstLane, lastLaneExclusive, ref sink);
     }
 
     public void VisitInto(
@@ -219,7 +179,6 @@ public sealed class EditableMidiSource :
 
         TimelineRenderItem[] items = BuildItems(track);
         _items = items;
-        _levelIndexes.Clear();
 
         _fingerprint = TimelineContentFingerprint.Combine(
             TimelineContentFingerprint.ForRenderItems(items),

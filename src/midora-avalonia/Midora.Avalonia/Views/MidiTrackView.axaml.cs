@@ -314,7 +314,7 @@ public partial class MidiTrackView : UserControl
                         Console.Out.Flush();
                     }
                     (int rollBatches, long rollVertexBytes, int rollVisible, long rollHits,
-                        long rollMisses, int rollMergeFactor) =
+                        long rollMisses, int rollBlockTicks) =
                         Timeline.PianoRollBatchDiagnostics;
                     (long spanTicks, long gridMs, long rulerMs, long modeMs) =
                         Timeline.ModePhaseDiagnostics;
@@ -324,7 +324,7 @@ public partial class MidiTrackView : UserControl
                         + $"span={Timeline.TickSpan} mode={Timeline.SurfaceMode} "
                         + $"rollVisible={rollVisible} rollBatches={rollBatches} "
                         + $"rollVertexMB={rollVertexBytes / (1024.0 * 1024.0):F1} "
-                        + $"rollHits={rollHits} rollMisses={rollMisses} merge={rollMergeFactor} "
+                        + $"rollHits={rollHits} rollMisses={rollMisses} block={rollBlockTicks} "
                         + $"viewSpan={spanTicks} grid={gridMs} ruler={rulerMs} modeMs={modeMs}");
                     Console.Out.Flush();
                 },

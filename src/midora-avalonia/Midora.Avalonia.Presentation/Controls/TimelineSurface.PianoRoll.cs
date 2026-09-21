@@ -18,8 +18,9 @@ public sealed partial class TimelineSurface
     private readonly TimelineVertexBatchCache<TimelinePianoRollBatchKey> _pianoRollBatchCache = new();
     private readonly TimelineQuadBatchBuilder _pianoRollQuads = new();
     private readonly List<TimelineRenderItem> _pianoRollVisible = [];
+    private TimelinePianoRollBlockAggregator _blockAggregator;
     private int _pianoRollVisibleCount;
-    private int _pianoRollMergeFactor = 1;
+    private int _pianoRollBlockTicks;
 
     private void DrawPianoRollSurface(
         DrawingContext context,
@@ -40,30 +41,23 @@ public sealed partial class TimelineSurface
             viewport.FirstLane,
             viewport.LastLaneExclusive);
         _pianoRollVisibleCount = visibleCount;
-        int mergeFactor = PianoRollMergingEnabled
-            ? TimelinePianoRollLod.SelectMergeFactor(AverageNoteWidthPixels(viewport, visibleCount))
-            : 1;
-        _pianoRollMergeFactor = mergeFactor;
+        int blockTicks = PianoRollMergingEnabled
+            ? TimelinePianoRollLod.SelectBlockTicks(viewport.PixelsPerTick)
+            : 0;
+        _pianoRollBlockTicks = blockTicks;
 
-        // Merged levels draw one quad per grouped envelope; every other level draws exact notes.
+        // Merged levels aggregate notes per fixed tick block (at most a few pixels wide on screen);
+        // every other level draws exact notes.
         TimelineNoteVertexBatch? batch = null;
-        if (mergeFactor > 1)
+        if (blockTicks > 0)
         {
-            TimelinePianoRollBatchKey envelopeKey =
-                CreatePianoRollBatchKey(viewport, devicePixel, mergeFactor);
-            batch = _pianoRollBatchCache.TryGet(envelopeKey, out TimelineNoteVertexBatch cached)
-                ? cached
-                : BuildPianoRollEnvelopeBatch(
-                    envelopeKey,
-                    viewport,
-                    devicePixel,
-                    verticalInset,
-                    mergeFactor);
+            batch = GetOrBuildPianoRollBlockBatch(viewport, devicePixel, verticalInset, blockTicks);
         }
         else if (visibleCount > GpuNoteBatchThreshold)
         {
             batch = GetOrBuildPianoRollBatch(viewport, devicePixel, verticalInset);
         }
+
         if (batch is not null)
         {
             Rect clip = new(0, RulerHeight, width, Math.Max(0, height - RulerHeight));
@@ -72,9 +66,9 @@ public sealed partial class TimelineSurface
                 clip));
         }
 
-        if (mergeFactor > 1)
+        if (blockTicks > 0)
         {
-            // Merged levels cover every note, so there is no separate selection or hover layer.
+            // Merged blocks cover every note of the visible range.
             FlushShapes(context);
             return;
         }
@@ -147,50 +141,56 @@ public sealed partial class TimelineSurface
         return laneTop < height && laneTop + viewport.LaneHeight > RulerHeight;
     }
 
-    /// <summary>Average width of one visible note in device-independent pixels.</summary>
-    private static double AverageNoteWidthPixels(TimelineViewport viewport, int visibleNotes)
-    {
-        if (visibleNotes <= 0)
-        {
-            return double.PositiveInfinity;
-        }
-
-        return viewport.TickLength / (double)visibleNotes * viewport.PixelsPerTick;
-    }
-
     /// <summary>
-    /// Merged level batch: one quad per (lane, mergeFactor notes) envelope. The envelope spans the
-    /// grouped notes' first start to their maximum end, which covers every one of them, and lanes
-    /// are pitches, so the vertical extent stays exact.
+    /// Merged level batch: every (lane, tick block) that contains notes becomes one segment spanning
+    /// the block's first start to its maximum end, exactly like the reference summary layer. Because
+    /// the block is at most a few pixels wide, gaps inside it are sub-pixel and the result reads as
+    /// the same picture; a segment can still extend past its block when a note is sustained, which
+    /// is the note's real extent.
     /// </summary>
-    private TimelineNoteVertexBatch? BuildPianoRollEnvelopeBatch(
-        in TimelinePianoRollBatchKey key,
+    private TimelineNoteVertexBatch? GetOrBuildPianoRollBlockBatch(
         TimelineViewport viewport,
         double devicePixel,
         double verticalInset,
-        int mergeFactor)
+        int blockTicks)
     {
-        PianoRollEnvelopeSink sink = new()
+        TimelinePianoRollBatchKey key = CreatePianoRollBatchKey(viewport, devicePixel, blockTicks);
+        if (_pianoRollBatchCache.TryGet(key, out TimelineNoteVertexBatch cached))
         {
-            Builder = _pianoRollQuads,
-            Viewport = viewport,
-            DevicePixel = devicePixel,
-            VerticalInset = verticalInset,
-            RowHeight = Math.Max(devicePixel, viewport.LaneHeight - verticalInset * 2),
-            RulerOffset = RulerHeight,
-            PitchLanes = UsesPitchLanes
-        };
-        Source!.VisitMergedEnvelopes(
-            mergeFactor,
+            return cached;
+        }
+
+        int laneCount = Math.Max(1, viewport.LastLaneExclusive - viewport.FirstLane);
+        long firstBlock = viewport.StartTick / blockTicks;
+        int blockCount = (int)Math.Min(
+            1_000_000,
+            Math.Max(1, viewport.TickLength / blockTicks + 2));
+        _blockAggregator.Begin(viewport.FirstLane, laneCount, firstBlock, blockCount, blockTicks);
+        Source!.VisitItems(
             viewport.StartTick,
             viewport.EndTick,
             viewport.FirstLane,
             viewport.LastLaneExclusive,
-            ref sink);
-        if (sink.Count == 0)
+            ref _blockAggregator);
+
+        if (_blockAggregator.TouchedCells.Count == 0)
         {
-            _pianoRollQuads.Complete();
             return null;
+        }
+
+        double rowHeight = Math.Max(devicePixel, viewport.LaneHeight - verticalInset * 2);
+        foreach (int cell in _blockAggregator.TouchedCells)
+        {
+            int lane = _blockAggregator.LaneOf(cell);
+            double left = Math.Max(0, viewport.TickToX(_blockAggregator.MinimumStart(cell)));
+            double right = Math.Min(viewport.Width, viewport.TickToX(_blockAggregator.MaximumEnd(cell)));
+            if (right < left + devicePixel)
+            {
+                right = left + devicePixel;
+            }
+
+            float top = (float)(GetLaneTop(viewport, lane) + verticalInset);
+            _pianoRollQuads.Add((float)left, top, (float)right, (float)(top + rowHeight));
         }
 
         (SKVertices[] batches, int quadCount) = _pianoRollQuads.Complete();
@@ -199,47 +199,13 @@ public sealed partial class TimelineSurface
         return built;
     }
 
-    private struct PianoRollEnvelopeSink : TimelineLaneChunkIndex.IChunkSink
-    {
-        public TimelineQuadBatchBuilder Builder;
-        public TimelineViewport Viewport;
-        public double DevicePixel;
-        public double VerticalInset;
-        public double RowHeight;
-        public double RulerOffset;
-        public bool PitchLanes;
-        public int Count;
-
-        public void Chunk(int lane, long startTick, long endTick, int itemCount)
-        {
-            if (itemCount == 0)
-            {
-                return;
-            }
-
-            double left = Math.Max(0, Viewport.TickToX(startTick));
-            double right = Math.Min(Viewport.Width, Viewport.TickToX(endTick));
-            if (right < left + DevicePixel)
-            {
-                right = left + DevicePixel;
-            }
-
-            int row = PitchLanes
-                ? Viewport.LastLaneExclusive - 1 - lane
-                : lane - Viewport.FirstLane;
-            float top = (float)(RulerOffset + row * Viewport.LaneHeight + VerticalInset);
-            Builder.Add((float)left, top, (float)right, (float)(top + RowHeight));
-            Count++;
-        }
-    }
-
     private TimelinePianoRollBatchKey CreatePianoRollBatchKey(
         TimelineViewport viewport,
         double devicePixel,
-        int mergeFactor) =>
+        int blockTicks) =>
         new(
             Source!,
-            mergeFactor,
+            blockTicks,
             Source!.GetRangeFingerprint(
                 viewport.StartTick,
                 viewport.EndTick,
@@ -259,7 +225,7 @@ public sealed partial class TimelineSurface
         double devicePixel,
         double verticalInset)
     {
-        TimelinePianoRollBatchKey key = CreatePianoRollBatchKey(viewport, devicePixel, mergeFactor: 1);
+        TimelinePianoRollBatchKey key = CreatePianoRollBatchKey(viewport, devicePixel, blockTicks: 0);
         uint color = key.Color;
         if (_pianoRollBatchCache.TryGet(key, out TimelineNoteVertexBatch cached))
         {
@@ -315,14 +281,14 @@ public sealed partial class TimelineSurface
 }
 
 /// <summary>
-/// Identity of one piano roll vertex batch: the render source, the level of detail (items per merged
-/// envelope, 1 for exact notes), the bounded range fingerprint, the zoom and lane geometry, the
-/// visible range and the paint color. Every input that moves a vertex is part of the key, so a hit
-/// can never draw stale data.
+/// Identity of one piano roll vertex batch: the render source, the merged tick block (0 for the exact
+/// note layer), the bounded range fingerprint, the zoom and lane geometry, the visible range and the
+/// paint color. Every input that moves a vertex is part of the key, so a hit can never draw stale
+/// data.
 /// </summary>
 internal readonly record struct TimelinePianoRollBatchKey(
     object Source,
-    int MergeFactor,
+    int BlockTicks,
     ulong RangeFingerprint,
     double PixelsPerTick,
     double LaneHeight,

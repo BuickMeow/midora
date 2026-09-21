@@ -988,3 +988,24 @@ LOD 相对逐音符 GPU 批约 **6–9×**、相对形状路径约 **44×**，�
 
 测试：`TimelinePianoRollLod` 策略（边界、单元宽度区间、单调性、退化输入、极端缩放不溢出）、
 每级（unitSize 16/64/256/1024）包络覆盖保守性，总计 **42/42**；`--smoke-shell` failures=0。
+
+
+## Slice W 修订 2：改为 yinhe 式 tick 块合并（修正"变形"与崩溃）
+
+产品所有者评审：按音符个数分组的包络把整行糊成横线（图二"完全无法辨认"），yinhe 的 LOD 明显更靠谱。
+对照 `crates/yinhe-wgpu/src/pianoroll/summary.rs` 后确认根因与正确做法：
+
+- yinhe：档位是**固定 tick 块宽** `[1024, 256, 64, 16]`（4× 间隔），选择规则 `block × ppu <= SUMMARY_MAX_PX(4px)`，
+  每 `(key, 块)` 输出一个 `[min_start, max_end)` 段；块内空隙 ≤ 4px 时不可见，因此合并视觉上等价。
+- 我此前的实现：按**音符个数**分组（16/32/…/2048 个一组），组的 tick 跨度不受控 —— 稀疏音高上
+  2048 个音符可横跨大半首曲子，于是画出整条横线（图二）。
+- 修正：`TimelinePianoRollLod.SelectBlockTicks(pixelsPerTick)` 用 tick 块阶梯（16/64/256/1024/…，4× 步进，
+  无上限），块宽换算到屏幕 ≤ 4px；`TimelinePianoRollBlockAggregator`（结构体 sink，零委托、缓冲复用 + stamp）
+  每 `(lane, 块)` 聚合 min/max；屏幕放得下单个音符时（最细块 > 4px）自动回到逐音符精确层。
+- **崩溃修复**：`TimelinePianoRollBlockAggregator` 作为字段被默认初始化时不会执行无参构造，
+  `_touched` 等引用字段为 null → 渲染期 `NullReferenceException`（任何钢琴卷帘 LOD 生效时都会崩）。
+  现改为在 `Begin` 内 `??=` 建立缓冲，并加"默认初始化"测试锁定。
+
+实测（Choomaypiano 文件，`MIDORA_TRACK_BENCH=40`）：span 2000 → block=0（精确）0.34ms；
+span 20000 → block=16；span 100000 → block=256，p50 1.9–4.7ms，无崩溃。
+测试 **39/39**，`--smoke-shell` failures=0。

@@ -180,6 +180,19 @@ public sealed class TimelineLaneChunkIndex
             blockTotal);
     }
 
+    /// <summary>
+    /// Visits every intersecting item through a struct sink, so a caller can aggregate items without
+    /// allocating a list or paying a delegate per item.
+    /// </summary>
+    public void VisitItems<TItemSink>(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        ref TItemSink sink)
+        where TItemSink : struct, IItemSink =>
+        VisitRange(startTick, endTick, firstLane, lastLaneExclusive, ref sink);
+
     /// <summary>Collects intersecting items into a list without a delegate per item.</summary>
     public void QueryInto(
         long startTick,
@@ -211,68 +224,6 @@ public sealed class TimelineLaneChunkIndex
         CountingSink sink = new();
         VisitRange(startTick, endTick, firstLane, lastLaneExclusive, ref sink);
         return sink.Count;
-    }
-
-    /// <summary>
-    /// Sink for chunk level aggregation (LOD). A chunk is emitted once with its envelope
-    /// [startTick, endTick] and item count; the caller unions envelopes instead of visiting items.
-    /// </summary>
-    public interface IChunkSink
-    {
-        void Chunk(int lane, long startTick, long endTick, int itemCount);
-    }
-
-    /// <summary>
-    /// Visits every chunk that can intersect the tick range, with the chunk's first note start and
-    /// maximum end tick. Envelopes are conservative: a chunk is emitted whenever any of its notes
-    /// can intersect, so the union of emitted envelopes covers every intersecting note.
-    /// </summary>
-    public void VisitChunks<TChunkSink>(
-        long startTick,
-        long endTick,
-        int firstLane,
-        int lastLaneExclusive,
-        ref TChunkSink sink)
-        where TChunkSink : struct, IChunkSink
-    {
-        long effectiveStart = Math.Max(0, startTick);
-        if (endTick <= effectiveStart || firstLane >= lastLaneExclusive)
-        {
-            return;
-        }
-
-        int first = Math.Max(0, firstLane);
-        int last = Math.Min(lastLaneExclusive, _laneFirstItem.Length);
-        for (int lane = first; lane < last; lane++)
-        {
-            int count = _laneItemCount[lane];
-            if (count == 0)
-            {
-                continue;
-            }
-
-            long[] starts = _laneChunkStart[lane];
-            long[] maxEnds = _laneChunkMaxEnd[lane];
-            int firstChunk = FirstChunkReachingInto(lane, effectiveStart);
-            if (firstChunk >= starts.Length)
-            {
-                continue;
-            }
-
-            int lastChunk = LastChunkStartingBefore(starts, endTick);
-            if (lastChunk < firstChunk)
-            {
-                continue;
-            }
-
-            int laneFirst = _laneFirstItem[lane];
-            for (int chunk = firstChunk; chunk <= lastChunk; chunk++)
-            {
-                int from = laneFirst + chunk * _unitSize;
-                int to = Math.Min(laneFirst + count, from + _unitSize);
-                sink.Chunk(lane, starts[chunk], maxEnds[chunk], to - from);
-            }
-        }
     }
 
     /// <summary>

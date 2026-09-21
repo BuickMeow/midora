@@ -502,13 +502,13 @@ public sealed partial class TimelineSurface : Control
 
         (int previewBatches, long previewVertexBytes) = PreviewBatchDiagnostics;
         (int rollBatches, long rollVertexBytes, int rollVisible, long rollHits, long rollMisses,
-            int rollMergeFactor) = PianoRollBatchDiagnostics;
+            int rollBlockTicks) = PianoRollBatchDiagnostics;
         Console.Out.WriteLine(
             $"MIDORA-RENDER frames={_renderFrameCount} avg={_renderTotalMilliseconds / _renderFrameCount:F2} ms max={_renderMaximumMilliseconds:F0} ms"
             + $" batches={previewBatches} vertexMB={previewVertexBytes / (1024.0 * 1024.0):F1}"
             + $" rollBatches={rollBatches} rollVertexMB={rollVertexBytes / (1024.0 * 1024.0):F1}"
             + $" rollVisible={rollVisible} rollHits={rollHits} rollMisses={rollMisses}"
-            + $" rollMerge={rollMergeFactor}"
+            + $" rollBlock={rollBlockTicks}"
             + $" span={_modeSpanTicks} grid={_modeGridMilliseconds} ruler={_modeRulerMilliseconds}"
             + $" mode={_modeSurfaceMilliseconds}");
         Console.Out.Flush();

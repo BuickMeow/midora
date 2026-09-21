@@ -39,6 +39,7 @@ public sealed partial class TimelineSurface : Control
     private MidoraId? _hoverItemId;
     private long _lastPointerTick = long.MinValue;
     private bool _suppressSelectionEvent;
+    private readonly TimelineRulerGesture _rulerGesture = new();
 
     static TimelineSurface()
     {
@@ -52,6 +53,9 @@ public sealed partial class TimelineSurface : Control
             GridVisibleProperty,
             ShowTrackNamesProperty,
             PlaybackTickProperty,
+            EditCursorTickProperty,
+            TimeRangeStartTickProperty,
+            TimeRangeEndTickProperty,
             TicksPerQuarterNoteProperty,
             SelectedIdProperty,
             TrackNamesProperty,
@@ -66,6 +70,7 @@ public sealed partial class TimelineSurface : Control
     {
         ClipToBounds = true;
         Focusable = true;
+        AddHandler(InputElement.PinchEvent, OnPinchGesture);
     }
 
     public static readonly StyledProperty<ITimelineRenderItemSource?> SourceProperty =
@@ -107,6 +112,28 @@ public sealed partial class TimelineSurface : Control
     /// <summary>Playback position drawn as a red cursor line; -1 hides it.</summary>
     public static readonly StyledProperty<long> PlaybackTickProperty =
         AvaloniaProperty.Register<TimelineSurface, long>(nameof(PlaybackTick), -1);
+
+    /// <summary>Edit position drawn as a blue dashed cursor line; -1 hides it (SRS 20.1.2).</summary>
+    public static readonly StyledProperty<long> EditCursorTickProperty =
+        AvaloniaProperty.Register<TimelineSurface, long>(nameof(EditCursorTick), -1);
+
+    /// <summary>Time Range Selection start tick; -1 hides the range (SRS 20.1.2).</summary>
+    public static readonly StyledProperty<long> TimeRangeStartTickProperty =
+        AvaloniaProperty.Register<TimelineSurface, long>(nameof(TimeRangeStartTick), -1);
+
+    /// <summary>Time Range Selection end tick (exclusive); -1 hides the range.</summary>
+    public static readonly StyledProperty<long> TimeRangeEndTickProperty =
+        AvaloniaProperty.Register<TimelineSurface, long>(nameof(TimeRangeEndTick), -1);
+
+    /// <summary>
+    /// Effective operation step used to snap the Playback Cursor, the Edit Cursor and the Time
+    /// Range start/length (SRS 20.1.4); 1 when Snap is disabled.
+    /// </summary>
+    public static readonly StyledProperty<long> OperationStepTicksProperty =
+        AvaloniaProperty.Register<TimelineSurface, long>(
+            nameof(OperationStepTicks),
+            defaultValue: 1,
+            coerce: static (_, value) => Math.Max(1, value));
 
     public static readonly StyledProperty<long> TicksPerQuarterNoteProperty =
         AvaloniaProperty.Register<TimelineSurface, long>(
@@ -268,7 +295,40 @@ public sealed partial class TimelineSurface : Control
         set => SetValue(ValueMaximumProperty, value);
     }
 
+    public long EditCursorTick
+    {
+        get => GetValue(EditCursorTickProperty);
+        set => SetValue(EditCursorTickProperty, value);
+    }
+
+    public long TimeRangeStartTick
+    {
+        get => GetValue(TimeRangeStartTickProperty);
+        set => SetValue(TimeRangeStartTickProperty, value);
+    }
+
+    public long TimeRangeEndTick
+    {
+        get => GetValue(TimeRangeEndTickProperty);
+        set => SetValue(TimeRangeEndTickProperty, value);
+    }
+
+    public long OperationStepTicks
+    {
+        get => GetValue(OperationStepTicksProperty);
+        set => SetValue(OperationStepTicksProperty, value);
+    }
+
     public event EventHandler<long>? PointerTickChanged;
+
+    /// <summary>Raised when the ruler asks to move the Playback Cursor (SRS 20.1.3).</summary>
+    public event EventHandler<long>? PlaybackCursorRequested;
+
+    /// <summary>Raised when the ruler or an empty content click asks to move the Edit Cursor.</summary>
+    public event EventHandler<long>? EditCursorRequested;
+
+    /// <summary>Raised when a ruler drag completes a Time Range Selection.</summary>
+    public event EventHandler<TimelineTimeRangeEventArgs>? TimeRangeSelected;
 
     public event EventHandler<TimelineRenderItem?>? SelectionChanged;
 
@@ -337,6 +397,7 @@ public sealed partial class TimelineSurface : Control
             DrawSegmentPreviewDeferred(context, viewport);
         }
 
+        DrawTimeRange(context, viewport, width, height);
         DrawEditCursor(context, viewport, height);
         DrawPlaybackCursor(context, viewport, height);
         DrawMarquee(context, width, height);
@@ -434,6 +495,19 @@ public sealed partial class TimelineSurface : Control
             return;
         }
 
+        if (point.Properties.IsLeftButtonPressed && IsRulerInteractive(point.Position))
+        {
+            // The Ctrl state and the pointer origin are frozen at pointer down (SRS 20.1.3).
+            _rulerGesture.Begin(
+                point.Position.X,
+                point.Position.Y,
+                RulerTick(point.Position),
+                e.KeyModifiers.HasFlag(KeyModifiers.Control));
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            return;
+        }
+
         if (e.ClickCount == 2)
         {
             RaiseActivation(point.Position);
@@ -506,6 +580,18 @@ public sealed partial class TimelineSurface : Control
             return;
         }
 
+        if (_rulerGesture.IsActive)
+        {
+            _rulerGesture.Move(
+                position.X,
+                position.Y,
+                RulerTick(position),
+                MarqueeDragThreshold);
+            InvalidateVisual();
+            RaisePointerTickChanged(position);
+            return;
+        }
+
         if (_isPanning)
         {
             if (TryCreateViewport(out TimelineViewport panViewport)
@@ -547,6 +633,18 @@ public sealed partial class TimelineSurface : Control
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (_rulerGesture.IsActive && e.InitialPressMouseButton == MouseButton.Left)
+        {
+            // Complete before releasing the capture: releasing it raises PointerCaptureLost, which
+            // cancels any still-active gesture.
+            TimelineRulerGestureResult result = _rulerGesture.Complete(
+                SnapTick(RulerTick(e.GetPosition(this))));
+            e.Pointer.Capture(null);
+            ApplyRulerGestureResult(result);
+            e.Handled = true;
+            return;
+        }
+
         if (_isPanning && e.InitialPressMouseButton == MouseButton.Middle)
         {
             _isPanning = false;
@@ -591,6 +689,7 @@ public sealed partial class TimelineSurface : Control
         _isPanning = false;
         _isLeftDragging = false;
         _isMarqueeVisible = false;
+        _rulerGesture.Cancel();
         InvalidateVisual();
     }
 
@@ -610,26 +709,175 @@ public sealed partial class TimelineSurface : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        double delta = e.Delta.Y;
-        if (!double.IsFinite(delta) || delta == 0)
+        double deltaX = e.Delta.X;
+        double deltaY = e.Delta.Y;
+        bool hasX = double.IsFinite(deltaX) && deltaX != 0;
+        bool hasY = double.IsFinite(deltaY) && deltaY != 0;
+        if (!hasX && !hasY)
         {
             return;
         }
 
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        // SRS 20.1.5 keeps Ctrl+Wheel horizontal zoom, Shift+Wheel horizontal scroll and
+        // middle-button pan. A trackpad reports both axes at once, so the remaining wheel
+        // deltas pan the timeline freely in both directions instead of discarding Delta.X.
+        if (hasY && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            ZoomAt(e.GetPosition(this), delta);
+            ZoomAt(e.GetPosition(this), deltaY);
+            e.Handled = true;
+            return;
         }
-        else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && UsesPitchLanes)
+
+        if (hasY && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
-            ScrollLanes(delta);
+            if (UsesPitchLanes)
+            {
+                ScrollLanes(deltaY);
+            }
+            else
+            {
+                PanHorizontally(-deltaY);
+            }
+
+            e.Handled = true;
+            return;
         }
-        else
+
+        if (hasX)
         {
-            PanByWheel(delta);
+            PanHorizontally(deltaX);
+        }
+
+        if (hasY)
+        {
+            PanVertically(deltaY);
         }
 
         e.Handled = true;
+    }
+
+    /// <summary>Horizontal wheel/trackpad delta: positive scrolls toward later ticks.</summary>
+    private void PanHorizontally(double delta)
+    {
+        long step = Math.Max(1, (long)Math.Round(Math.Max(1, TickSpan) * WheelPanFraction));
+        SetCurrentValue(StartTickProperty, TimelineTickMath.Pan(StartTick, (long)Math.Round(delta * step)));
+    }
+
+    /// <summary>Vertical wheel/trackpad delta: scrolls lanes, or the value window in value modes.</summary>
+    private void PanVertically(double delta)
+    {
+        if (!TryCreateViewport(out TimelineViewport viewport))
+        {
+            return;
+        }
+
+        if (SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity)
+        {
+            // The value lanes currently render the fixed ValueMinimum..ValueMaximum window, so
+            // there is no vertical viewport to scroll yet (SRS 20.1.5 value-axis scrolling).
+            return;
+        }
+
+        int step = Math.Max(1, (int)Math.Round(3 * delta));
+        int maximumFirstLane = Math.Max(0, Math.Max(1, LaneCount) - viewport.LaneCount);
+        SetCurrentValue(
+            FirstLaneProperty,
+            Math.Clamp(viewport.FirstLane - step, 0, maximumFirstLane));
+    }
+
+    /// <summary>
+    /// The ruler band of every tick timeline except the bottom value lanes, which do not create
+    /// a Time Range Selection (SRS 20.1.3).
+    /// </summary>
+    private bool IsRulerInteractive(Point position) =>
+        SurfaceMode is not (TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity)
+        && position.Y >= 0
+        && position.Y < RulerHeight
+        && position.X >= 0
+        && position.X <= Bounds.Width;
+
+    private void ApplyRulerGestureResult(TimelineRulerGestureResult result)
+    {
+        switch (result.Kind)
+        {
+            case TimelineRulerGestureKind.Seek:
+                PlaybackCursorRequested?.Invoke(this, result.Tick);
+                break;
+            case TimelineRulerGestureKind.EditCursor:
+                SetCurrentValue(EditCursorTickProperty, result.Tick);
+                EditCursorRequested?.Invoke(this, result.Tick);
+                break;
+            case TimelineRulerGestureKind.TimeRange:
+                SetCurrentValue(TimeRangeStartTickProperty, result.StartTick);
+                SetCurrentValue(TimeRangeEndTickProperty, result.EndTick);
+                TimeRangeSelected?.Invoke(
+                    this,
+                    new TimelineTimeRangeEventArgs(result.StartTick, result.EndTick));
+                break;
+        }
+
+        InvalidateVisual();
+    }
+
+    private long RulerTick(Point position)
+    {
+        if (!TryCreateViewport(out TimelineViewport viewport))
+        {
+            return 0;
+        }
+
+        return Math.Max(0, viewport.XToTick(position.X));
+    }
+
+    /// <summary>Snaps a tick to the effective operation step (SRS 20.1.4).</summary>
+    private long SnapTick(long tick)
+    {
+        long step = Math.Max(1, OperationStepTicks);
+        if (step <= 1)
+        {
+            return Math.Max(0, tick);
+        }
+
+        return Math.Max(0, (long)Math.Round(tick / (double)step, MidpointRounding.AwayFromZero) * step);
+    }
+
+    private static (long Start, long End) NormalizeTickRange(long left, long right)
+    {
+        long start = Math.Min(left, right);
+        long end = Math.Max(left, right);
+        if (end <= start)
+        {
+            end = start + 1;
+        }
+
+        return (start, end);
+    }
+
+    /// <summary>
+    /// Trackpad pinch zoom. SRS 20.1.5 defines Ctrl+Wheel zoom; pinch mirrors it so the pointer
+    /// anchor, bounds and the shared ruler/lane/canvas viewport stay identical.
+    /// </summary>
+    private void OnPinchGesture(PinchEventArgs e)
+    {
+        if (ApplyPinchZoom(e.Scale, e.ScaleOrigin))
+        {
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// Applies a trackpad pinch to the shared time viewport. Returns false when the reported scale
+    /// carries no zoom, so the caller can leave the event unhandled.
+    /// </summary>
+    public bool ApplyPinchZoom(double scale, Point origin)
+    {
+        if (!double.IsFinite(scale) || scale <= 0 || Math.Abs(scale - 1) < 1e-6)
+        {
+            return false;
+        }
+
+        ZoomBy(origin, scale > 1 ? 1 / ZoomStep : ZoomStep);
+        return true;
     }
 
     /// <summary>Shift+wheel scrolls the pitch window (pitch-oriented modes).</summary>
@@ -647,14 +895,10 @@ public sealed partial class TimelineSurface : Control
             Math.Clamp(viewport.FirstLane - step, 0, maximumFirstLane));
     }
 
-    private void PanByWheel(double delta)
-    {
-        long step = Math.Max(1, (long)Math.Round(Math.Max(1, TickSpan) * WheelPanFraction));
-        long direction = delta > 0 ? -1 : 1;
-        SetCurrentValue(StartTickProperty, TimelineTickMath.Pan(StartTick, direction * step));
-    }
+    private void ZoomAt(Point position, double delta) =>
+        ZoomBy(position, delta > 0 ? 1 / ZoomStep : ZoomStep);
 
-    private void ZoomAt(Point position, double delta)
+    private void ZoomBy(Point position, double factor)
     {
         if (!TryCreateViewport(out TimelineViewport viewport))
         {
@@ -662,7 +906,6 @@ public sealed partial class TimelineSurface : Control
         }
 
         long currentSpan = viewport.TickLength;
-        double factor = delta > 0 ? 1 / ZoomStep : ZoomStep;
         long minimumSpan = Math.Max(1, TicksPerQuarterNote / 8);
         long maximumSpan = ComputeMaximumZoomSpan(minimumSpan);
         long newSpan = Math.Clamp(
@@ -762,7 +1005,20 @@ public sealed partial class TimelineSurface : Control
 
     private void ApplyClickSelection(Point position)
     {
-        SelectItem(TryHitTest(position, out TimelineRenderItem item) ? item : null);
+        bool hit = TryHitTest(position, out TimelineRenderItem item);
+        SelectItem(hit ? item : null);
+        if (hit
+            || SurfaceMode is not (TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.General)
+            || position.Y < RulerHeight)
+        {
+            return;
+        }
+
+        // An empty content click still positions the Edit Cursor, including the Conductor row
+        // (SRS 18.1.7); a double click on that row must not create an object.
+        long tick = SnapTick(RulerTick(position));
+        SetCurrentValue(EditCursorTickProperty, tick);
+        EditCursorRequested?.Invoke(this, tick);
     }
 
     private void ApplyMarqueeSelection(Rect rectangle)

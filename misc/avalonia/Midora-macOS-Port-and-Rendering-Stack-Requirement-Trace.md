@@ -593,3 +593,45 @@
 ### 2026-09-21（续）平台基线修正：macOS 初版 + Windows（Avalonia）后续
 
 产品所有者确认：WPF 弃用，但 Windows 未来跑 Avalonia，因此平台基线改为"macOS（`osx-arm64`，Avalonia）初版 + Windows（`win-x64`，Avalonia）计划中的后续平台"。已按 SRS 21.4 同步 SRS（01/02/13/15/17/21/22/00）与 `AGENTS.md`（§3/§4/§7.7/§7.8/§8），并把 macOS 音频 spike（设备层 + BASSMIDI/SF2 + 引擎适配）记为 `misc/Midora-macOS-Audio-Backend-Architecture-Decisions.md`。跨平台一致性口径固定为：canonical/SMF 必须一致、同平台严格 golden、跨平台语义 + 容差、BASS 用法一致（差异仅在平台输出后端）。工程侧的 RID/发布脚本/Windows 目标作为后续任务，见该 ADR §10.4。
+
+## Slice N：Arrangement 分段与三种游标交互（2026-09-21）
+
+需求依据：SRS §20.1.2（三种标记必须视觉可区分、可共存）、§20.1.3（Ruler 单击/`Ctrl`+单击/拖动）、
+§20.1.4（有效操作步长用于 Edit Cursor、Playback Cursor 与 Time Range 的开始和长度）、
+§20.1.5（Ctrl+Wheel 缩放、Shift+Wheel 滚动、中键平移，Ruler/Lane/Canvas 同步）、
+§18.1.7（Conductor 内容区左键仍按 Snap 更新 Edit Cursor；双击不得创建对象）、
+§23.5.3（SMF 导入默认一轨一个 Segment `[0, 源 MTrk EOT)`，保留尾部空白）。
+
+### 1. 移除 8 小节切块（对齐 SRS 23.5.3）
+
+- 删除 `MidiTimelineSource.DefaultBarsPerSegment` / `BarsPerSegment` / `SegmentRange` 与 `ShellSession`
+  的栅格导航，改为每轨一个 `[0, track.EndTick)` Segment；EOT 为 0 的轨保留空 Pure MIDI Track 且不建零长度 Segment。
+- 实测：导入 `midora-review.mid` 后 Arrangement 为 **12 tracks · 12 segments**（此前 8 小节切块产生 22+）。
+- `DemoTimelineSource` 仍按 8 小节生成合成演示内容：它是无工程时的占位数据，不是正式消费者。
+
+### 2. 三种标记与 Ruler 交互
+
+- 新增 `TimelineSurface.EditCursorTick`（蓝 `#62A6F6` 虚线 + 顶部标记）与
+  `TimeRangeStartTick`/`TimeRangeEndTick`（半透明带 + 左右边缘），与红色实线 Playback Cursor 三者可共存。
+- 新增纯状态机 `TimelineRulerGesture`：Ctrl 状态与指针起点在 Pointer Down 冻结；越过拖动阈值后
+  既不作为单击、也不降级为 Time Range；`Ctrl` 拖动不产生任何命令。
+- 空内容左键（含 Conductor 行）按 Snap 更新 Edit Cursor；双击行为不变。
+- `OperationStepTicks` 由 Shell 的 `OperationSubdivision`（默认 `1/8`，`Bar` 按 `4 × TPQ`）与
+  `IsSnapEnabled` 推导，供游标与 Time Range 吸附。
+- Seek 走 `RealtimePlaybackSession.Seek`（停止态也移动红色游标，属会话状态）。
+
+### 3. 触控板自由交互
+
+- `PointerWheelChanged` 同时消费 `Delta.X`/`Delta.Y`：水平平移 + 垂直换行（值轴暂不支持纵向视口），
+  保留 `Ctrl+Wheel` 水平缩放与 `Shift+Wheel` 水平滚动（SRS 20.1.5 硬约束）。
+- 新增 `InputElement.PinchEvent` 处理与可测的 `ApplyPinchZoom(scale, origin)`：以 `ScaleOrigin` 为锚，
+  与 Ctrl+Wheel 共用同一缩放实现，保持 Ruler/Lane/Canvas 同步。
+
+### 4. 验证
+
+- 新增 `Midora.Avalonia.Presentation.Tests`（Avalonia.Headless.XUnit，15 项）：Ruler 手势状态机 7 项
+  （单击 Seek、Ctrl 单击 Edit Cursor、拖动 Time Range、Ctrl 拖动无命令、修饰键冻结、取消、零长度范围）
+  + Surface 交互 8 项（单击/`Ctrl`+单击/空内容点击、两轴滚轮、Shift+滚轮、捏合锚定缩放）。
+- `SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；Avalonia 解决方案 0 警告 0 错误。
+- 未覆盖：headless 合成指针在移动时会释放 capture，因此拖动阈值逻辑由状态机单测覆盖，
+  真实拖动需人工确认；值轴（Velocity/Event/Parameter）纵向滚动仍属未实现（SRS 20.1.5 后续项）。

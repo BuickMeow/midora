@@ -426,17 +426,6 @@ public sealed partial class TimelineSurface
         or TimelineItemKind.TemplateNote
         or TimelineItemKind.Velocity;
 
-    private void DrawEditCursor(DrawingContext context, TimelineViewport viewport, double height)
-    {
-        if (0 < viewport.StartTick || 0 >= viewport.EndTick)
-        {
-            return;
-        }
-
-        double x = Math.Round(viewport.TickToX(0)) + 0.5;
-        context.DrawLine(CursorPen, new Point(x, 0), new Point(x, height));
-    }
-
     private void DrawMarquee(DrawingContext context, double width, double height)
     {
         if (!_isMarqueeVisible || height <= RulerHeight)

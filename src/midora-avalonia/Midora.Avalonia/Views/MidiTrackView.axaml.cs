@@ -49,6 +49,10 @@ public partial class MidiTrackView : UserControl
         SubdivisionBox.Text = "1/8";
 
         Timeline.PointerTickChanged += OnPointerTickChanged;
+        Timeline.PlaybackCursorRequested += (_, tick) =>
+            PlaybackCursorRequested?.Invoke(this, tick);
+        Timeline.EditCursorRequested += (_, tick) => EditCursorRequested?.Invoke(this, tick);
+        Timeline.TimeRangeSelected += (_, range) => TimeRangeSelected?.Invoke(this, range);
         Timeline.PropertyChanged += (_, change) =>
         {
             if (change.Property == TimelineSurface.FirstLaneProperty)
@@ -72,6 +76,15 @@ public partial class MidiTrackView : UserControl
     /// Raised after the surface commits an edit gesture to the project.
     /// </summary>
     public event EventHandler? Edited;
+
+    /// <summary>Raised when the ruler asks to move the Playback Cursor (SRS 20.1.3).</summary>
+    public event EventHandler<long>? PlaybackCursorRequested;
+
+    /// <summary>Raised when the ruler or an empty content click asks to move the Edit Cursor.</summary>
+    public event EventHandler<long>? EditCursorRequested;
+
+    /// <summary>Raised when a ruler drag completes a Time Range Selection.</summary>
+    public event EventHandler<TimelineTimeRangeEventArgs>? TimeRangeSelected;
 
     /// <summary>
     /// Binds an editable MIDI project to the editor. The combo lists every non-conductor
@@ -414,6 +427,17 @@ public partial class MidiTrackView : UserControl
     }
 
     public void SetPlaybackTick(long tick) => Timeline.PlaybackTick = tick;
+
+    public void SetEditCursorTick(long tick) => Timeline.EditCursorTick = tick;
+
+    public void SetTimeRange(long startTick, long endTick)
+    {
+        Timeline.TimeRangeStartTick = startTick;
+        Timeline.TimeRangeEndTick = endTick;
+    }
+
+    public void SetOperationStepTicks(long stepTicks) =>
+        Timeline.OperationStepTicks = Math.Max(1, stepTicks);
 
     private void OnPointerTickChanged(object? sender, long tick) => ShowPointerTick(tick);
 

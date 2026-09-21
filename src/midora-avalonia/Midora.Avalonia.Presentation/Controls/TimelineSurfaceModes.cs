@@ -31,3 +31,17 @@ public enum TimelineItemEditKind
 
 /// <summary>Identifies an arrangement Segment activation for workspace navigation.</summary>
 public readonly record struct TimelineSegmentActivation(int Lane, long StartTick);
+
+/// <summary>A committed Time Range Selection in project ticks (SRS 20.1.2).</summary>
+public sealed class TimelineTimeRangeEventArgs : EventArgs
+{
+    public TimelineTimeRangeEventArgs(long startTick, long endTick)
+    {
+        StartTick = startTick;
+        EndTick = endTick;
+    }
+
+    public long StartTick { get; }
+
+    public long EndTick { get; }
+}

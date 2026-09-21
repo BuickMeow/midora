@@ -53,6 +53,9 @@ public sealed partial class TimelineSurface
         public static readonly global::Avalonia.Media.Color Red =
             global::Avalonia.Media.Color.FromRgb(0xE5, 0x48, 0x4D);
 
+        public static readonly global::Avalonia.Media.Color Info =
+            global::Avalonia.Media.Color.FromRgb(0x62, 0xA6, 0xF6);
+
         public static readonly global::Avalonia.Media.Color MarqueeFill =
             global::Avalonia.Media.Color.FromArgb(38, 0xE5, 0x48, 0x4D);
     }
@@ -77,6 +80,11 @@ public sealed partial class TimelineSurface
         global::Avalonia.Media.Color.FromRgb(0x0E, 0x11, 0x15));
     private static readonly Pen MarkerChipPen = new(TextTertiaryBrush, 1);
     private static readonly SolidColorBrush RedBrush = new(Color.Red);
+    private static readonly SolidColorBrush EditCursorBrush = new(Color.Info);
+    private static readonly SolidColorBrush TimeRangeFillBrush = new(
+        global::Avalonia.Media.Color.FromArgb(0x24, 0x62, 0xA6, 0xF6));
+    private static readonly SolidColorBrush TimeRangeRulerFillBrush = new(
+        global::Avalonia.Media.Color.FromArgb(0x59, 0x62, 0xA6, 0xF6));
     private static readonly SolidColorBrush MarqueeFillBrush = new(Color.MarqueeFill);
     private static readonly SolidColorBrush LaneDimBrush = new(
         global::Avalonia.Media.Color.FromArgb(0x66, 0x05, 0x06, 0x07));
@@ -89,6 +97,11 @@ public sealed partial class TimelineSurface
     private static readonly Pen SelectedOutlinePen = new(NoteBrush, 1.5);
     private static readonly Pen HoverOutlinePen = new(TextTertiaryBrush, 1);
     private static readonly Pen CursorPen = new(RedBrush, 1);
+    private static readonly Pen EditCursorPen = new(EditCursorBrush, 1)
+    {
+        DashStyle = new DashStyle([3, 2], 0)
+    };
+    private static readonly Pen TimeRangeEdgePen = new(EditCursorBrush, 1);
     private static readonly Pen MarqueePen = new(RedBrush, 1);
     private static readonly Typeface SurfaceTypeface = new(
         FontFamily.Default,
@@ -152,6 +165,66 @@ public sealed partial class TimelineSurface
         double x = SnapToDevicePixel(viewport.TickToX(tick), GetDevicePixelWidth());
         context.DrawLine(CursorPen, new Point(x, 0), new Point(x, height));
         context.FillRectangle(RedBrush, new Rect(x - 2, 0, 4, 4), 1f);
+    }
+
+    /// <summary>
+    /// Edit Cursor: a blue dashed line over the content area, visually distinct from the red
+    /// solid Playback Cursor and from the Time Range band (SRS 20.1.2).
+    /// </summary>
+    private void DrawEditCursor(DrawingContext context, TimelineViewport viewport, double height)
+    {
+        long tick = EditCursorTick;
+        if (tick < 0 || tick < viewport.StartTick || tick > viewport.EndTick)
+        {
+            return;
+        }
+
+        double x = SnapToDevicePixel(viewport.TickToX(tick), GetDevicePixelWidth());
+        double rulerHeight = Math.Min(RulerHeight, height);
+        context.DrawLine(EditCursorPen, new Point(x, rulerHeight), new Point(x, height));
+        context.FillRectangle(EditCursorBrush, new Rect(x - 2, rulerHeight, 4, 4), 1f);
+    }
+
+    /// <summary>
+    /// Time Range Selection: a translucent band with edges over the ruler and the content, so it
+    /// can coexist with both cursors without sharing their marker style (SRS 20.1.2/20.1.3).
+    /// </summary>
+    private void DrawTimeRange(
+        DrawingContext context,
+        TimelineViewport viewport,
+        double width,
+        double height)
+    {
+        long start = TimeRangeStartTick;
+        long end = TimeRangeEndTick;
+        if (start < 0 || end <= start)
+        {
+            return;
+        }
+
+        double left = Math.Max(0, viewport.TickToX(start));
+        double right = Math.Min(width, viewport.TickToX(end));
+        if (right <= left)
+        {
+            return;
+        }
+
+        double rulerHeight = Math.Min(RulerHeight, height);
+        if (height > rulerHeight)
+        {
+            context.FillRectangle(
+                TimeRangeFillBrush,
+                new Rect(left, rulerHeight, right - left, height - rulerHeight));
+        }
+
+        context.FillRectangle(
+            TimeRangeRulerFillBrush,
+            new Rect(left, 0, right - left, rulerHeight));
+        double devicePixel = GetDevicePixelWidth();
+        double leftX = SnapToDevicePixel(left, devicePixel);
+        double rightX = SnapToDevicePixel(right, devicePixel);
+        context.DrawLine(TimeRangeEdgePen, new Point(leftX, 0), new Point(leftX, height));
+        context.DrawLine(TimeRangeEdgePen, new Point(rightX, 0), new Point(rightX, height));
     }
 
     /// <summary>Conductor marker labels projected into the ruler band.</summary>

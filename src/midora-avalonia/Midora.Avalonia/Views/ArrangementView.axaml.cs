@@ -50,6 +50,15 @@ public partial class ArrangementView : UserControl
     /// <summary>Raised with "Logical", "Instrument", or "Midi" from the Add Track corner menu.</summary>
     public event EventHandler<string>? CreateTrackRequested;
 
+    /// <summary>Raised when the ruler asks to move the Playback Cursor (SRS 20.1.3).</summary>
+    public event EventHandler<long>? PlaybackCursorRequested;
+
+    /// <summary>Raised when the ruler or an empty content click asks to move the Edit Cursor.</summary>
+    public event EventHandler<long>? EditCursorRequested;
+
+    /// <summary>Raised when a ruler drag completes a Time Range Selection.</summary>
+    public event EventHandler<TimelineTimeRangeEventArgs>? TimeRangeSelected;
+
     private const double MinimumLaneHeight = 28d;
     private const double MaximumLaneHeight = 112d;
 
@@ -70,6 +79,12 @@ public partial class ArrangementView : UserControl
         LaneHeaders.MuteToggled += (_, e) => Timeline.SetLaneMute(e.Lane, e.Active);
         LaneHeaders.SoloToggled += (_, e) => Timeline.SetLaneSolo(e.Lane, e.Active);
         Timeline.PointerTickChanged += (_, tick) => ShowPointerTick(tick);
+        Timeline.PlaybackCursorRequested += (_, tick) =>
+            PlaybackCursorRequested?.Invoke(this, tick);
+        Timeline.EditCursorRequested += (_, tick) => EditCursorRequested?.Invoke(this, tick);
+        Timeline.TimeRangeSelected += (_, range) => TimeRangeSelected?.Invoke(this, range);
+        SubdivisionBox.SelectionChanged += (_, _) => ApplyOperationSubdivision();
+        SubdivisionBox.LostFocus += (_, _) => ApplyOperationSubdivision();
         Timeline.PropertyChanged += (_, change) =>
         {
             if (change.Property == TimelineSurface.FirstLaneProperty)
@@ -106,6 +121,26 @@ public partial class ArrangementView : UserControl
 
     public void SetPlaybackTick(long tick) => Timeline.PlaybackTick = tick;
 
+    public void SetEditCursorTick(long tick) => Timeline.EditCursorTick = tick;
+
+    public void SetTimeRange(long startTick, long endTick)
+    {
+        Timeline.TimeRangeStartTick = startTick;
+        Timeline.TimeRangeEndTick = endTick;
+    }
+
+    public void SetOperationStepTicks(long stepTicks) =>
+        Timeline.OperationStepTicks = Math.Max(1, stepTicks);
+
+    /// <summary>Mirrors the toolbar operation subdivision into the surface's cursor snapping.</summary>
+    private void ApplyOperationSubdivision()
+    {
+        if (DataContext is Session.ShellSession session)
+        {
+            session.OperationSubdivision = SubdivisionBox.Text ?? session.OperationSubdivision;
+        }
+    }
+
     private void ApplySource(bool preserveView = false)
     {
         long maximum = Math.Max(1, _source.MaximumEndTick);
@@ -126,6 +161,11 @@ public partial class ArrangementView : UserControl
 
         Timeline.Source = _source;
         ContextText.Text = $"{Math.Max(0, _trackNames.Count - 1)} tracks · {CountSegments()} segments";
+        if (Environment.GetEnvironmentVariable("MIDORA_TIMELINE_TRACE") == "1")
+        {
+            Console.Out.WriteLine($"MIDORA-TIMELINE {ContextText.Text}");
+            Console.Out.Flush();
+        }
     }
 
     private int CountSegments()

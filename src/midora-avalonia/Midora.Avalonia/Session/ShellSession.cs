@@ -38,6 +38,8 @@ public sealed class ShellSession : INotifyPropertyChanged
     private bool _isLoopEnabled;
     private bool _isFollowPlaybackEnabled;
     private bool _isSnapEnabled = true;
+    private string _operationSubdivision = "1/8";
+    private long _editCursorTick = -1;
     private bool _isGridVisible = true;
     private bool _isCompiling;
     private string _projectName = "Untitled Project";
@@ -167,13 +169,91 @@ public sealed class ShellSession : INotifyPropertyChanged
     public bool IsSnapEnabled
     {
         get => _isSnapEnabled;
-        set => Set(ref _isSnapEnabled, value);
+        set
+        {
+            if (Set(ref _isSnapEnabled, value))
+            {
+                PushOperationStep();
+            }
+        }
     }
 
     public bool IsGridVisible
     {
         get => _isGridVisible;
         set => Set(ref _isGridVisible, value);
+    }
+
+    /// <summary>
+    /// Arrangement operation subdivision as an <c>1/n</c> fraction (or <c>Bar</c>). It defines the
+    /// effective operation step used by Snap (SRS 20.1.4).
+    /// </summary>
+    public string OperationSubdivision
+    {
+        get => _operationSubdivision;
+        set
+        {
+            string normalized = string.IsNullOrWhiteSpace(value) ? "1/8" : value.Trim();
+            if (Set(ref _operationSubdivision, normalized))
+            {
+                PushOperationStep();
+            }
+        }
+    }
+
+    /// <summary>Effective operation step in ticks; 1 while Snap is disabled (SRS 20.1.4).</summary>
+    public long OperationStepTicks => ComputeOperationStepTicks(
+        _operationSubdivision,
+        Math.Max(1, _projectHost?.Document?.Project.TicksPerQuarterNote ?? 480),
+        IsSnapEnabled);
+
+    /// <summary>Session Edit Cursor position; -1 hides the blue dashed cursor (SRS 20.1.2).</summary>
+    public long EditCursorTick
+    {
+        get => _editCursorTick;
+        private set
+        {
+            if (Set(ref _editCursorTick, value))
+            {
+                _arrangementView?.SetEditCursorTick(value);
+                _activeEditView?.SetEditCursorTick(value);
+            }
+        }
+    }
+
+    private static long ComputeOperationStepTicks(
+        string subdivision,
+        long ticksPerQuarterNote,
+        bool snapEnabled)
+    {
+        if (!snapEnabled)
+        {
+            return 1;
+        }
+
+        string text = subdivision.Trim();
+        if (text.Equals("Bar", StringComparison.OrdinalIgnoreCase))
+        {
+            return Math.Max(1, ticksPerQuarterNote * 4);
+        }
+
+        if (text.StartsWith("1/", StringComparison.Ordinal)
+            && long.TryParse(text.AsSpan(2), out long denominator)
+            && denominator > 0)
+        {
+            long numerator = ticksPerQuarterNote * 4;
+            return Math.Max(1, (numerator + denominator - 1) / denominator);
+        }
+
+        return Math.Max(1, ticksPerQuarterNote / 2);
+    }
+
+    private void PushOperationStep()
+    {
+        long step = OperationStepTicks;
+        _arrangementView?.SetOperationStepTicks(step);
+        _activeEditView?.SetOperationStepTicks(step);
+        OnPropertyChanged(nameof(OperationStepTicks));
     }
 
     public bool IsCompiling
@@ -577,6 +657,10 @@ public sealed class ShellSession : INotifyPropertyChanged
         _arrangementView.SegmentActivated += (_, activation) =>
             OpenMidiSegmentWorkspace(activation.TrackIndex, activation.StartTick);
         _arrangementView.AllTracksRequested += (_, _) => OpenWorkspace(WorkspaceKind.AllTracks);
+        _arrangementView.PlaybackCursorRequested += (_, tick) => SeekPlaybackCursor(tick);
+        _arrangementView.EditCursorRequested += (_, tick) => SetEditCursorFromUi(tick);
+        _arrangementView.TimeRangeSelected += (_, range) =>
+            SetTimeRangeFromUi(range.StartTick, range.EndTick);
         _arrangementView.CreateTrackRequested += (_, kind) => SetStatus(kind switch
         {
             "Instrument" => "New Logical Track with Instrument requested (not wired yet).",
@@ -603,30 +687,39 @@ public sealed class ShellSession : INotifyPropertyChanged
             return;
         }
 
-        long ticksPerBar = Math.Max(1, 4L * _midiSource.Project.TicksPerQuarterNote);
-        long chunkTicks = Math.Max(1, _midiSource.BarsPerSegment * ticksPerBar);
-        long chunkStart = startTick / chunkTicks * chunkTicks;
+        // Imported tracks carry exactly one Segment [0, source MTrk EOT), so navigation opens
+        // that Segment instead of recomputing a display grid (SRS 23.5.3).
+        long segmentStartTick = 0;
+        long segmentLengthTicks = Math.Max(
+            1,
+            _midiSource.Project.Tracks[trackIndex].EndTick);
         var workspace = Workspaces.FirstOrDefault(
             tab => tab.Kind == WorkspaceKind.MidiTrack &&
                    tab.TrackIndex == trackIndex &&
-                   tab.SegmentStartTick == chunkStart);
+                   tab.SegmentStartTick == segmentStartTick);
         if (workspace is null)
         {
             var view = new MidiTrackView();
             view.SetProject(_editableProject, trackIndex);
-            view.SetSegmentRange(chunkStart, chunkTicks);
+            view.SetSegmentRange(segmentStartTick, segmentLengthTicks);
+            view.SetOperationStepTicks(OperationStepTicks);
+            view.SetEditCursorTick(EditCursorTick);
+            view.PlaybackCursorRequested += (_, tick) => SeekPlaybackCursor(tick);
+            view.EditCursorRequested += (_, tick) => SetEditCursorFromUi(tick);
+            view.TimeRangeSelected += (_, range) =>
+                SetTimeRangeFromUi(range.StartTick, range.EndTick);
             view.Edited += (_, _) => MarkModified();
             string trackName = trackIndex + 1 < _midiSource.TrackNames.Count
                 ? _midiSource.TrackNames[trackIndex + 1]
                 : $"Track {trackIndex + 1}";
             workspace = new WorkspaceTab(
                 WorkspaceKind.MidiTrack,
-                $"MIDI Segment: {trackName}@{chunkStart / ticksPerBar + 1}",
+                $"MIDI Segment: {trackName}",
                 view,
                 Icon("Fluent.Midi20Regular"),
                 canClose: true,
                 trackIndex,
-                chunkStart);
+                segmentStartTick);
             Workspaces.Add(workspace);
         }
 
@@ -728,6 +821,11 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
 
         PlaybackTick = -1;
+        EditCursorTick = -1;
+        TimeRangeStartTick = -1;
+        TimeRangeEndTick = -1;
+        _arrangementView?.SetTimeRange(-1, -1);
+        PushOperationStep();
 
         int warningCount = project.Diagnostics.Count(
             diagnostic => diagnostic.Severity == ImportedMidiDiagnosticSeverity.Warning);
@@ -834,6 +932,11 @@ public sealed class ShellSession : INotifyPropertyChanged
     {
         StopPlaybackClock();
         PlaybackTick = -1;
+        EditCursorTick = -1;
+        TimeRangeStartTick = -1;
+        TimeRangeEndTick = -1;
+        _arrangementView?.SetTimeRange(-1, -1);
+        PushOperationStep();
         _projectHost?.Close();
         _midiSource = null;
         _editableProject = null;
@@ -1032,6 +1135,59 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
 
         RaiseDerived();
+    }
+
+    /// <summary>
+    /// Moves the red Playback Cursor. The cursor is session state, so it also moves while stopped
+    /// (SRS 20.1.3); a running engine additionally jumps through <c>Seek</c>.
+    /// </summary>
+    internal void SeekPlaybackCursor(long tick)
+    {
+        long snapped = SnapToOperationStep(tick);
+        PlaybackTick = snapped;
+        RealtimePlaybackSession? playback = PlaybackEngine;
+        if (playback is not null)
+        {
+            try
+            {
+                playback.Seek(snapped);
+            }
+            catch (Exception exception)
+            {
+                SetStatus("Playback cursor could not move: " + exception.Message);
+                return;
+            }
+        }
+
+        SetStatus($"Playback cursor at tick {snapped}.");
+    }
+
+    /// <summary>Moves the blue dashed Edit Cursor without seeking or clearing the selection.</summary>
+    internal void SetEditCursorFromUi(long tick) => EditCursorTick = SnapToOperationStep(tick);
+
+    /// <summary>Stores a committed Time Range Selection as session state.</summary>
+    internal void SetTimeRangeFromUi(long startTick, long endTick)
+    {
+        _arrangementView?.SetTimeRange(startTick, endTick);
+        _activeEditView?.SetTimeRange(startTick, endTick);
+        TimeRangeStartTick = startTick;
+        TimeRangeEndTick = endTick;
+        SetStatus($"Time range: {startTick} - {endTick} ticks.");
+    }
+
+    /// <summary>Session Time Range Selection start; -1 when no range is selected.</summary>
+    public long TimeRangeStartTick { get; private set; } = -1;
+
+    /// <summary>Session Time Range Selection end (exclusive); -1 when no range is selected.</summary>
+    public long TimeRangeEndTick { get; private set; } = -1;
+
+    private long SnapToOperationStep(long tick)
+    {
+        long step = Math.Max(1, OperationStepTicks);
+        long clamped = Math.Max(0, tick);
+        return step <= 1
+            ? clamped
+            : Math.Max(0, (long)Math.Round(clamped / (double)step, MidpointRounding.AwayFromZero) * step);
     }
 
     /// <summary>Persisted application preferences in effect for this shell, when loaded.</summary>

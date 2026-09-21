@@ -11,9 +11,6 @@ public sealed class MidiTimelineSource :
     INonBlockingTimelineFingerprintSource,
     ITimelineSegmentPreviewSource
 {
-    public const int DefaultBarsPerSegment = 8;
-    public const int BeatsPerBar = 4;
-
     private const long LaneObjectIdBase = 1L << 48;
     private const long TrackNoteIdBase = 1L;
     private const long TrackEventIdBase = 1L << 40;
@@ -37,10 +34,9 @@ public sealed class MidiTimelineSource :
 
     private readonly ImportedMidiProject _project;
     private readonly EditableMidiProject? _liveProject;
-    private readonly long _segmentTicks;
     private readonly long _timelineTicks;
-    private readonly int _segmentCount;
     private readonly long _segmentIdBase;
+    private readonly Dictionary<MidoraId, SegmentPlacement> _segmentPlacements;
     private readonly TimelineRenderItem[] _items;
     private readonly TimelineRenderItem[] _conductorItems;
     private readonly Dictionary<MidoraId, TimelineRenderItem> _itemsById;
@@ -59,12 +55,10 @@ public sealed class MidiTimelineSource :
     public MidiTimelineSource(
         ImportedMidiProject project,
         int? previewTrackIndex = null,
-        int barsPerSegment = DefaultBarsPerSegment,
         EditableMidiProject? liveProject = null)
     {
         _project = project ?? throw new ArgumentNullException(nameof(project));
         ArgumentOutOfRangeException.ThrowIfLessThan(project.TicksPerQuarterNote, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(barsPerSegment, 1);
         if (previewTrackIndex is { } requested
             && (requested < 0 || requested >= project.Tracks.Count))
         {
@@ -78,14 +72,10 @@ public sealed class MidiTimelineSource :
         }
         _liveProject = liveProject;
 
-        BarsPerSegment = barsPerSegment;
-        _segmentTicks = checked((long)barsPerSegment * BeatsPerBar * project.TicksPerQuarterNote);
-        long contentEndTick = Math.Max(0L, project.MaximumEndTick);
-        long segmentCount = contentEndTick <= 0
-            ? 1
-            : ((contentEndTick - 1) / _segmentTicks) + 1;
-        _segmentCount = checked((int)segmentCount);
-        _timelineTicks = checked((long)_segmentCount * _segmentTicks);
+        // SMF import creates exactly one Segment per non-empty source MTrk: [0, EOT tick),
+        // keeping the source track's trailing silence (SRS 23.5.3). Splitting is an explicit
+        // user action, so the timeline never invents its own boundaries.
+        _timelineTicks = Math.Max(1, project.MaximumEndTick);
         PreviewTrackIndex = previewTrackIndex ?? FindFirstContentTrack(project);
 
         ImportedMidiConductorEvent[] orderedConductor = project.Conductor
@@ -108,30 +98,38 @@ public sealed class MidiTimelineSource :
 
         _segmentIdBase = orderedConductor.Length + 1L;
         long nextSegmentId = _segmentIdBase;
+        Dictionary<MidoraId, SegmentPlacement> segmentPlacements = [];
         for (int trackIndex = 0; trackIndex < project.Tracks.Count; trackIndex++)
         {
-            string trackName = TrackDisplayName(project.Tracks[trackIndex], trackIndex);
-            uint accentColor = TrackAccentColors[trackIndex % TrackAccentColors.Length];
-            for (int chunk = 0; chunk < _segmentCount; chunk++)
+            ImportedMidiTrack track = project.Tracks[trackIndex];
+            if (track.EndTick <= 0)
             {
-                (long startTick, long endTick) = SegmentRange(chunk);
-                TimelineRenderItem item = new(
-                    new MidoraId(nextSegmentId++),
-                    TimelineItemKind.Segment,
-                    startTick,
-                    endTick,
-                    trackIndex + 1,
-                    1,
-                    0,
-                    TimelineItemState.None)
-                {
-                    Label = trackName,
-                    AccentColor = accentColor
-                };
-                items.Add(item);
-                itemsById.Add(item.Id, item);
+                // A source MTrk whose EOT is 0 keeps an empty Pure MIDI Track without a
+                // zero-length Segment (SRS 23.5.3).
+                continue;
             }
+
+            string trackName = TrackDisplayName(track, trackIndex);
+            uint accentColor = TrackAccentColors[trackIndex % TrackAccentColors.Length];
+            TimelineRenderItem item = new(
+                new MidoraId(nextSegmentId++),
+                TimelineItemKind.Segment,
+                0,
+                track.EndTick,
+                trackIndex + 1,
+                1,
+                0,
+                TimelineItemState.None)
+            {
+                Label = trackName,
+                AccentColor = accentColor
+            };
+            items.Add(item);
+            itemsById.Add(item.Id, item);
+            segmentPlacements.Add(item.Id, new SegmentPlacement(trackIndex, 0, track.EndTick));
         }
+
+        _segmentPlacements = segmentPlacements;
 
         TimelineRenderItem[] materialized = [.. items];
         Array.Sort(materialized, static (left, right) =>
@@ -225,7 +223,6 @@ public sealed class MidiTimelineSource :
     public EditableMidiProject? LiveProject => _liveProject;
     public int TrackCount => _project.Tracks.Count;
     public int PreviewTrackIndex { get; }
-    public int BarsPerSegment { get; }
     public long Count => _items.Length;
     public long MaximumEndTick { get; }
     public ulong ContentFingerprint => _liveProject is { } live
@@ -320,17 +317,9 @@ public sealed class MidiTimelineSource :
                 "Only arrangement Segment items have a MIDI preview source.",
                 nameof(segment));
         }
-        long offset = segment.Id.Value - _segmentIdBase;
-        long trackIndex = offset < 0 ? -1 : offset / _segmentCount;
-        if (trackIndex < 0 || trackIndex >= _project.Tracks.Count)
-        {
-            throw new ArgumentException(
-                "The Segment item does not belong to this MIDI source.",
-                nameof(segment));
-        }
-        int chunk = (int)(offset % _segmentCount);
-        (long startTick, long endTick) = SegmentRange(chunk);
-        if (segment.Lane != trackIndex + 1 || segment.StartTick != startTick)
+        if (!_segmentPlacements.TryGetValue(segment.Id, out SegmentPlacement placement)
+            || segment.Lane != placement.TrackIndex + 1
+            || segment.StartTick != placement.StartTick)
         {
             throw new ArgumentException(
                 "The Segment item does not belong to this MIDI source.",
@@ -338,15 +327,20 @@ public sealed class MidiTimelineSource :
         }
         if (_liveProject is { } live)
         {
-            return GetLivePreview(live, segment.Id, (int)trackIndex, startTick, endTick);
+            return GetLivePreview(
+                live,
+                segment.Id,
+                placement.TrackIndex,
+                placement.StartTick,
+                placement.EndTick);
         }
         return _segmentPreviews.GetOrAdd(
             segment.Id,
             _ => new SegmentPreviewSource(
-                startTick,
-                endTick,
-                _project.Tracks[(int)trackIndex].Notes,
-                _project.Tracks[(int)trackIndex].Events));
+                placement.StartTick,
+                placement.EndTick,
+                _project.Tracks[placement.TrackIndex].Notes,
+                _project.Tracks[placement.TrackIndex].Events));
     }
 
     private SegmentPreviewSource GetLivePreview(
@@ -415,16 +409,7 @@ public sealed class MidiTimelineSource :
         }
     }
 
-    private (long StartTick, long EndTick) SegmentRange(int chunk)
-    {
-        long startTick = chunk <= long.MaxValue / _segmentTicks
-            ? chunk * _segmentTicks
-            : long.MaxValue;
-        long endTick = startTick > long.MaxValue - _segmentTicks
-            ? long.MaxValue
-            : startTick + _segmentTicks;
-        return (startTick, endTick);
-    }
+    private readonly record struct SegmentPlacement(int TrackIndex, long StartTick, long EndTick);
 
     private static int FindFirstContentTrack(ImportedMidiProject project)
     {

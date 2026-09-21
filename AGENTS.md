@@ -38,7 +38,7 @@ Project Source Data
 
 ## 3. 初版范围护栏
 
-- 目标是 Windows Desktop、.NET 10、WPF、MIDI 1.0、`win-x64`、单个用户可启动的应用实例、单 Project、程序级有序多 SoundFont 列表、最多 16 Port × 16 Channel Unit。主应用、Native AOT 音频子进程及 BASS/BASSMIDI/BASSWASAPI 必须同为 x64；初版不发布 x86、Arm64 或 AnyCPU 正式产物。
+- 目标是 macOS（初版，Avalonia，`osx-arm64`）与 Windows（后续，Avalonia，`win-x64`）桌面应用、.NET 10、MIDI 1.0、单个用户可启动的应用实例、单 Project、程序级有序多 SoundFont 列表、最多 16 Port × 16 Channel Unit。每个平台的应用、Native AOT 音频子进程及随包原生库必须与目标平台同架构；不发布 x86 或 AnyCPU 正式产物。WPF 应用已弃用，只作为参考实现保留在仓库中。
 - Logical/Event Instrument 获配的 Channel 10 必须按 melodic 初始化；Pure MIDI Root 的 Channel 10 由正式 Root Channel Mode 决定，不能把 BASSMIDI 默认鼓通道行为当作隐式语义。
 - 不得顺手加入 MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、由 Compiler/Overlap/Channel Group 实施的语义级 Voice Stealing、每 Project/Port/Track/Instrument 独立 SoundFont、DLS、Pause/Scrub、多 Project 或 SRS 明确排除的能力。程序级 SFZ 属于已确认范围；BASSMIDI 每 Stream sample voice 上限是已确认的后端资源配置，不属于该禁止项。
 - Event Instrument、SubVoice、Mapping、Lifecycle、Logical Track、MIDI Channel Root、Pure MIDI Track、Segment 等正式语义以各自 SRS 章节为准，不以当前原型类结构为准。
@@ -55,17 +55,17 @@ Project Source Data
 - 不得用 `Thread.Sleep`、UI 定时器或“调用 API 的瞬间”承担正式 MIDI 时序。事件必须从 Canonical Compiled Result 经统一 tick→sample 映射后做采样级调度；同 tick 顺序必须保留。
 - 所有正式 BASSMIDI Stream 必须启用 `BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。Event Instrument/SubVoice 不得创建或映射 CC91/CC93；Pure MIDI Track 必须允许它们进入 Project、canonical 与 MIDI 导出，音频投影确定性忽略其 Reverb/Chorus 效果且不报一致性 Error。同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 与逐个 NoteOff 配对，硬边界必须按活动实例数完整释放。
 - 所有正式 BASSMIDI Stream 固定 `BASS_ATTRIB_MIDI_SRC = 1`（8-point sinc）和 `BASS_ATTRIB_MIDI_CPU = 0`。实时与离线 `Maximum Sample Voices per Unit Stream` 分别配置，默认均为 500；同一任务全部 Unit Stream 使用同一冻结值。Preparing 必须用 `BASS_MIDI_FontLoad` 预加载计划引用的 presets/fallback，不得对实时事件 Stream 调用 `BASS_MIDI_StreamLoadSamples`。
-- 实时链固定为：实际 Port stereo 输出求和 → Playback Master Volume → Limiter v2 → WASAPI；预览也走该链。Limiter v2 固定 stereo-linked、5 ms look-ahead、4× 16-tap inter-sample detector、线性 ceiling `0.8912509`、10 ms hold、100 ms release、无 makeup gain；UI 只显示 `Limiter`。离线整曲链语义相同但补偿前瞻并保持精确 frame 数，不依赖 WASAPI 或物理设备。
-- WASAPI 回调不得编译、分配常规托管对象、阻塞、等待锁、做文件/网络 I/O 或让异常越过 native 边界。回调只消费已准备好的连续 float32 frame，正确处理短读、静音、停止和设备丢失。
+- 实时链固定为：实际 Port stereo 输出求和 → Playback Master Volume → Limiter v2 → 平台输出（Windows：BASSWASAPI Shared；macOS：BASS 原生 CoreAudio）；预览也走该链。Limiter v2 固定 stereo-linked、5 ms look-ahead、4× 16-tap inter-sample detector、线性 ceiling `0.8912509`、10 ms hold、100 ms release、无 makeup gain；UI 只显示 `Limiter`。离线整曲链语义相同但补偿前瞻并保持精确 frame 数，不依赖实时输出后端或物理设备。
+- 实时输出回调（Windows WASAPI / macOS CoreAudio）不得编译、分配常规托管对象、阻塞、等待锁、做文件/网络 I/O 或让异常越过 native 边界。回调只消费已准备好的连续 float32 frame，正确处理短读、静音、停止和设备丢失。
 - Playing、Buffering、实时预览和文件 Rendering 阶段的 callback、调度、合成协调、混音、buffer 搬运及文件采样写入线程不得产生托管堆分配。Preparing / Finalizing 可以分配；同进程其他非音频线程可以分配和触发 GC。
 - 音频缓冲协议以 frame 为基本单位，显式携带采样率、声道数、sample format、frame count；不得混淆 byte count、sample count 和 frame count。
 - 必须列出全部 enabled output device 并排除输入、loopback input、disabled、unplugged 和 not-present 端点。实时音频按设备初始化后报告的实际采样率生成；设备或实际采样率变化时丢弃全部 sample-domain 缓存。
 - Application Preferences 的可调实时参数为：Render-Ahead 20–2000 ms（默认 100）、Device Request 5–200 ms（默认 50）、Realtime Maximum Sample Voices per Unit Stream 1–16,777,216（默认 500）。离线 sample voice 上限属于 Project 的 Audio Render Settings，取值范围相同、默认 500。Session 音频缓存 root 固定为 `<ProgramRoot>\.tmp\AudioCache`，用户只配置 reusable 上限（默认 16 GiB，允许 0）；实时 PCM 不跨进程，不提供 IPC Audio Buffer 设置；设备实际 buffer、callback period 和工作 block 只读。
 - BASS/BASSMIDI/BASSWASAPI 的全局初始化、线程相关 device context、原生 handle、callback delegate/GCHandle 和卸载顺序必须集中管理。所有原生调用都要检查返回值，并立即读取当前线程的错误码。
-- 正式原生基线固定为 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`、BASSWASAPI `2.4.4.1 / 0x02040401` 以及 `bass-native-baseline.win-x64.json` 中的 SHA-256。仓库不保存 DLL；正式构建只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码，不得只校验 API 主版本或自动采用 vendor current/latest。
+- 正式原生基线固定为 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`，以及各平台 manifest 中的 SHA-256（macOS 初版：`bass-native-baseline.osx-arm64.json`；Windows 后续：`bass-native-baseline.win-x64.json`）；BASSWASAPI `2.4.4.1 / 0x02040401` 仅用于 Windows 平台。仓库不保存原生二进制；正式构建只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码，不得只校验 API 主版本或自动采用 vendor current/latest。
 - 音频文件渲染输出普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；采样率是用户选择的 8,000–192,000 Hz 整数，默认 48,000 Hz。文件专用 OutputDevice 直接按目标采样率生成，不依赖 WASAPI。超过 RIFF 大小上限时 Preparing 失败，不拆分、不回退 RF64。流式分块写入并使用临时文件—校验—原子发布事务。
 - 约 200 ms 端到端实时延迟只是性能测试和架构选择基准，不是 Target Latency 设置，也不决定播放成败。若采用内部音频子进程，IPC 延迟必须计入。
-- 尚未由规格/ADR确定的音频语义或发布参数不得隐藏在实现默认值里；已确认的 Limiter、tick→sample 取整、WASAPI 模式、工作 block、进程拓扑和 `win-x64` 架构不得重新开放为可选分支。
+- 尚未由规格/ADR确定的音频语义或发布参数不得隐藏在实现默认值里；已确认的 Limiter、tick→sample 取整、Windows WASAPI 模式、工作 block、进程拓扑和各平台架构不得重新开放为可选分支。跨平台一致性口径固定为：canonical/SMF 语义必须跨平台一致；同平台允许逐样本/逐字节 golden 比较；跨平台只要求语义与容差一致（帧数/时长、事件时序、非静音与峰值范围、无 NaN/Infinity、Limiter ceiling 不变）。
 - Midora 初版是免费、开源、非商业软件，但该定位不把 BASS/BASSMIDI/BASSWASAPI 纳入 Midora 的开源许可证，也不自动满足其免费使用条件。正式分发第三方二进制前必须按实际发布主体、收入方式、平台、分发方式和发布时有效条款完成核验并提供 notices；条件不明或商业化时必须先联系权利人确认或取得适用许可。仓库不提交 BASS DLL。
 
 ## 5. 实施顺序
@@ -98,8 +98,8 @@ Project Source Data
 4. 普通 RIFF/WAVE 取代 RF64；文件采样率可选，实时采样率跟随设备实际值。
 5. 正式 BASSMIDI Stream 启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先逐个释放。
 6. 正式 BASSMIDI Stream 使用 8-point sinc、CPU 属性 0；Realtime/Offline Maximum Sample Voices per Unit Stream 分别配置且默认均为 500，完美音频一致性测试以未触顶为前提。
-7. 初版产品 CPU 架构固定为 `win-x64`；音频 Worker 只允许以该 RID Native AOT 发布。
-8. 初版三项 BASS DLL 的完整版本和 SHA-256 固定；仓库保存 manifest 而不提交 DLL，升级必须显式变更基线并完成全回归。
+7. 初版产品发布架构固定为 `osx-arm64`（macOS，Avalonia）；Windows `win-x64`（Avalonia）为计划中的后续平台。音频 Worker 只允许以目标平台的 RID Native AOT 发布。
+8. BASS/BASSMIDI 的完整版本和 SHA-256 按平台 manifest 固定（macOS 初版、Windows 后续），BASSWASAPI 仅在 Windows 平台固定；仓库保存 manifest 而不提交原生二进制，升级必须显式变更基线并完成全回归。
 9. Mapping Function 当前固定为受限表达式 ABI v3：只允许版本化白名单内的单行数值/枚举表达式，Context 依赖自动推导并在正式编译时复核；固定 8,192 scalar、512 syntax node、64 depth 上限。正式路径只建立 `System.Linq.Expressions` 委托，不 Emit 或加载 Project 源码程序集。自由 C# ABI v1/v2 属于已取代的开发期格式，只可识别并明确拒绝，绝不保留执行器；编译产物不持久化。Batch Edit 表达式不是 Project 内容，不受该 ABI 变更影响。
 10. 初版持久化固定 JSON Schema Draft 2020-12、内部版本化 System.Text.Json source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；未知/重复字段严格拒绝，已发布 descriptor/字段号/golden bytes 必须保持兼容。文本、路径、opaque sRGB、UTC 七位小数秒和非负 int64 毫秒表示按 SRS 16.13 固定。
 11. SoundFont 只属于 Application Preferences：保存最多 256 个有序 `{stable application SoundFontEntryId, absolute local .sf2/.sfz path, enabled, optional target Bank MSB/LSB/Program}` 项；稳定 ID 只关联程序级 Instrument Catalog，不进入音频等价性、Worker 重建或缓存身份，也不在 UI 展示。SFZ target 必填，SF2 target 可省略，三字段只能整体出现且均为 0～127。设置 Draft/持久化阶段不复制、不读取完整 SoundFont、不计算内容 SHA-256，也不解析、快照或监控 SFZ 的 sample/include 依赖；只有用户显式 `Scan Presets...` 可流式读取 SF2 `phdr` 元数据并写 `<ProgramRoot>\Data\Catalogs`，不得读取 sample 或隐式触发。音频相关设置成功持久化后必须在 `Saving Settings` 运行时阶段销毁旧 Worker，直接以原路径交给 BASSMIDI（仅 SF2 使用 `BASS_MIDI_FONT_MMAP`），按列表顺序和映射设置 Font handles 并保留新 Worker供后续复用。新建/打开/命令行打开/MIDI 导入形成 Project 会话及 Reset Playback Engine 必须在前台任务结束前接管或预热 Worker，不得延迟到首次 Play；Project 已提交后的预热失败保留 Project、明确报告并允许后续重试。缓存只使用有序配置、主文件长度和 UTC 修改时间的小型描述符身份；它不是内容或 SFZ 依赖校验。
@@ -129,7 +129,7 @@ Project Source Data
 ## 8. 已批准的 UI 样式基线
 
 - 产品所有者已于 2026-08-08 完成 WPF 样式样例的三轮视觉评审，并批准其作为后续 Midora 正式 UI 的默认视觉基线。除非用户明确修改视觉方向，正式 UI 默认采用暗色、黑色与红色主色、简约且低视觉噪声的样式。
-- 基线实现位于 `src/midora-desktop/Midora.Desktop.StyleGallery/`；需求、边界和验收记录位于 `misc/Midora-WPF-Style-Gallery-Requirement-Trace.md`。正式 UI 应复用或迁移其中的 Palette、通用 ControlTemplate、Fluent System Icons Geometry 和 WindowChrome 行为，不得另建一套视觉 token 或复制后静默分叉。
+- 基线实现位于 `src/midora-desktop/Midora.Desktop.StyleGallery/`；需求、边界和验收记录位于 `misc/Midora-WPF-Style-Gallery-Requirement-Trace.md`。正式 UI 应复用或迁移其中的 Palette、通用 ControlTemplate、Fluent System Icons Geometry 和窗口 chrome 行为，不得另建一套视觉 token 或复制后静默分叉。Avalonia 为该视觉基线的实现平台；平台等价映射（标题栏/窗口控制等）以 macOS 移植 trace 与相关 ADR 为准。
 - 标题栏最小化、最大化、还原和关闭图标使用样例中的四个窗口控制 SVG/Geometry；其布局为 `10 × 10`、启用 Layout Rounding，按钮为直角方形，三个图标视觉亮度一致，悬停时指针保持 Arrow。按产品所有者要求，不记录这四个文件的来源，也不为其建立单独授权核验项。
 - 通用控件必须保持样例已经通过评审的状态区分和布局边界：文本不得裁切；输入框内边距不得重复；图标、数字徽标和增减符号视觉居中；焦点使用低强调虚线轮廓；Pressed 与静止态可辨；一级菜单文字居中并贴合底部分割线；滚动条完整显示；最大化时窗口严格使用当前显示器工作区、移除外框和 resize border。
 - Fluent System Icons 的上游 revision 与 MIT notice 继续由样例的 `THIRD-PARTY-NOTICES.md` 记录。正式 UI 若增加图标，应优先沿用同一图标体系并同步 notices。

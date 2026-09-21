@@ -340,8 +340,8 @@
 - 初版持久化兼容基线固定为 JSON Schema Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；严格拒绝重复/未知 JSON 属性和未知 protobuf tag，已发布 schema 以 descriptor/golden bytes 锁定。
 - 持久化文本、相对路径、opaque sRGB 颜色、UTC 时间和工程总耗时的 v1 表示已固定；路径保留大小写与原 Unicode，不做 normalization，时间使用七位小数秒 UTC `Z` 格式，总耗时使用非负 int64 毫秒。
 - 初版 C# Mapping 最初采用 ABI v1；该内部 ABI 已于 2026-08-07 因稳定 ID 改为单 `long` 而升级为 ABI v2，当前有效规则见同日修订摘要。版本化函数体、只读独立 MappingContext 契约、C# 14/`Microsoft.NETCore.App.Ref 10.0.10`，以及按 Project 当前源码修订管理的 collectible AssemblyLoadContext 缓存等边界保持不变。
-- 初版产品发布架构固定为 `win-x64`；主应用、Native AOT 音频子进程和三项 BASS 原生库必须同为 x64，不发布 x86、Arm64 或 AnyCPU 正式产物。
-- 初版正式原生基线固定为 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 及三项 win-x64 DLL 的明确 SHA-256；仓库只保存 manifest，正式构建由操作员提供并校验二进制，vendor current/latest 只能生成开发候选。
+- 初版产品发布架构固定为 `osx-arm64`（macOS，Avalonia）；Windows `win-x64` 为计划中的后续平台（同样使用 Avalonia），不发布 x86 或 AnyCPU 正式产物。每个平台的应用、Native AOT 音频子进程和随包原生库必须与目标平台同架构。
+- 正式原生基线固定为 BASS 2.4.18.3 与 BASSMIDI 2.4.16.0；BASSWASAPI 2.4.4.1 仅用于 Windows 平台。每个平台使用各自 manifest（`bass-native-baseline.osx-arm64.json`、`bass-native-baseline.win-x64.json`）的明确 SHA-256；仓库只保存 manifest，正式构建由操作员提供并校验二进制，vendor current/latest 只能生成开发候选。
 
 ## 2026-08-05 修订摘要
 

@@ -647,7 +647,7 @@ BASS_ATTRIB_MIDI_CPU = 0      // automatic
 
 `CPU = 0` 的 BASSMIDI 官方语义是 automatic，不得在通用说明中误写为无条件“不限制”。Midora 的正式 Stream 是由自身渲染线程主动拉取的 decode Stream，不由 BASS update thread 播放；在该拓扑中 `0` 表示不启用 BASSMIDI CPU shedding，不因 CPU 属性杀 voice。若后续改变处理拓扑，必须重新验证，不能沿用这一推论。
 
-初版只支持 `win-x64`，x64 的 SSE2 基线满足 8-point sinc 的处理器前提。若未来增加其他 CPU 架构，必须重新验证 BASSMIDI 对应架构的 sinc 支持和逐采样回归，不得静默降低为 linear interpolation。
+发布平台必须满足 BASSMIDI 8-point sinc 的处理器前提：`win-x64` 使用 x64 SSE2 基线；`osx-arm64`（Apple Silicon）已于 2026-09-21 通过设备层与 BASSMIDI/SF2 语义 spike（记录见 `misc/Midora-macOS-Audio-Backend-Architecture-Decisions.md`），其逐采样回归在正式发布前补做并记录。恢复或新增 CPU 架构前必须重新验证 BASSMIDI 对应架构的 sinc 支持和逐采样回归，不得静默降低为 linear interpolation。
 
 Preparing 必须从冻结的 sample-domain 计划收集实际会被 Note On 使用的 Bank MSB / Program 组合，并在进入 Playing / Preview Playing 前通过 `BASS_MIDI_FontLoad` 预加载对应 SoundFont source。未映射 SF2 按引用组合预载；映射 SF2 按映射 source 预载；SFZ 按名义 source `0/0` 预载。实时事件 Stream 不得调用只适用于 MIDI 文件/序列 Stream 的 `BASS_MIDI_StreamLoadSamples`。若引用的 SF2 精确组合不存在，不得把它提升为 Project 或编译错误；后端必须保持第 6.4 节允许的 BASSMIDI fallback 语义，并确保 fallback 所需样本也在 Preparing 完成加载。SFZ sample/include 加载错误属于音频任务错误。
 
@@ -1604,9 +1604,11 @@ IPC 延迟和吞吐量计入 §13.19.12 的约 200 ms 性能基准。
 
 Reader 只能在第一次读到偶数序列时复制完整字段，并在第二次读到相同偶数序列后接受快照；否则无分配重试，最多 1024 次，耗尽后作为 IPC 一致性错误使当前任务失败。序列按 32-bit two's-complement 位模式自然 wrap，相等与奇偶判断不得改成有符号大小比较。ABI v3 在 offset 88 保存 held preview plan generation，并新增 producer pause、应用 generation 计划及 resume 命令；暂停期间 WASAPI 仍可消费既有 Render-Ahead PCM，Worker 只能在 producer 尚未渲染的 frontier 替换后缀计划。ABI v4 保持 header 与 16-byte command record 布局，并新增携带正 sample-domain `endFrame` 的 `BufferingRecoveryPrepare` 命令；Worker 不得从 tick/拍号自行推导恢复终点。Create 与 Open 只生成/接受当前 ABI v4，主进程和 Worker 不提供 v1～v3 混合版本回退。
 
-初版音频子进程必须以 `win-x64` 独立 Native AOT、自包含发布，不允许在正式运行时依赖 JIT 编译，也不得生成或接受 `win-x86`、`win-arm64` 或 AnyCPU Worker 作为正式产物。Native AOT 不替代零分配、callback deadline、underrun、故障恢复和确定性验收。
+音频子进程必须以与当前发布平台同架构（初版 `osx-arm64`；Windows 后续 `win-x64`）的独立 Native AOT、自包含发布，不允许在正式运行时依赖 JIT 编译，也不得生成或接受其他架构或 AnyCPU Worker 作为正式产物。Native AOT 不替代零分配、callback deadline、underrun、故障恢复和确定性验收。
 
-初版正式 BASS 原生基线固定如下；版本码是各模块 `GetVersion` 返回的完整 32-bit 值，不只是 API 主版本：
+正式 BASS 原生基线按平台 manifest 固定；版本码是各模块 `GetVersion` 返回的完整 32-bit 值，不只是 API 主版本。
+
+Windows 平台（后续）基线：
 
 | 文件 | 完整版本 | 版本码 | win-x64 DLL SHA-256 |
 |---|---:|---:|---|
@@ -1614,11 +1616,18 @@ Reader 只能在第一次读到偶数序列时复制完整字段，并在第二�
 | `bassmidi.dll` | 2.4.16.0 | `0x02041000` | `e04e334ca35dce657b11eb9dacc7561b9c1365c337c1c3abac90a36336405ee6` |
 | `basswasapi.dll` | 2.4.4.1 | `0x02040401` | `6f0869c11431e01f759fbe1cd6080299c833c519eb8ab1feae12106907b1fbd1` |
 
-仓库只保存正式 manifest，不保存这些 DLL。正式构建必须由操作员提供官方二进制目录，先逐文件匹配正式 manifest，再把三项 DLL 和 manifest 纳入 `win-x64` Worker 发布目录；缺文件、多文件、架构不符、任一 hash 不符或任一运行时完整版本不符都必须失败。机器上偶然存在的 DLL、PATH 搜索结果、供应商可变的 current/latest URL 或只匹配 `2.4` API 主版本均不得成为正式输入。
+macOS 平台（初版）基线（不使用 BASSWASAPI）：
+
+| 文件 | 完整版本 | 版本码 | osx-arm64 dylib SHA-256 |
+|---|---:|---:|---|
+| `libbass.dylib` | 2.4.18.3 | `0x02041203` | `e81fb7b4d0009ba6343fbfcd840620704dcb840686d405b9734cd37150d31974` |
+| `libbassmidi.dylib` | 2.4.16.0 | `0x02041000` | `0938ec2eca51851b577eccb3deeee7178649a8965c4162d688b40ac8aa7180ce` |
+
+仓库只保存正式 manifest，不保存这些原生二进制。正式构建必须由操作员提供官方二进制目录，先逐文件匹配该平台的正式 manifest，再把平台原生库与 manifest 纳入对应平台的 Worker 发布目录；缺文件、多文件、架构不符、任一 hash 不符或任一运行时完整版本不符都必须失败。机器上偶然存在的原生库、PATH 搜索结果、供应商可变的 current/latest URL 或只匹配 `2.4` API 主版本均不得成为正式输入。
 
 供应商 current-package URL 只允许在显式确认后生成 `releaseBaseline=false` 的本地开发候选。正式基线升级必须作为独立变更提交：固定新版本码与 SHA-256，重跑 Native interop、音频语义、逐采样确定性、实时/离线、性能和发布测试；不得自动跟随最新版。
 
-进程内后端或“子进程合成、主进程 WASAPI”的混合链只允许作为开发期对照测试，不是正式消费者，不得由产品运行时回退或切换进入。
+进程内后端或“子进程合成、主进程输出后端”的混合链只允许作为开发期对照测试，不是正式消费者，不得由产品运行时回退或切换进入。
 
 ## 13.31 统一音色选择器试听
 

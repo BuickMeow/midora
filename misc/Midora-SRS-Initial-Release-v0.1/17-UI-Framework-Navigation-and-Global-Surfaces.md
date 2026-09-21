@@ -13,7 +13,7 @@
 ```text
 One persistent Main Window
 Owned modal dialogs
-Windows file and folder pickers
+Platform-native file and folder pickers
 Context menus
 Popups
 Tooltips

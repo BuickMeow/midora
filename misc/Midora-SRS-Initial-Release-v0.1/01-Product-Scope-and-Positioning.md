@@ -136,22 +136,22 @@ Pure MIDI 主线中，用户直接编辑 Note 与完整 MIDI 1.0 Channel Voice E
 ---
 ## 1.4 平台与技术边界
 ### 1.4.1 目标平台
-Midora 只面向 Windows 桌面平台。
+Midora 面向 macOS 与 Windows 桌面平台，UI 使用 Avalonia。初版发布 macOS（Apple Silicon，`osx-arm64`）；Windows（`win-x64`）是计划中的后续平台，同样使用 Avalonia，不恢复已弃用的 WPF 应用。
 技术栈：
 ```text
 .NET 10
-WPF
-Windows Desktop
-CPU / 发布架构：x64（win-x64）
+Avalonia
+CPU / 发布架构：osx-arm64（初版）；win-x64（后续）
 ```
-初版不发布 x86 或 Arm64 构建，不提供 AnyCPU 包，也不在运行时跨架构回退。主应用、内部音频子进程以及随产品分发的 BASS / BASSMIDI / BASSWASAPI 原生库必须全部为 x64。
+每个发布平台的应用、内部音频子进程以及随产品分发的原生库必须与目标平台同架构，不提供 AnyCPU 包，也不在运行时跨架构回退。Windows 平台沿用 x64 的 BASS / BASSMIDI / BASSWASAPI 基线；macOS 平台不使用 BASSWASAPI，改用 BASS 原生 CoreAudio 输出并保持等价语义（见第 13 章的平台后端作用域）。
 
 暂不考虑：
-* macOS
 * Linux
 * Web
 * 移动端
-* 跨平台 UI 框架
+* WPF 应用（已弃用）
+
+术语解释：本 SRS 其余章节中出现的 `WPF`、Windows 控件/API/系统术语（如 WPF Controls、WPF ClickCount、WPF UI thread、Windows 工作区、InputMethod、Windows 音量、Windows 注销/关机）按以下规则解释：实现平台使用 Avalonia 时，取该平台的等价能力；仅在 Windows 平台成立的条目保持 Windows 作用域；具体映射与差异记录在实现 ADR 中。
 ### 1.4.2 MIDI 标准
 Midora 仅支持：
 ```text

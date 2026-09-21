@@ -31,12 +31,12 @@
 | INV-020 | 满足正确性、确定性和资源上限的候选实现中，时间性能优先于最小空间占用。 |
 | INV-021 | 实时播放、预览和音频渲染的 tick→sample 映射使用完整 Tempo Map 的 decimal 区间积分，乘采样率后只执行一次 `AwayFromZero`，不得逐 Tempo 段取整。 |
 | INV-022 | 初版 Limiter 版本 2 固定为 stereo-linked、5 ms look-ahead、4× 16-tap inter-sample peak detector、线性 ceiling `0.8912509`（-1 dBFS）、10 ms hold、100 ms 单极指数 release、无 makeup gain；状态跨 block 连续。实时首帧前预取，离线补偿前瞻并保持精确 frame 数；实时与离线使用同一算法，UI 只显示 `Limiter`。 |
-| INV-023 | 初版正式 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率、实际 buffer 与 callback period 由端点初始化结果决定，不得静默回退到其他模式或格式。 |
+| INV-023 | Windows 平台的正式 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率、实际 buffer 与 callback period 由端点初始化结果决定，不得静默回退到其他模式或格式。macOS 平台使用 BASS 原生 CoreAudio 输出并保持等价语义（stereo interleaved float32、实际设备采样率、实际 buffer / period 由设备决定）。 |
 | INV-024 | 初版正式实时音频工作 block 固定为最多 256 frames；子进程内 Render-Ahead PCM ring 容量按实际采样率和用户毫秒设置向上取整为 frame，不固定 ring block 数；实时 PCM 不跨进程，运行时控制 IPC 使用固定版本二进制共享内存且热路径零分配。 |
 | INV-025 | 正式 BASSMIDI Stream 启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠实例按 FIFO 与逐个 NoteOff 配对，硬边界必须按活动实例数完整释放。 |
 | INV-026 | 正式 BASSMIDI Stream 固定 8-point sinc 和 CPU 属性 0；音频在 canonical 成功后按抽象 Unit 使用 1-channel Stream 语义和有界复用 pool。实时/离线分别配置 Maximum Sample Voices per Unit Stream，默认均为 500，同一任务所有 Unit 使用同一冻结值。完美音频一致性测试以未触顶为前提。 |
-| INV-027 | Midora 初版只发布 `win-x64`；主应用、Native AOT 音频子进程及 BASS/BASSMIDI/BASSWASAPI 必须同为 x64，不发布 x86、Arm64 或 AnyCPU 正式产物。 |
-| INV-028 | 初版正式 BASS 原生基线固定为 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 及第 13.30 节列出的 win-x64 DLL SHA-256；正式构建和运行时必须分别校验文件 hash 与完整版本码，不得自动跟随 vendor current/latest。 |
+| INV-027 | Midora 初版发布 `osx-arm64`（macOS，Avalonia）；`win-x64`（Windows，Avalonia）为计划中的后续平台。每个平台的应用程序、Native AOT 音频子进程与随包原生库必须同架构，不发布 x86 或 AnyCPU 正式产物。 |
+| INV-028 | 正式 BASS 原生基线固定为 BASS 2.4.18.3、BASSMIDI 2.4.16.0；BASSWASAPI 2.4.4.1 仅用于 Windows 平台。每个平台使用各自 manifest 的 SHA-256（macOS 初版 `bass-native-baseline.osx-arm64.json`，Windows `bass-native-baseline.win-x64.json`）；正式构建和运行时必须分别校验文件 hash 与完整版本码，不得自动跟随 vendor current/latest。 |
 | INV-029 | Mapping Function 固定使用受限表达式 ABI v3：单行 `double` 表达式、8,192 scalar / 512 syntax node / 64 depth 上限、精确语法/Context/枚举/Math 白名单、自动推导并复核 Context 依赖。正式路径只绑定为 `System.Linq.Expressions`，不得 Emit/加载 Project 源码程序集；自由 C# ABI v1/v2 必须明确拒绝且绝不执行。缓存只保留当前源码修订，编译产物不得持久化。UI 只允许在 Event Instrument 所属模态对话框内创建/编辑，Validate 不改 Project，OK 原子提交，Cancel 丢弃；不得恢复独立 Function Workspace 或跨窗口 Draft。 |
 | INV-030 | 初版持久化兼容基线固定为 JSON Schema Draft 2020-12 与 protobuf Edition 2024；结构性 JSON/protobuf 严格拒绝未知字段，JSON 还拒绝重复属性。已发布 `.proto` 字段号、descriptor、golden bytes 与固定 runtime/codegen profile 属于兼容承诺。 |
 | INV-031 | `.midora`、Project Domain 与 canonical 不得保存或引用 SoundFont。Application Preferences 只保存有序 `{absolute local .sf2/.sfz path, enabled, optional target Bank MSB/LSB/Program}` 列表；target 三项整体出现且均为 0～127，SFZ target 必填。Draft/持久化阶段不复制、不完整读取、不计算内容 hash，也不解析/快照/监控 SFZ 依赖。音频相关设置持久化后必须在 `Saving Settings` 运行时阶段销毁旧 Worker、直接由 BASSMIDI 加载原路径并保留新 Worker；失败保持已保存设置并明确报告。 |

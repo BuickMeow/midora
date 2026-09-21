@@ -342,7 +342,7 @@ Windows 应用音量混音器
 ```
 ### 15.7.2 BASSMIDI 与 SoundFont
 初版使用与播放一致的 BASSMIDI / SF2/SFZ 发声语义。
-文件渲染由第 13.30 节规定的同一个 `win-x64` Native AOT 音频子进程执行，不允许用其他 CPU 架构或 JIT Worker 生成正式文件。
+文件渲染由第 13.30 节规定的同一个、与当前发布平台同架构的 Native AOT 音频子进程执行（初版 `osx-arm64`；Windows 后续为 `win-x64`），不允许用其他 CPU 架构或 JIT Worker 生成正式文件。
 本次 compiled result 必须先完成全局 Port / Channel 分配，再从 Execution Projection 确定性派生 Logical Segment/Unit 与 Pure MIDI Root 音频投影。每个 Unit/Root 使用独立、干净的 1-channel BASSMIDI Stream 语义；同 Root 子 Track 必须先合并，不能逐 Track 合成后求和。实际 native Stream 可由有界 pool 复用。
 所有 Unit 使用任务开始时冻结的同一个程序级 Enabled SF2/SFZ 有序配置；BASSMIDI 按列表顺序建立完整 Font handle 与目标映射数组。
 每个 Stream 必须完成：
@@ -1059,6 +1059,14 @@ Midora 不主动注入随机性。
 buffer / chunk 大小不得改变音乐时间、事件顺序或可感知输出语义。
 
 涉及逐采样、逐字节或不同 block 完美一致性的音频测试，必须使用实际活动 sample voices 不超过本次 `Offline Maximum Sample Voices per Unit Stream` 的输入。达到配置上限时，允许 BASSMIDI 的固定 voice-limit 行为改变音频；不得把这种资源上限行为误判为编译器或 block-size 不确定性。
+
+跨平台一致性口径：
+```text
+canonical / SMF 语义：所有平台必须一致（平台无关的硬门）
+同平台：在相同原生基线与设置下允许逐样本 / 逐字节 golden 比较
+跨平台：只要求语义一致与容差一致，PCM 不承诺逐样本或逐字节一致
+```
+跨平台比较至少覆盖帧数 / 时长、事件时序、非静音与峰值范围、无 NaN / Infinity、Limiter ceiling 不变。BASS/BASSMIDI 的用法（flags、SRC、CPU、voice 上限、Limiter 与调度语义）必须跨平台一致，差异只允许存在于平台输出后端（Windows WASAPI 与 macOS CoreAudio）。
 ---
 ## 15.20 Audio Render 任务参数
 ### 15.20.1 归属

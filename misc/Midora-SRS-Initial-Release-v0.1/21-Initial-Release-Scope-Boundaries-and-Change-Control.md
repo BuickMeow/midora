@@ -60,7 +60,7 @@ BASSMIDI / BASSWASAPI 的具体封装与安全调用顺序和音频线程模型�
 Limiter 的循环展开、SIMD 和状态存储实现，但算法与参数必须符合第 13.17.6 节版本 2 语义
 Roslyn Expression-mode 解析与 `System.Linq.Expressions` 绑定/缓存的具体类型拆分；但 Mapping Function ABI v3 的白名单、资源上限、Context 依赖和“不 Emit/加载 Project 源码程序集”不属于实现自由度
 JSON Schema、protobuf .proto 的其他最终字段名、字段号与代码生成方式；16.5.3 已固定的 `nextStableId`、16.13.2 已固定的稳定 ID 表示和既有外层 ID 字段号除外
-具体 WPF 控件、Visual Tree、MVVM 类型和 Timeline 虚拟化实现
+具体 UI 控件、Visual Tree、MVVM 类型和 Timeline 虚拟化实现
 错误码编号和自动化测试框架
 ```
 这些内容可以通过技术原型、ADR、性能基准和实现测试确定，但不得改变本规格已经明确的用户语义、数据所有权、失败原子性、输出一致性和兼容边界。

@@ -589,3 +589,7 @@
 - 产物核对（smoke MIDI，1 个逻辑轨道）：`midora-smoke.mid` 313 字节、Format 1、2 个 MTrk（Conductor 轨名 `midora-smoke`，事件轨 `Piano`）、TPQN 480，可重新解析；`README.md` 含 Project 元数据、`Mode: Whole Project`、`Range: [0, 9548)`、`Routing: Compact`、TPQ/事件计数与逐轨导出选择。
 
 **未完成（与 Slice M1 相同）**：DTO 预览编辑仍未写回 Domain 工程；打开 `.midora` 的车道投影未实现；`PerLogicalTrack/PerPort` 在 UI 上可用但本轮只用整曲路径做过自动验证。`MidiExportDialog` 仍保留"演示轨道行"构造（供窗口目录/冒烟使用），真实会话走注入行。
+
+### 2026-09-21（续）平台基线修正：macOS 初版 + Windows（Avalonia）后续
+
+产品所有者确认：WPF 弃用，但 Windows 未来跑 Avalonia，因此平台基线改为"macOS（`osx-arm64`，Avalonia）初版 + Windows（`win-x64`，Avalonia）计划中的后续平台"。已按 SRS 21.4 同步 SRS（01/02/13/15/17/21/22/00）与 `AGENTS.md`（§3/§4/§7.7/§7.8/§8），并把 macOS 音频 spike（设备层 + BASSMIDI/SF2 + 引擎适配）记为 `misc/Midora-macOS-Audio-Backend-Architecture-Decisions.md`。跨平台一致性口径固定为：canonical/SMF 必须一致、同平台严格 golden、跨平台语义 + 容差、BASS 用法一致（差异仅在平台输出后端）。工程侧的 RID/发布脚本/Windows 目标作为后续任务，见该 ADR §10.4。

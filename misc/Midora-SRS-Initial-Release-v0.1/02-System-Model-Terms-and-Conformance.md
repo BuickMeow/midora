@@ -98,7 +98,7 @@ MIDI 数据内部按 MIDI 1.0 标准使用 0-based 编码。UI 不得暴露 0-ba
 ## 2.7 Project 内容、应用偏好与运行状态
 系统必须区分：
 1. **Project Content**：进入 `.midora`，影响作品、编译或默认输出语义；
-2. **Application Preferences**：当前 Windows 用户本机偏好，不进入 Project，例如 Playback Master Volume、Limiter、Stop Cursor Behavior、播放输出设备、可调音频 buffer、程序级 SoundFont 列表和 UI 偏好；
+2. **Application Preferences**：当前平台用户本机偏好，不进入 Project，例如 Playback Master Volume、Limiter、Stop Cursor Behavior、播放输出设备、可调音频 buffer、程序级 SoundFont 列表和 UI 偏好；
 3. **Project Session UI State**：当前打开会话的导航、选择、缩放和滚动状态；
 4. **Transient Interaction State**：拖动预览、未提交文本和临时草稿等瞬时状态；
 5. **Derived / Runtime Data**：编译结果、播放 buffer、设备实际采样率、设备实际 buffer / callback period、诊断结果、任务历史、IPC 状态和后端状态。

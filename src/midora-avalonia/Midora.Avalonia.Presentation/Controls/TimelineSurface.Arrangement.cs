@@ -269,38 +269,74 @@ public sealed partial class TimelineSurface
         }
     }
 
+    /// <summary>Upper bound for the direct preview drawing of a single frame.</summary>
+    private const int MaximumDirectPreviewPrimitives = 20_000;
+
     /// <summary>
-    /// Draws each pending Segment preview from the shared tile cache. Tile rasterization runs on
-    /// the background raster cache; a frame that still waits for tiles simply draws nothing for
-    /// that Segment, because the batched per-primitive fallback was removed once the tile path
-    /// became fast enough.
+    /// Draws every pending Segment preview directly through the batched shape pass. The tile cache
+    /// was removed after the Skia pipeline made direct drawing cheap enough: notes and events are
+    /// queued as coloured rectangles and flushed once per Segment (the clip must be active while
+    /// flushing), so a dense frame costs a few submissions instead of one call per primitive.
     /// </summary>
     private void DrawSegmentPreviewDeferred(DrawingContext context, TimelineViewport viewport)
     {
+        _ = viewport;
+        double devicePixel = GetDevicePixelWidth();
+        int drawn = 0;
         foreach (PendingSegmentPreview pending in _pendingSegmentPreviews)
         {
             Rect bounds = pending.Bounds;
-            TimelineRenderItem item = pending.Item;
             ITimelineSegmentPreviewSource preview = pending.Preview;
-            long segmentLengthTicks = Math.Max(1, item.EndTick - item.StartTick);
-            double fullLeft = viewport.TickToX(item.StartTick);
-            double fullRight = viewport.TickToX(item.EndTick);
-            Rect fullBounds = new(
-                fullLeft,
-                bounds.Y,
-                Math.Max(1, fullRight - fullLeft),
-                bounds.Height);
-            _ = DrawSegmentPreviewTiles(
-                context,
-                bounds,
-                fullBounds,
-                item,
-                preview,
-                segmentLengthTicks,
-                (int)Math.Clamp(TicksPerQuarterNote, 1, 32767),
-                viewport.PixelsPerTick,
-                Color.SegmentNotePreview,
-                Color.EventPreview);
+            using (context.PushClip(bounds))
+            {
+                if (preview.HasNoteContent)
+                {
+                    _previewNotes.Clear();
+                    preview.QueryNotes(0, 1, _previewNotes);
+                    foreach (TimelineSegmentPreviewNote note in _previewNotes)
+                    {
+                        if (drawn >= MaximumDirectPreviewPrimitives)
+                        {
+                            break;
+                        }
+
+                        double x = SnapToDevicePixel(
+                            bounds.X + Math.Clamp(note.NormalizedStart, 0, 1) * bounds.Width,
+                            devicePixel);
+                        double pitch = Math.Clamp(note.Pitch, 0, 127);
+                        double top = bounds.Y + (127 - pitch) / 127d * bounds.Height;
+                        AddFill(
+                            SegmentNotePreviewBrush,
+                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
+                        drawn++;
+                    }
+                }
+
+                if (preview.HasEventContent && drawn < MaximumDirectPreviewPrimitives)
+                {
+                    _previewEvents.Clear();
+                    preview.QueryEvents(0, 1, _previewEvents);
+                    foreach (TimelineSegmentPreviewEvent value in _previewEvents)
+                    {
+                        if (drawn >= MaximumDirectPreviewPrimitives)
+                        {
+                            break;
+                        }
+
+                        double x = SnapToDevicePixel(
+                            bounds.X + Math.Clamp(value.NormalizedTick, 0, 1) * bounds.Width,
+                            devicePixel);
+                        double top = bounds.Y
+                            + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * bounds.Height;
+                        AddFill(
+                            EventPreviewBrush,
+                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
+                        drawn++;
+                    }
+                }
+
+                FlushShapes(context);
+            }
         }
 
         _pendingSegmentPreviews.Clear();

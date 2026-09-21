@@ -157,6 +157,14 @@ public partial class ArrangementView : UserControl
             Timeline.StartTick = 0;
             Timeline.SelectedId = null;
             Timeline.TickSpan = Math.Clamp(_ticksPerQuarterNote * 64L, 1, maximum);
+            if (long.TryParse(
+                    Environment.GetEnvironmentVariable("MIDORA_TIMELINE_SPAN"),
+                    out long requestedSpan) && requestedSpan > 0)
+            {
+                // Review-only: starts the view at a given span so zoomed-out frame cost is
+                // measurable without interactive input.
+                Timeline.TickSpan = Math.Clamp(requestedSpan, 1, maximum);
+            }
         }
 
         Timeline.Source = _source;

@@ -727,3 +727,25 @@
   ④ 网格线按 device-pixel 最小间距抽样；⑤ 背景/网格/内容一次性 flush 分层绘制；
   ⑥ 陈旧瓦片续画避免闪烁；⑦ 移除逐图元回退。
 - **已知取舍**：瓦片未就绪的首帧可能显示较粗的陈旧瓦片（比空白更可取）；值轴纵向视口仍未实现。
+
+## Slice S：删除预览瓦片（2026-09-21）
+
+按产品所有者决定（Skia 管线已足够快）删除 Arrangement Segment 预览的瓦片缓存：
+
+- 移除：`SegmentPreviewTiles`/`SegmentPreviewTileOrder`（静态 LRU）、`DrawSegmentPreviewTiles`、
+  陈旧瓦片续画、`GetSegmentPreview`（含指纹缓存）、`RequestSegmentPreviewTile`、
+  `OnSegmentPreviewTileCompleted`、`CancelRasterRequests`、瓦片 key/entry 类型与
+  `MIDORA` 相关后台栅格请求；`TimelineSurface.Tiles.cs` 只保留批量形状通道
+  （`AddFill`/`AddShape`/`AddLine`/`AddEllipse`/`FlushShapes`）。
+- 现在预览与音符/事件一致：**每帧直接绘制**，但走批量通道；每个 Segment 在自己的裁剪区内
+  入队后立即 flush（保证裁剪生效），单帧图元上限 20 000。
+- 副作用消除：不再有异步栅格空窗，因此之前的"陈旧瓦片续画"补丁一并删除；
+  LOD 概念随之从预览路径移除（`SelectDisplayLod` 不再被调用）。
+- 实测（`MIDORA_TIMELINE_SPAN=200000`，约 104 小节、12 轨整曲）：
+  平均 **2.9–3.1 ms/帧**、最差 17–21 ms（此前带瓦片约 1.1 ms）。仍在 60 Hz 预算内（<16.7 ms），
+  且无闪烁/空白。
+- 新增评审钩子 `MIDORA_TIMELINE_SPAN`，用于非交互测量拉远时的帧成本。
+- 遗留可清理（当前无引用）：`TimelineRasterCache`、`TimelineConductorMetaRasterizer`、
+  `TimelineTempoTileRasterizer`、`TimelineSegmentPreviewRasterizer`、`TimelineRasterPlacement`
+  与 `TimelineRasterLayer` 枚举中的未使用层；`TimelineRenderModel` 仍持有 `TimelineSegmentPreview`
+  数据结构（指纹方法已无调用者）。

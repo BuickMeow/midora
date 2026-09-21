@@ -297,15 +297,15 @@ public partial class MidiTrackView : UserControl
                     if (Environment.GetEnvironmentVariable("MIDORA_TRACK_BENCH_AB") == "1")
                     {
                         int budget = TimelineSurface.GpuNoteBatchThreshold;
-                        int lodMinimum = TimelineSurface.PianoRollLodMinimumNotes;
+                        bool merging = TimelineSurface.PianoRollMergingEnabled;
                         TimelineSurface.GpuNoteBatchThreshold = int.MaxValue;
-                        TimelineSurface.PianoRollLodMinimumNotes = int.MaxValue;
+                        TimelineSurface.PianoRollMergingEnabled = false;
                         Timeline.ClearGpuBatchCaches();
                         Timeline.BenchmarkRenderFrames(2);
                         (double shapeAverage, double shapeMedian, double shapeMaximum, _) =
                             Timeline.BenchmarkRenderFrames(benchFrames);
                         TimelineSurface.GpuNoteBatchThreshold = budget;
-                        TimelineSurface.PianoRollLodMinimumNotes = lodMinimum;
+                        TimelineSurface.PianoRollMergingEnabled = merging;
                         Timeline.ClearGpuBatchCaches();
                         Console.Out.WriteLine(
                             $"MIDORA-TRACK-BENCH-AB gpuAvg={average:F2} gpuP50={median:F2} "
@@ -313,7 +313,8 @@ public partial class MidiTrackView : UserControl
                             + $"shapeP50={shapeMedian:F2} shapeMax={shapeMaximum:F1}");
                         Console.Out.Flush();
                     }
-                    (int rollBatches, long rollVertexBytes, int rollVisible, long rollHits, long rollMisses) =
+                    (int rollBatches, long rollVertexBytes, int rollVisible, long rollHits,
+                        long rollMisses, int rollMergeFactor) =
                         Timeline.PianoRollBatchDiagnostics;
                     (long spanTicks, long gridMs, long rulerMs, long modeMs) =
                         Timeline.ModePhaseDiagnostics;
@@ -323,7 +324,7 @@ public partial class MidiTrackView : UserControl
                         + $"span={Timeline.TickSpan} mode={Timeline.SurfaceMode} "
                         + $"rollVisible={rollVisible} rollBatches={rollBatches} "
                         + $"rollVertexMB={rollVertexBytes / (1024.0 * 1024.0):F1} "
-                        + $"rollHits={rollHits} rollMisses={rollMisses} "
+                        + $"rollHits={rollHits} rollMisses={rollMisses} merge={rollMergeFactor} "
                         + $"viewSpan={spanTicks} grid={gridMs} ruler={rulerMs} modeMs={modeMs}");
                     Console.Out.Flush();
                 },

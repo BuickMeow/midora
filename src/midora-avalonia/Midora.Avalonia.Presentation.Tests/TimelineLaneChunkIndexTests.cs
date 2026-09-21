@@ -172,6 +172,48 @@ public sealed class TimelineLaneChunkIndexTests
     }
 
     [Fact]
+    public void CoarserLevelsStillCoverEveryIntersectingNote()
+    {
+        TimelineRenderItem[] items = BuildRandomItems(seed: 777, count: 6_000, lanes: 12);
+        foreach (int unitSize in (int[])[16, 64, 256, 1024])
+        {
+            TimelineLaneChunkIndex level = TimelineLaneChunkIndex.BuildSorted(items, unitSize);
+            Random random = new(2024);
+            for (int iteration = 0; iteration < 60; iteration++)
+            {
+                long start = random.Next(0, 10_000);
+                long end = start + random.Next(1, 2_000);
+                int firstLane = random.Next(0, 13);
+                int lastLane = firstLane + random.Next(0, 5);
+                CoverageSink sink = new();
+                level.VisitChunks(start, end, firstLane, lastLane, ref sink);
+                long effectiveStart = Math.Max(0, start);
+                foreach (TimelineRenderItem item in items)
+                {
+                    if (item.Lane < firstLane || item.Lane >= lastLane) continue;
+                    if (item.StartTick >= end || item.EndTick <= effectiveStart) continue;
+                    bool covered = false;
+                    foreach ((int lane, long chunkStart, long chunkEnd, int count) in sink.Chunks)
+                    {
+                        if (lane == item.Lane
+                            && chunkStart <= item.StartTick
+                            && chunkEnd >= item.EndTick)
+                        {
+                            covered = true;
+                            break;
+                        }
+                    }
+
+                    Assert.True(
+                        covered,
+                        $"unitSize {unitSize}: note {item.Id.Value} [{item.StartTick},{item.EndTick}) "
+                        + $"lane {item.Lane} not covered for [{start},{end})");
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void BuildRejectsUnsortedItems()
     {
         TimelineRenderItem[] items =

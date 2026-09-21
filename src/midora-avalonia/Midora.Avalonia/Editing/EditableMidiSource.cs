@@ -16,7 +16,7 @@ public sealed class EditableMidiSource :
     private long _maximumEndTick;
     private long _builtProjectVersion = -1;
     private long _builtTrackVersion = -1;
-    private bool _hasAnySelection;
+    private readonly Dictionary<int, TimelineLaneChunkIndex> _levelIndexes = [];
 
     public EditableMidiSource(EditableMidiProject project, int trackIndex)
     {
@@ -41,15 +41,6 @@ public sealed class EditableMidiSource :
         {
             EditableMidiTrack track = _project.Tracks[_trackIndex];
             return track.Notes.Count + track.Events.Count;
-        }
-    }
-
-    public bool HasAnySelection
-    {
-        get
-        {
-            EnsureBuilt();
-            return _hasAnySelection;
         }
     }
 
@@ -91,6 +82,46 @@ public sealed class EditableMidiSource :
     {
         EnsureBuilt();
         return _index!.Count(startTick, endTick, firstLane, lastLaneExclusive);
+    }
+
+    public void VisitMergedEnvelopes<TEnvelopeSink>(
+        int mergeFactor,
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        ref TEnvelopeSink sink)
+        where TEnvelopeSink : struct, TimelineLaneChunkIndex.IChunkSink
+    {
+        EnsureBuilt();
+        GetOrBuildLevel(mergeFactor).VisitChunks(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive,
+            ref sink);
+    }
+
+    /// <summary>
+    /// Returns the index for a level of detail, building it on demand. A level groups mergeFactor
+    /// consecutive items of a lane into one envelope, so coarser levels cost O(items / mergeFactor)
+    /// to build and to traverse while covering exactly the same notes.
+    /// </summary>
+    private TimelineLaneChunkIndex GetOrBuildLevel(int mergeFactor)
+    {
+        if (mergeFactor <= 1)
+        {
+            return _index!;
+        }
+
+        if (_levelIndexes.TryGetValue(mergeFactor, out TimelineLaneChunkIndex? level))
+        {
+            return level;
+        }
+
+        level = TimelineLaneChunkIndex.BuildSorted(_items!, mergeFactor);
+        _levelIndexes[mergeFactor] = level;
+        return level;
     }
 
     public void VisitChunks<TChunkSink>(
@@ -188,15 +219,7 @@ public sealed class EditableMidiSource :
 
         TimelineRenderItem[] items = BuildItems(track);
         _items = items;
-        _hasAnySelection = false;
-        foreach (TimelineRenderItem item in items)
-        {
-            if (item.State.HasFlag(TimelineItemState.Selected))
-            {
-                _hasAnySelection = true;
-                break;
-            }
-        }
+        _levelIndexes.Clear();
 
         _fingerprint = TimelineContentFingerprint.Combine(
             TimelineContentFingerprint.ForRenderItems(items),

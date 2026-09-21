@@ -475,11 +475,7 @@ public interface ITimelineRenderItemSource
     ulong ContentFingerprint { get; }
     bool HasHitTestableItems => Count > 0;
 
-    /// <summary>
-    /// Whether any item is selected. Callers that draw an exact selection layer over a level-of-detail
-    /// batch can skip that extra traversal when nothing is selected. The default is conservative.
-    /// </summary>
-    bool HasAnySelection => true;
+
 
     /// <summary>
     /// Returns a bounded-cost fingerprint for a presentation range. Large
@@ -533,6 +529,21 @@ public interface ITimelineRenderItemSource
         QueryInto(startTick, endTick, firstLane, lastLaneExclusive, values);
         return values.Count;
     }
+
+    /// <summary>
+    /// Visits merged envelopes for a range: consecutive items of a lane are grouped into one envelope
+    /// per <paramref name="mergeFactor"/> items, covering the same notes with fewer quads. The default
+    /// reports one envelope per item, which is correct but gives no level-of-detail saving.
+    /// </summary>
+    void VisitMergedEnvelopes<TEnvelopeSink>(
+        int mergeFactor,
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        ref TEnvelopeSink sink)
+        where TEnvelopeSink : struct, TimelineLaneChunkIndex.IChunkSink =>
+        VisitChunks(startTick, endTick, firstLane, lastLaneExclusive, ref sink);
 
     /// <summary>
     /// Visits chunk level envelopes for a range. Indexed sources merge many items per chunk; the

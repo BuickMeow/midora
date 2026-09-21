@@ -5,9 +5,10 @@ namespace Midora.Avalonia.Presentation.Rendering;
 /// (lane, start tick, end tick, kind, id).
 ///
 /// Items of one lane are a contiguous range of the shared array, and every lane is split into
-/// chunks of <see cref="ChunkSize"/> items (chunk c covers items [c*ChunkSize, ...)), so a chunk's
-/// input range is computed from the chunk id without any lookup table. A chunk intersects the tick
-/// range [start, end) iff chunkStart &lt;= end AND chunkMaxEnd &gt; start.
+/// units of <see cref="UnitSize"/> items (unit c covers items [c*UnitSize, ...)), so a unit's
+/// input range is computed from the unit id without any lookup table. A unit intersects the tick
+/// range [start, end) iff unitStart &lt;= end AND unitMaxEnd &gt; start. Building the same index with
+/// a larger unit size yields a coarser level of detail over the identical items.
 ///
 /// chunkMaxEnd is not monotonic (one long note inflates its chunk), so each block of
 /// <see cref="BlockChunks"/> chunks stores the block prefix max (non-decreasing) and the block
@@ -18,13 +19,17 @@ namespace Midora.Avalonia.Presentation.Rendering;
 /// </summary>
 public sealed class TimelineLaneChunkIndex
 {
-    /// <summary>Items per chunk.</summary>
-    public const int ChunkSize = 256;
+    /// <summary>Default items per unit.</summary>
+    public const int UnitSize = 256;
+
+    /// <summary>Items per unit in the query index; kept as the historical name.</summary>
+    public const int ChunkSize = UnitSize;
 
     /// <summary>Chunks per index block; bounds the scan after the block binary search.</summary>
     public const int BlockChunks = 64;
 
     private readonly TimelineRenderItem[] _items;
+    private readonly int _unitSize;
     private readonly int[] _laneFirstItem;
     private readonly int[] _laneItemCount;
     private readonly long[][] _laneChunkStart;
@@ -33,6 +38,7 @@ public sealed class TimelineLaneChunkIndex
 
     private TimelineLaneChunkIndex(
         TimelineRenderItem[] items,
+        int unitSize,
         int[] laneFirstItem,
         int[] laneItemCount,
         long[][] laneChunkStart,
@@ -42,6 +48,7 @@ public sealed class TimelineLaneChunkIndex
         int blockEntryCount)
     {
         _items = items;
+        _unitSize = unitSize;
         _laneFirstItem = laneFirstItem;
         _laneItemCount = laneItemCount;
         _laneChunkStart = laneChunkStart;
@@ -67,9 +74,17 @@ public sealed class TimelineLaneChunkIndex
     /// Builds the index. The item array must already be sorted by
     /// (lane, start tick, end tick, kind, id), which is what <see cref="BuildSorted"/> verifies.
     /// </summary>
-    public static TimelineLaneChunkIndex BuildSorted(TimelineRenderItem[] items)
+    public static TimelineLaneChunkIndex BuildSorted(TimelineRenderItem[] items) =>
+        BuildSorted(items, UnitSize);
+
+    /// <summary>
+    /// Builds the index with an explicit unit size. A larger unit merges more items per envelope,
+    /// which is how the level of detail ladder is produced from the same sorted item array.
+    /// </summary>
+    public static TimelineLaneChunkIndex BuildSorted(TimelineRenderItem[] items, int unitSize)
     {
         ArgumentNullException.ThrowIfNull(items);
+        ArgumentOutOfRangeException.ThrowIfLessThan(unitSize, 1);
         int laneCount = 1;
         for (int index = 0; index < items.Length; index++)
         {
@@ -117,7 +132,7 @@ public sealed class TimelineLaneChunkIndex
                 continue;
             }
 
-            int chunks = (count + ChunkSize - 1) / ChunkSize;
+            int chunks = (count + unitSize - 1) / unitSize;
             long[] starts = new long[chunks];
             long[] maxEnds = new long[chunks];
             long[] blocks = new long[(chunks + BlockChunks - 1) / BlockChunks];
@@ -125,8 +140,8 @@ public sealed class TimelineLaneChunkIndex
             long blockPrefix = long.MinValue;
             for (int chunk = 0; chunk < chunks; chunk++)
             {
-                int from = first + chunk * ChunkSize;
-                int to = Math.Min(first + count, from + ChunkSize);
+                int from = first + chunk * unitSize;
+                int to = Math.Min(first + count, from + unitSize);
                 starts[chunk] = items[from].StartTick;
                 long maximumEnd = long.MinValue;
                 for (int index = from; index < to; index++)
@@ -155,6 +170,7 @@ public sealed class TimelineLaneChunkIndex
 
         return new TimelineLaneChunkIndex(
             items,
+            unitSize,
             laneFirst,
             counts,
             chunkStart,
@@ -252,8 +268,8 @@ public sealed class TimelineLaneChunkIndex
             int laneFirst = _laneFirstItem[lane];
             for (int chunk = firstChunk; chunk <= lastChunk; chunk++)
             {
-                int from = laneFirst + chunk * ChunkSize;
-                int to = Math.Min(laneFirst + count, from + ChunkSize);
+                int from = laneFirst + chunk * _unitSize;
+                int to = Math.Min(laneFirst + count, from + _unitSize);
                 sink.Chunk(lane, starts[chunk], maxEnds[chunk], to - from);
             }
         }
@@ -326,8 +342,8 @@ public sealed class TimelineLaneChunkIndex
             int laneFirst = _laneFirstItem[lane];
             for (int chunk = firstChunk; chunk <= lastChunk; chunk++)
             {
-                int from = laneFirst + chunk * ChunkSize;
-                int to = Math.Min(laneFirst + count, from + ChunkSize);
+                int from = laneFirst + chunk * _unitSize;
+                int to = Math.Min(laneFirst + count, from + _unitSize);
                 for (int index = from; index < to; index++)
                 {
                     ref readonly TimelineRenderItem item = ref _items[index];

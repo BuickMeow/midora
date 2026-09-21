@@ -256,3 +256,17 @@ App → Midora.Playback (PlaybackController/投影/render plan)
 
 - **环形缓冲 underrun latch**：CoreAudio 经 BASS 的拉取块大于启动预填充，导致首次回调即 latch `Buffering` 并永久静音（主进程恢复命令未发送）。worker 现在在生产者存活且环已回填过半时自行 `ReleaseBuffering`（监视循环与监视变更后重启输出两处）。修复后持久化实时路径 3/3 通过。
 - **实时采样率**：实时播放按设备实际采样率生成（CoreAudio 保持自身时钟，请求 48k 常得 44.1k）。`BassMidiAudioWorkerSession.Probe` 增加 `allowManagedTestWorker`，测试改为先探测设备实际速率再构建 plan；正式 app 侧同样必须如此（W4）。
+
+## 14. 2026-09-21 App 正式接线（可听验证通过）
+
+应用层不再有任何占位音频实现：
+
+- `Midora.Session/Audio`：`FormalAudioWorkerLocator`（按平台定位 Native AOT worker 与原生目录，支持 `MIDORA_AUDIO_WORKER_PATH`/`_DIR`/`MIDORA_BASS_NATIVE_DIR` 与 app 旁 `audio-worker/`）、`FormalAudioOutputDeviceEnumerator`（经 worker 枚举，`MIDORA-AUDIO-DEVICES-V1`）、`RealtimePlaybackSession`（拥有子进程后端 + `PlaybackController`）。
+- `ProjectSessionHost`：可选实时播放（启用时用 `Background` 编译模式、设置有效 SoundFont 集与音频缓存），`ApplyPreferencesAsync` 在音频相关设置变化时销毁并重建 Worker。
+- Avalonia shell：Play/Stop 由引擎真实驱动（`Update()` 泵 + `CurrentTick`），状态栏显示真实 SoundFont 数量，主窗口创建前执行 `EnsureReadyAndProbe`（fail closed），偏好经 `ApplicationPreferencesStore` 读写。
+- `ApplicationPreferencesDialog`：真实 SoundFont 行（稳定 `SoundFontEntryId`、target 映射）、真实 `*.sf2;*.sfz` 多选文件选择器（对齐 WPF，含去重与起始目录）、经 worker 的真实设备列表与实际采样率。
+- worker 路径校验：macOS 的 AOT worker 无扩展名，`Path.GetExtension` 会返回 `.Worker`，因此改为“仅托管 `.dll` 需显式允许 + Unix 校验可执行位”。
+
+**实测（macOS，无任何环境变量）**：`MIDORA_MIDI_OPEN` + `MIDORA_AUTOPLAY` 下 `Playback started` → `Playing`，tick 连续前进，正式 AOT worker 以 `realtime-host` 运行（控制文件 + SoundFont 集 + 原生目录），产品所有者确认可听见音乐；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`。
+
+**剩余**：App 内音频渲染导出（worker `file-render` + 缓存 + 原子发布，W5）；macOS 设备丢失/默认设备变化检测（当前由工厂级重新枚举兜底）；AOT worker 集成测试需 `MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER`；`MonitoringColdStartKillsPreRenderedFutureKeys...` 的 pressed-key 诊断差异（109 vs 128）。

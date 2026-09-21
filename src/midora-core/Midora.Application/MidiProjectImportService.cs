@@ -96,7 +96,16 @@ public static partial class MidiProjectImportService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(projectName);
+        bool importTrace = System.Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
+        long importStart = System.Environment.TickCount64;
         ParsedStandardMidiFile parsed = StandardMidiFile.ParseType0Or1(file);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT smfParse={System.Environment.TickCount64 - importStart} ms"
+                + $" tracks={parsed.Tracks.Count}");
+            Console.Out.Flush();
+        }
         cancellationToken.ThrowIfCancellationRequested();
 
         List<MidiProjectImportDiagnostic> diagnostics = [];
@@ -272,8 +281,21 @@ public static partial class MidiProjectImportService
                 firstTrackIndex));
         }
 
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT projectBuild={System.Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
+
         using MidoraCompiler compiler = new();
         CanonicalCompiledResult validation = compiler.CompileFull(project);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT compile={System.Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
         if (!validation.IsConsumable)
         {
             string detail = string.Join(

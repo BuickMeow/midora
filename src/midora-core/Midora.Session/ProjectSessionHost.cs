@@ -109,11 +109,20 @@ public sealed class ProjectSessionHost : IDisposable
     public ProjectActivation ImportMidi(byte[] file, string projectName, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(file);
+        bool importTrace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
+        long importStart = Environment.TickCount64;
         MidiProjectImportResult imported = MidiProjectImportService.Import(
             file,
             projectName,
             zeroBasedPortMapping: null,
             cancellationToken);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT importService={Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
+
         NewProjectCreationResult adopted;
         try
         {
@@ -125,7 +134,23 @@ public sealed class ProjectSessionHost : IDisposable
             throw;
         }
 
-        return Adopt(ProjectContext.FromCreation(_packages, adopted, _options), adopted);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT adopt={Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
+
+        ProjectActivation activation =
+            Adopt(ProjectContext.FromCreation(_packages, adopted, _options), adopted);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT activation={Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
+
+        return activation;
     }
 
     /// <summary>

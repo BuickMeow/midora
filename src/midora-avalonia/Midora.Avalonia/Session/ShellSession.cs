@@ -784,6 +784,8 @@ public sealed class ShellSession : INotifyPropertyChanged
         ImportedMidiProject project,
         byte[]? sourceBytes = null)
     {
+        bool importTrace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
+        long importStarted = Environment.TickCount64;
         ProjectActivation? activation = null;
         string? adoptionError = null;
         if (sourceBytes is not null && _projectHost is not null)
@@ -798,10 +800,24 @@ public sealed class ShellSession : INotifyPropertyChanged
             }
         }
 
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT host={Environment.TickCount64 - importStarted} ms");
+            Console.Out.Flush();
+        }
+
         ResetShellForProject(activation, name);
         if (activation is not null)
         {
             AttachProjectDocument();
+        }
+
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT reset={Environment.TickCount64 - importStarted} ms");
+            Console.Out.Flush();
         }
 
         _editableProject = new EditableMidiProject(project);
@@ -810,8 +826,28 @@ public sealed class ShellSession : INotifyPropertyChanged
             MarkModified();
             RefreshArrangementSource();
         };
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT editable={Environment.TickCount64 - importStarted} ms");
+            Console.Out.Flush();
+        }
+
         _midiSource = new MidiTimelineSource(project, liveProject: _editableProject);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT timelineSource={Environment.TickCount64 - importStarted} ms");
+            Console.Out.Flush();
+        }
+
         ApplyArrangementSource();
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT applySource={Environment.TickCount64 - importStarted} ms");
+            Console.Out.Flush();
+        }
 
         if (project.Conductor.FirstOrDefault(
                 conductorEvent => conductorEvent.Kind == ImportedConductorKind.Tempo) is { Value: > 0 } tempo)

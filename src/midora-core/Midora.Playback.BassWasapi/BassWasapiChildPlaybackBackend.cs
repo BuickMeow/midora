@@ -17,8 +17,10 @@ public sealed record BassWasapiChildPlaybackOptions(
 
 /// <summary>
 /// Formal initial-release realtime backend. The main process only coordinates a frozen render plan
-/// and a fixed shared-memory control ABI; the worker owns synthesis, limiter, render-ahead, WASAPI,
-/// and the native callback for the complete active session.
+/// and a fixed shared-memory control ABI; the worker owns synthesis, limiter, render-ahead and the
+/// platform output backend. The backend itself is platform-neutral and takes the worker path and
+/// native directory from its options; it stays Windows-annotated until the shared-memory control
+/// layer is ported to POSIX shared memory (see the macOS audio ADR).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class BassWasapiChildPlaybackBackend

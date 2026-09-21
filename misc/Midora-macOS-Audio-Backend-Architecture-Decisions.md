@@ -225,7 +225,7 @@ App → Midora.Playback (PlaybackController/投影/render plan)
 
 **待办（按顺序）**
 
-1. W3：`Midora.Playback.BassWasapi/BassWasapiChildPlaybackBackend` 传输骨架中立化（worker 可执行名/参数与进程宿主按平台注入），macOS 与 Windows 共用同一后端类。
+1. W3：子进程后端**本身已是参数化且平台中立**（`WorkerPath`/`BassNativeDirectory` 由选项注入，进程宿主用 `AudioWorkerProcessGroup` 的跨平台回退路径），真正的阻塞点是 **IPC 共享内存层**：`Midora.Audio/SharedAudioWorkerControl`、`Midora.AudioDevice/SharedAudioFrameRingBuffer` 仍是 Windows 专用实现（并且 `BassMidiChildProcessSession`/`PersistentBassMidiAudioWorkerHost`/`BassMidiAudioWorkerSession`/`BassMidiAudioFileRenderWorker` 都带 `[SupportedOSPlatform("windows")]`）。W3 = 把这两层按平台实现（POSIX `shm_open`/`mmap` 或 `MemoryMappedFile` 具名映射 + 现有 seqlock 协议不变），再移除这些标注；Windows 行为不变。
 2. W4：App 接线——偏好持久化（SoundFont 列表/设备/Render-Ahead）→ 打开/编译工程 → canonical → render plan → `PlaybackController` → Worker；Play/Stop/位置/设备切换走正式链路。
 3. W5：App 内离线渲染（worker `file-render` + `.tmp/AudioCache` + 原子发布）。
 4. 未验证：父死看门狗的端到端（应用崩溃后 worker 退出）需在 W3/W4 接线后实测；macOS 设备丢失/默认设备变化检测尚未实现（当前 `DeviceLost`/`DefaultDeviceChanged` 恒为 false，由工厂级重新枚举兜底）。

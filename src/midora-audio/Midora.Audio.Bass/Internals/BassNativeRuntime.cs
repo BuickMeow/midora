@@ -24,9 +24,16 @@ internal static unsafe class BassNativeRuntime
 
             if (_referenceCount == 0)
             {
+                Midora.NativeInterops.Bass.BassNativeLibrary.EnsureRegistered();
+                Midora.NativeInterops.BassMidi.BassMidiNativeLibrary.EnsureRegistered();
                 ValidateExactVersion("BASS", NativeBass.GetVersion(), SupportedBassVersion);
                 ValidateExactVersion("BASSMIDI", NativeBassMidi.GetVersion(), SupportedBassMidiVersion);
-                EnsureUtf8DeviceInformation();
+                if (OperatingSystem.IsWindows())
+                {
+                    // BASS_CONFIG_UNICODE is Windows-only; macOS/Linux use UTF-8 file APIs and
+                    // reject this configuration with BASS_ERROR_NOTAVAIL.
+                    EnsureUtf8DeviceInformation();
+                }
 
                 if (NativeBass.Init(0, 48_000, 0, null, null) == 0)
                 {

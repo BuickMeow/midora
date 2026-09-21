@@ -51,17 +51,9 @@ internal sealed unsafe class PersistentBassMidiSoundFont : IDisposable
             for (int index = 0; index < _configurations.Length; index++)
             {
                 SoundFontConfiguration configuration = _configurations[index];
-                fixed (char* pointer = configuration.Path)
-                {
-                    uint flags = NativeBass.BASS_UNICODE;
-                    if (!configuration.IsSfz)
-                    {
-                        flags |= NativeBassMidi.BASS_MIDI_FONT_MMAP;
-                    }
-                    _fonts[index] = new FontState(NativeBassMidi.FontInit(
-                        pointer,
-                        flags));
-                }
+                _fonts[index] = new FontState(BassMidiFontPath.Init(
+                    configuration.Path,
+                    memoryMap: !configuration.IsSfz));
                 if (_fonts[index].Handle == 0)
                 {
                     Throw("BASS_MIDI_FontInit");

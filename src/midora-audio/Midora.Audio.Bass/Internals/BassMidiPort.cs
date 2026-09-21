@@ -891,19 +891,9 @@ public sealed unsafe class BassMidiRenderer
         for (int index = 0; index < soundFonts.Count; index++)
         {
             SoundFontConfiguration soundFont = soundFonts[index];
-            string soundFontPath = soundFont.Path;
-            fixed (char* path = soundFontPath)
-            {
-                uint flags = NativeBass.BASS_UNICODE;
-                if (!soundFont.IsSfz)
-                {
-                    flags |= NativeBassMidi.BASS_MIDI_FONT_MMAP;
-                }
-                _soundFontHandles[index] = NativeBassMidi.FontInit(
-                    path,
-                    flags);
-            }
-
+            _soundFontHandles[index] = BassMidiFontPath.Init(
+                soundFont.Path,
+                memoryMap: !soundFont.IsSfz);
             if (_soundFontHandles[index] == 0)
             {
                 ThrowBassPreparationFailure("BASS_MIDI_FontInit");

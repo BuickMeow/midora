@@ -6,6 +6,7 @@
   <Project Path="../midora-native-interops/Midora.NativeInterops.BassMidi/Midora.NativeInterops.BassMidi.csproj" />
   <Project Path="../midora-native-interops/Midora.NativeInterops.BassWasapi/Midora.NativeInterops.BassWasapi.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice/Midora.AudioDevice.csproj" />
+  <Project Path="../midora-audio-device/Midora.AudioDevice.Bass/Midora.AudioDevice.Bass.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice.BassWasapi/Midora.AudioDevice.BassWasapi.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice.Wave/Midora.AudioDevice.Wave.csproj" />
   <Project Path="../midora-audio/Midora.Audio/Midora.Audio.csproj" />

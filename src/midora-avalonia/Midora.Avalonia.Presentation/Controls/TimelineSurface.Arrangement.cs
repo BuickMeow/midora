@@ -285,6 +285,11 @@ public sealed partial class TimelineSurface
             : 20_000;
 
     private readonly TimelineNoteBatchCache _noteBatchCache = new();
+    private readonly List<TimelineNoteDrawEntry> _noteDrawEntries = [];
+
+    /// <summary>Review-only: batches and vertex bytes retained by the GPU preview cache.</summary>
+    internal (int Batches, long VertexBytes) PreviewBatchDiagnostics =>
+        (_noteBatchCache.Count, _noteBatchCache.TotalVertexBytes);
 
     /// <summary>
     /// Draws every pending Segment preview. Notes are horizontal bars in their pitch row and events
@@ -304,6 +309,21 @@ public sealed partial class TimelineSurface
             Rect visible = pending.Bounds;
             TimelineRenderItem item = pending.Item;
             ITimelineSegmentPreviewSource preview = pending.Preview;
+            long segmentLength = Math.Max(1, item.EndTick - item.StartTick);
+            double visibleStart = Math.Clamp(
+                (viewport.StartTick - item.StartTick) / (double)segmentLength,
+                0,
+                1);
+            double visibleEnd = Math.Clamp(
+                (viewport.EndTick - item.StartTick) / (double)segmentLength,
+                0,
+                1);
+            if (visibleEnd <= visibleStart)
+            {
+                // The Segment is entirely outside the viewport: nothing to query or draw.
+                continue;
+            }
+
             double fullLeft = viewport.TickToX(item.StartTick);
             double fullRight = viewport.TickToX(item.EndTick);
             Rect full = new(
@@ -321,19 +341,21 @@ public sealed partial class TimelineSurface
                 full.Height,
                 devicePixel,
                 noteColor,
-                eventColor);
+                eventColor,
+                Math.Round(visibleStart, 6),
+                Math.Round(visibleEnd, 6));
             if (!_noteBatchCache.TryGet(key, out TimelineNoteVertexBatch batch))
             {
                 _previewNotes.Clear();
                 _previewEvents.Clear();
                 if (preview.HasNoteContent)
                 {
-                    preview.QueryNotes(0, 1, _previewNotes);
+                    preview.QueryNotes(visibleStart, visibleEnd, _previewNotes);
                 }
 
                 if (preview.HasEventContent)
                 {
-                    preview.QueryEvents(0, 1, _previewEvents);
+                    preview.QueryEvents(visibleStart, visibleEnd, _previewEvents);
                 }
 
                 if (_previewNotes.Count + _previewEvents.Count <= shapeBudget)
@@ -359,7 +381,23 @@ public sealed partial class TimelineSurface
                 _noteBatchCache.Store(key, batch);
             }
 
-            context.Custom(new TimelineNoteDrawOperation(batch, visible, full.X, full.Y));
+            _noteDrawEntries.Add(new TimelineNoteDrawEntry(
+                batch,
+                visible,
+                (float)full.X,
+                (float)full.Y));
+        }
+
+        if (_noteDrawEntries.Count != 0)
+        {
+            Rect bounds = _noteDrawEntries[0].Clip;
+            for (int index = 1; index < _noteDrawEntries.Count; index++)
+            {
+                bounds = bounds.Union(_noteDrawEntries[index].Clip);
+            }
+
+            context.Custom(new TimelineNoteDrawOperation(_noteDrawEntries, bounds));
+            _noteDrawEntries.Clear();
         }
 
         _pendingSegmentPreviews.Clear();

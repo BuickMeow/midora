@@ -737,6 +737,7 @@ public sealed class MidiTimelineSource :
 
         private readonly TimelineSegmentPreviewNote[] _notes;
         private readonly TimelineSegmentPreviewEvent[] _events;
+        private readonly double[] _noteMaximumEndPrefix;
 
         public SegmentPreviewSource(
             long startTick,
@@ -772,6 +773,14 @@ public sealed class MidiTimelineSource :
                 value = left.NormalizedEnd.CompareTo(right.NormalizedEnd);
                 return value != 0 ? value : left.Pitch.CompareTo(right.Pitch);
             });
+
+            _noteMaximumEndPrefix = new double[_notes.Length];
+            double maximumEnd = double.NegativeInfinity;
+            for (int index = 0; index < _notes.Length; index++)
+            {
+                maximumEnd = Math.Max(maximumEnd, _notes[index].NormalizedEnd);
+                _noteMaximumEndPrefix[index] = maximumEnd;
+            }
 
             List<TimelineSegmentPreviewEvent> mappedEvents = [];
             foreach (ImportedMidiEvent value in events)
@@ -864,13 +873,44 @@ public sealed class MidiTimelineSource :
             {
                 return;
             }
-            foreach (TimelineSegmentPreviewNote note in _notes)
+            int first = FirstNoteWithMaximumEndGreaterThan(normalizedStart);
+            for (int index = first; index < _notes.Length; index++)
             {
-                if (note.NormalizedStart < normalizedEnd && note.NormalizedEnd > normalizedStart)
+                TimelineSegmentPreviewNote note = _notes[index];
+                if (note.NormalizedStart >= normalizedEnd)
+                {
+                    break;
+                }
+
+                if (note.NormalizedEnd > normalizedStart)
                 {
                     destination.Add(note);
                 }
             }
+        }
+
+        /// <summary>
+        /// First note whose prefix maximum end is greater than the requested start. Notes before that
+        /// index cannot reach into the range, so an interval query never scans the whole Segment.
+        /// </summary>
+        private int FirstNoteWithMaximumEndGreaterThan(double value)
+        {
+            int low = 0;
+            int high = _noteMaximumEndPrefix.Length;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                if (_noteMaximumEndPrefix[middle] > value)
+                {
+                    high = middle;
+                }
+                else
+                {
+                    low = middle + 1;
+                }
+            }
+
+            return low;
         }
 
         public void QueryEvents(
@@ -885,13 +925,37 @@ public sealed class MidiTimelineSource :
             {
                 return;
             }
-            foreach (TimelineSegmentPreviewEvent value in _events)
+            int index = FirstEventAtOrAfter(normalizedStart);
+            for (; index < _events.Length; index++)
             {
-                if (value.NormalizedTick >= normalizedStart && value.NormalizedTick < normalizedEnd)
+                TimelineSegmentPreviewEvent value = _events[index];
+                if (value.NormalizedTick >= normalizedEnd)
                 {
-                    destination.Add(value);
+                    break;
+                }
+
+                destination.Add(value);
+            }
+        }
+
+        private int FirstEventAtOrAfter(double normalizedTick)
+        {
+            int low = 0;
+            int high = _events.Length;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                if (_events[middle].NormalizedTick >= normalizedTick)
+                {
+                    high = middle;
+                }
+                else
+                {
+                    low = middle + 1;
                 }
             }
+
+            return low;
         }
     }
 

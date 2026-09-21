@@ -23,7 +23,9 @@ internal readonly record struct TimelineNoteBatchKey(
     double Height,
     double DevicePixel,
     uint NoteColor,
-    uint EventColor);
+    uint EventColor,
+    double VisibleStart,
+    double VisibleEnd);
 
 /// <summary>
 /// Immutable Skia vertex batches for one Segment preview. Vertices are stored in pixels relative
@@ -31,7 +33,7 @@ internal readonly record struct TimelineNoteBatchKey(
 /// translation and never rebuilds the data; zoom, lane height, device pixel or content changes
 /// produce a new batch. Each batch stays below the 16-bit index limit (16k quads = 64k vertices).
 /// </summary>
-internal sealed class TimelineNoteVertexBatch
+internal sealed class TimelineNoteVertexBatch : IDisposable
 {
     public const int QuadsPerBatch = 16_000;
 
@@ -49,6 +51,8 @@ internal sealed class TimelineNoteVertexBatch
         EventCount = eventCount;
         NoteColor = ToSkColor(noteColor);
         EventColor = ToSkColor(eventColor);
+        NotePaint = new SKPaint { Color = NoteColor, IsAntialias = false };
+        EventPaint = new SKPaint { Color = EventColor, IsAntialias = false };
     }
 
     public SKVertices[] NoteBatches { get; }
@@ -63,7 +67,35 @@ internal sealed class TimelineNoteVertexBatch
 
     public SKColor EventColor { get; }
 
+    /// <summary>Paints owned by the batch so a frame does not allocate one per Segment.</summary>
+    public SKPaint NotePaint { get; }
+
+    public SKPaint EventPaint { get; }
+
     public int PrimitiveCount => NoteCount + EventCount;
+
+    /// <summary>Approximate retained size of the vertex and index data, used by the review trace.</summary>
+    public long VertexBytes => (long)PrimitiveCount * 44;
+
+    /// <summary>
+    /// Releases the native Skia vertex buffers. Called by the cache when a batch is evicted; a batch
+    /// handed to a draw operation stays alive until then.
+    /// </summary>
+    public void Dispose()
+    {
+        foreach (SKVertices batch in NoteBatches)
+        {
+            batch.Dispose();
+        }
+
+        foreach (SKVertices batch in EventBatches)
+        {
+            batch.Dispose();
+        }
+
+        NotePaint.Dispose();
+        EventPaint.Dispose();
+    }
 
     /// <summary>Reads the ARGB value of a brush so the batch key and the paint stay in sync.</summary>
     public static uint ColorOf(IBrush brush) =>
@@ -208,75 +240,167 @@ internal sealed class TimelineNoteVertexBatch
 /// </summary>
 internal sealed class TimelineNoteBatchCache
 {
-    public const int Capacity = 96;
+    /// <summary>Hard ceiling for retained vertex data; eviction keeps the process bounded.</summary>
+    public const long BudgetBytes = 256L * 1024 * 1024;
 
-    private readonly Dictionary<TimelineNoteBatchKey, TimelineNoteVertexBatch> _entries = [];
+    private readonly Dictionary<TimelineNoteBatchKey, CacheEntry> _entries = [];
+    private long _clock;
 
-    public bool TryGet(in TimelineNoteBatchKey key, out TimelineNoteVertexBatch batch) =>
-        _entries.TryGetValue(key, out batch!);
+    public int Count => _entries.Count;
+
+    public long TotalVertexBytes
+    {
+        get
+        {
+            long total = 0;
+            foreach (CacheEntry entry in _entries.Values)
+            {
+                total += entry.Batch.VertexBytes;
+            }
+
+            return total;
+        }
+    }
+
+    public bool TryGet(in TimelineNoteBatchKey key, out TimelineNoteVertexBatch batch)
+    {
+        if (_entries.TryGetValue(key, out CacheEntry entry))
+        {
+            entry.LastUsed = ++_clock;
+            _entries[key] = entry;
+            batch = entry.Batch;
+            return true;
+        }
+
+        batch = null!;
+        return false;
+    }
 
     public void Store(in TimelineNoteBatchKey key, TimelineNoteVertexBatch batch)
     {
-        if (_entries.Count >= Capacity)
-        {
-            _entries.Clear();
-        }
-
-        _entries[key] = batch;
+        _entries[key] = new CacheEntry(batch, ++_clock);
+        EvictOverBudget();
     }
 
-    public void Clear() => _entries.Clear();
+    public void Clear()
+    {
+        foreach (CacheEntry entry in _entries.Values)
+        {
+            entry.Batch.Dispose();
+        }
+
+        _entries.Clear();
+    }
+
+    /// <summary>
+    /// Drops least recently used batches until the retained vertex bytes fit the budget. Evicted
+    /// batches release their native Skia buffers, so the cache cannot leak across rebuilds.
+    /// </summary>
+    private void EvictOverBudget()
+    {
+        while (_entries.Count > 1 && TotalVertexBytes > BudgetBytes)
+        {
+            TimelineNoteBatchKey? oldestKey = null;
+            long oldestUse = long.MaxValue;
+            foreach (KeyValuePair<TimelineNoteBatchKey, CacheEntry> entry in _entries)
+            {
+                if (entry.Value.LastUsed < oldestUse)
+                {
+                    oldestUse = entry.Value.LastUsed;
+                    oldestKey = entry.Key;
+                }
+            }
+
+            if (oldestKey is not { } key || !_entries.Remove(key, out CacheEntry evicted))
+            {
+                return;
+            }
+
+            evicted.Batch.Dispose();
+        }
+    }
+
+    private struct CacheEntry
+    {
+        public CacheEntry(TimelineNoteVertexBatch batch, long lastUsed)
+        {
+            Batch = batch;
+            LastUsed = lastUsed;
+        }
+
+        public TimelineNoteVertexBatch Batch { get; }
+
+        public long LastUsed { get; set; }
+    }
 }
 
 /// <summary>
-/// P4 GPU path: one Segment preview (notes and events) is drawn as pre-built Skia vertex batches
-/// by a single leased canvas. The operation is immutable, so an unchanged viewport compares equal
-/// to the previous frame and the renderer reuses the recorded frame; panning only changes the
-/// translation. Hit testing and every other timeline layer stay on the CPU drawing path.
+/// One entry of the GPU preview pass: a cached batch plus the clip and translation that place it
+/// for the current frame.
+/// </summary>
+internal readonly record struct TimelineNoteDrawEntry(
+    TimelineNoteVertexBatch Batch,
+    Rect Clip,
+    float TranslateX,
+    float TranslateY);
+
+/// <summary>
+/// P4 GPU path: every visible Segment preview (notes and events) is drawn as pre-built Skia vertex
+/// batches by a single leased canvas, so a frame acquires one lease instead of one per Segment. The
+/// operation snapshots the immutable entry list, so an unchanged viewport compares equal to the
+/// previous frame and the renderer reuses the recorded frame; panning only changes translations.
+/// Hit testing and every other timeline layer stay on the CPU drawing path.
 /// </summary>
 internal sealed class TimelineNoteDrawOperation : ICustomDrawOperation
 {
-    private readonly TimelineNoteVertexBatch _batch;
-    private readonly Rect _clip;
-    private readonly float _translateX;
-    private readonly float _translateY;
-    private readonly SKPaint _notePaint;
-    private readonly SKPaint _eventPaint;
+    private readonly TimelineNoteDrawEntry[] _entries;
 
-    public TimelineNoteDrawOperation(
-        TimelineNoteVertexBatch batch,
-        Rect clip,
-        double translateX,
-        double translateY)
+    public TimelineNoteDrawOperation(IReadOnlyList<TimelineNoteDrawEntry> entries, Rect bounds)
     {
-        _batch = batch;
-        _clip = clip;
-        _translateX = (float)translateX;
-        _translateY = (float)translateY;
-        _notePaint = new SKPaint { Color = batch.NoteColor, IsAntialias = false };
-        _eventPaint = new SKPaint { Color = batch.EventColor, IsAntialias = false };
-        Bounds = clip;
+        ArgumentNullException.ThrowIfNull(entries);
+        _entries = [.. entries];
+        Bounds = bounds;
     }
 
     public Rect Bounds { get; }
 
     public void Dispose()
     {
-        _notePaint.Dispose();
-        _eventPaint.Dispose();
     }
 
-    public bool Equals(ICustomDrawOperation? other) =>
-        other is TimelineNoteDrawOperation operation
-        && ReferenceEquals(operation._batch, _batch)
-        && Math.Abs(operation._translateX - _translateX) < 0.01f
-        && Math.Abs(operation._translateY - _translateY) < 0.01f
-        && operation._clip.Equals(_clip);
+    public bool Equals(ICustomDrawOperation? other)
+    {
+        if (other is not TimelineNoteDrawOperation operation
+            || operation._entries.Length != _entries.Length)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < _entries.Length; index++)
+        {
+            TimelineNoteDrawEntry left = _entries[index];
+            TimelineNoteDrawEntry right = operation._entries[index];
+            if (!ReferenceEquals(left.Batch, right.Batch)
+                || !left.Clip.Equals(right.Clip)
+                || Math.Abs(left.TranslateX - right.TranslateX) >= 0.01f
+                || Math.Abs(left.TranslateY - right.TranslateY) >= 0.01f)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     public bool HitTest(Point p) => false;
 
     public void Render(ImmediateDrawingContext context)
     {
+        if (_entries.Length == 0)
+        {
+            return;
+        }
+
         ISkiaSharpApiLeaseFeature? feature = context.TryGetFeature<ISkiaSharpApiLeaseFeature>();
         if (feature is null)
         {
@@ -285,23 +409,26 @@ internal sealed class TimelineNoteDrawOperation : ICustomDrawOperation
 
         using ISkiaSharpApiLease lease = feature.Lease();
         SKCanvas canvas = lease.SkCanvas;
-        int save = canvas.Save();
-        canvas.ClipRect(new SKRect(
-            (float)_clip.X,
-            (float)_clip.Y,
-            (float)_clip.Right,
-            (float)_clip.Bottom));
-        canvas.Translate(_translateX, _translateY);
-        foreach (SKVertices batch in _batch.NoteBatches)
+        foreach (TimelineNoteDrawEntry entry in _entries)
         {
-            canvas.DrawVertices(batch, SKBlendMode.SrcOver, _notePaint);
-        }
+            int save = canvas.Save();
+            canvas.ClipRect(new SKRect(
+                (float)entry.Clip.X,
+                (float)entry.Clip.Y,
+                (float)entry.Clip.Right,
+                (float)entry.Clip.Bottom));
+            canvas.Translate(entry.TranslateX, entry.TranslateY);
+            foreach (SKVertices batch in entry.Batch.NoteBatches)
+            {
+                canvas.DrawVertices(batch, SKBlendMode.SrcOver, entry.Batch.NotePaint);
+            }
 
-        foreach (SKVertices batch in _batch.EventBatches)
-        {
-            canvas.DrawVertices(batch, SKBlendMode.SrcOver, _eventPaint);
-        }
+            foreach (SKVertices batch in entry.Batch.EventBatches)
+            {
+                canvas.DrawVertices(batch, SKBlendMode.SrcOver, entry.Batch.EventPaint);
+            }
 
-        canvas.RestoreToCount(save);
+            canvas.RestoreToCount(save);
+        }
     }
 }

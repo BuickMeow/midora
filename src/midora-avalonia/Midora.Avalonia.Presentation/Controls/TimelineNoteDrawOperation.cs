@@ -9,6 +9,69 @@ using SkiaSharp;
 namespace Midora.Avalonia.Presentation.Controls;
 
 /// <summary>
+/// Accumulates axis-aligned quads into immutable Skia vertex batches. Every batch stays below the
+/// 16-bit index limit, and the builder is reusable so a frame does not allocate per primitive.
+/// </summary>
+internal sealed class TimelineQuadBatchBuilder
+{
+    private SKPoint[] _positions = new SKPoint[TimelineNoteVertexBatch.QuadsPerBatch * 4];
+    private ushort[] _indices = new ushort[TimelineNoteVertexBatch.QuadsPerBatch * 6];
+    private readonly List<SKVertices> _batches = [];
+    private int _count;
+
+    public int Count => _batches.Count * TimelineNoteVertexBatch.QuadsPerBatch + _count;
+
+    public void Add(float left, float top, float right, float bottom)
+    {
+        if (_count == TimelineNoteVertexBatch.QuadsPerBatch)
+        {
+            Flush();
+        }
+
+        int vertex = _count * 4;
+        _positions[vertex + 0] = new SKPoint(left, top);
+        _positions[vertex + 1] = new SKPoint(right, top);
+        _positions[vertex + 2] = new SKPoint(right, bottom);
+        _positions[vertex + 3] = new SKPoint(left, bottom);
+        int target = _count * 6;
+        _indices[target + 0] = (ushort)(vertex + 0);
+        _indices[target + 1] = (ushort)(vertex + 1);
+        _indices[target + 2] = (ushort)(vertex + 2);
+        _indices[target + 3] = (ushort)(vertex + 0);
+        _indices[target + 4] = (ushort)(vertex + 2);
+        _indices[target + 5] = (ushort)(vertex + 3);
+        _count++;
+    }
+
+    /// <summary>Finishes the batch list and resets the builder for the next frame.</summary>
+    public (SKVertices[] Batches, int Count) Complete()
+    {
+        int total = _batches.Count * TimelineNoteVertexBatch.QuadsPerBatch + _count;
+        Flush();
+        SKVertices[] batches = [.. _batches];
+        _batches.Clear();
+        _count = 0;
+        return (batches, total);
+    }
+
+    private void Flush()
+    {
+        if (_count == 0)
+        {
+            return;
+        }
+
+        _batches.Add(SKVertices.CreateCopy(
+            SKVertexMode.Triangles,
+            _positions[..(_count * 4)],
+            null,
+            null,
+            _indices[..(_count * 6)]));
+        _count = 0;
+    }
+}
+
+/// <summary>
 /// Identity of one GPU vertex batch: the preview source, both content fingerprints, the mapped
 /// rectangle size, the device pixel width and the two colors. Every input that can change a pixel
 /// is part of the key, so a hit can never draw stale data.
@@ -100,6 +163,13 @@ internal sealed class TimelineNoteVertexBatch : IDisposable
     /// <summary>Reads the ARGB value of a brush so the batch key and the paint stay in sync.</summary>
     public static uint ColorOf(IBrush brush) =>
         brush is ISolidColorBrush solid ? solid.Color.ToUInt32() : 0xFFFFFFFFu;
+
+    /// <summary>Creates a batch from already built quads, used by the piano roll surface.</summary>
+    public static TimelineNoteVertexBatch FromQuads(
+        SKVertices[] batches,
+        int quadCount,
+        uint color) =>
+        new(batches, [], quadCount, 0, color, color);
 
     public static TimelineNoteVertexBatch Build(
         List<TimelineSegmentPreviewNote> notes,
@@ -238,15 +308,28 @@ internal sealed class TimelineNoteVertexBatch : IDisposable
 /// bounded without history dependent bookkeeping; when it is reached the store is emptied, which
 /// only costs a rebuild on the next frame.
 /// </summary>
-internal sealed class TimelineNoteBatchCache
+internal sealed class TimelineNoteBatchCache : TimelineVertexBatchCache<TimelineNoteBatchKey>
+{
+}
+
+/// <summary>
+/// Deterministic batch store with a hard byte ceiling and least-recently-used eviction. Evicted
+/// batches release their native Skia buffers, so the store cannot leak across rebuilds.
+/// </summary>
+internal class TimelineVertexBatchCache<TKey>
+    where TKey : notnull
 {
     /// <summary>Hard ceiling for retained vertex data; eviction keeps the process bounded.</summary>
     public const long BudgetBytes = 256L * 1024 * 1024;
 
-    private readonly Dictionary<TimelineNoteBatchKey, CacheEntry> _entries = [];
+    private readonly Dictionary<TKey, CacheEntry> _entries = [];
     private long _clock;
 
     public int Count => _entries.Count;
+
+    public long Hits { get; private set; }
+
+    public long Misses { get; private set; }
 
     public long TotalVertexBytes
     {
@@ -262,10 +345,11 @@ internal sealed class TimelineNoteBatchCache
         }
     }
 
-    public bool TryGet(in TimelineNoteBatchKey key, out TimelineNoteVertexBatch batch)
+    public bool TryGet(in TKey key, out TimelineNoteVertexBatch batch)
     {
         if (_entries.TryGetValue(key, out CacheEntry entry))
         {
+            Hits++;
             entry.LastUsed = ++_clock;
             _entries[key] = entry;
             batch = entry.Batch;
@@ -276,8 +360,9 @@ internal sealed class TimelineNoteBatchCache
         return false;
     }
 
-    public void Store(in TimelineNoteBatchKey key, TimelineNoteVertexBatch batch)
+    public void Store(in TKey key, TimelineNoteVertexBatch batch)
     {
+        Misses++;
         _entries[key] = new CacheEntry(batch, ++_clock);
         EvictOverBudget();
     }
@@ -300,18 +385,20 @@ internal sealed class TimelineNoteBatchCache
     {
         while (_entries.Count > 1 && TotalVertexBytes > BudgetBytes)
         {
-            TimelineNoteBatchKey? oldestKey = null;
+            TKey? oldestKey = default;
+            bool found = false;
             long oldestUse = long.MaxValue;
-            foreach (KeyValuePair<TimelineNoteBatchKey, CacheEntry> entry in _entries)
+            foreach (KeyValuePair<TKey, CacheEntry> entry in _entries)
             {
                 if (entry.Value.LastUsed < oldestUse)
                 {
                     oldestUse = entry.Value.LastUsed;
                     oldestKey = entry.Key;
+                    found = true;
                 }
             }
 
-            if (oldestKey is not { } key || !_entries.Remove(key, out CacheEntry evicted))
+            if (!found || oldestKey is null || !_entries.Remove(oldestKey, out CacheEntry evicted))
             {
                 return;
             }

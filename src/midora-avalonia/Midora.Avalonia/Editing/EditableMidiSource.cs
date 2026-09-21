@@ -10,6 +10,13 @@ public sealed class EditableMidiSource :
 {
     private readonly EditableMidiProject _project;
     private readonly int _trackIndex;
+    private TimelineRenderItem[]? _items;
+    private int[][]? _laneItems;
+    private long[][]? _laneMaximumEndPrefix;
+    private ulong _fingerprint;
+    private long _maximumEndTick;
+    private long _builtProjectVersion = -1;
+    private long _builtTrackVersion = -1;
 
     public EditableMidiSource(EditableMidiProject project, int trackIndex)
     {
@@ -37,9 +44,23 @@ public sealed class EditableMidiSource :
         }
     }
 
-    public long MaximumEndTick => ComputeMaximumEndTick();
+    public long MaximumEndTick
+    {
+        get
+        {
+            EnsureBuilt();
+            return _maximumEndTick;
+        }
+    }
 
-    public ulong ContentFingerprint => ComputeContentFingerprint();
+    public ulong ContentFingerprint
+    {
+        get
+        {
+            EnsureBuilt();
+            return _fingerprint;
+        }
+    }
 
     public void QueryInto(
         long startTick,
@@ -51,10 +72,34 @@ public sealed class EditableMidiSource :
         ArgumentNullException.ThrowIfNull(destination);
         long effectiveStart = Math.Max(0, startTick);
         if (endTick <= effectiveStart || firstLane >= lastLaneExclusive) return;
-        foreach (TimelineRenderItem item in BuildItems())
+        EnsureBuilt();
+        int[][] lanes = _laneItems!;
+        long[][] prefixes = _laneMaximumEndPrefix!;
+        int first = Math.Max(0, firstLane);
+        int last = Math.Min(lastLaneExclusive, lanes.Length);
+        for (int lane = first; lane < last; lane++)
         {
-            if (item.Lane < firstLane || item.Lane >= lastLaneExclusive) continue;
-            if (item.StartTick < endTick && item.EndTick > effectiveStart) destination.Add(item);
+            int[] laneItems = lanes[lane];
+            if (laneItems.Length == 0)
+            {
+                continue;
+            }
+
+            long[] prefix = prefixes[lane];
+            int index = FirstPrefixEndGreaterThan(prefix, effectiveStart);
+            for (; index < laneItems.Length; index++)
+            {
+                TimelineRenderItem item = _items![laneItems[index]];
+                if (item.StartTick >= endTick)
+                {
+                    break;
+                }
+
+                if (item.EndTick > effectiveStart)
+                {
+                    destination.Add(item);
+                }
+            }
         }
     }
 
@@ -77,7 +122,8 @@ public sealed class EditableMidiSource :
 
     public bool TryGetById(MidoraId id, out TimelineRenderItem item)
     {
-        foreach (TimelineRenderItem candidate in BuildItems())
+        EnsureBuilt();
+        foreach (TimelineRenderItem candidate in _items!)
         {
             if (candidate.Id == id)
             {
@@ -89,12 +135,17 @@ public sealed class EditableMidiSource :
         return false;
     }
 
-    public IEnumerable<TimelineRenderItem> EnumerateAll() => BuildItems();
+    public IEnumerable<TimelineRenderItem> EnumerateAll()
+    {
+        EnsureBuilt();
+        return _items!;
+    }
 
     public void AccumulateOverviewDensity(long extent, Span<int> destination)
     {
         if (extent <= 0 || destination.IsEmpty) return;
-        foreach (TimelineRenderItem item in BuildItems())
+        EnsureBuilt();
+        foreach (TimelineRenderItem item in _items!)
         {
             int column = (int)Math.Clamp(
                 Math.Floor(item.StartTick / (double)extent * destination.Length),
@@ -104,11 +155,102 @@ public sealed class EditableMidiSource :
         }
     }
 
-    private ulong ComputeContentFingerprint()
+    /// <summary>
+    /// Rebuilds the render items, the per-lane index and the fingerprint only when the track or the
+    /// project changed. Every frame used to rebuild and sort the whole track (200k items for a large
+    /// Pure MIDI track) on each query, which dominated both the ruler and the piano roll frame.
+    /// </summary>
+    private void EnsureBuilt()
     {
-        return TimelineContentFingerprint.Combine(
-            TimelineContentFingerprint.ForRenderItems(BuildItems()),
-            unchecked((ulong)_project.Version));
+        EditableMidiTrack track = _project.Tracks[_trackIndex];
+        long projectVersion = _project.Version;
+        long trackVersion = track.Version;
+        if (_items is not null
+            && _builtProjectVersion == projectVersion
+            && _builtTrackVersion == trackVersion)
+        {
+            return;
+        }
+
+        TimelineRenderItem[] items = BuildItems(track);
+        _items = items;
+        _fingerprint = TimelineContentFingerprint.Combine(
+            TimelineContentFingerprint.ForRenderItems(items),
+            unchecked((ulong)projectVersion));
+        _maximumEndTick = ComputeMaximumEndTick();
+        BuildLaneIndex(items);
+        _builtProjectVersion = projectVersion;
+        _builtTrackVersion = trackVersion;
+    }
+
+    private void BuildLaneIndex(TimelineRenderItem[] items)
+    {
+        int laneCount = 0;
+        foreach (TimelineRenderItem item in items)
+        {
+            if (item.Lane >= laneCount)
+            {
+                laneCount = item.Lane + 1;
+            }
+        }
+
+        laneCount = Math.Max(1, laneCount);
+        int[] counts = new int[laneCount];
+        foreach (TimelineRenderItem item in items)
+        {
+            int lane = item.Lane < 0 ? 0 : item.Lane;
+            counts[lane < laneCount ? lane : laneCount - 1]++;
+        }
+
+        int[][] lanes = new int[laneCount][];
+        long[][] prefixes = new long[laneCount][];
+        for (int lane = 0; lane < laneCount; lane++)
+        {
+            lanes[lane] = new int[counts[lane]];
+            prefixes[lane] = new long[counts[lane]];
+        }
+
+        int[] fill = new int[laneCount];
+        for (int index = 0; index < items.Length; index++)
+        {
+            int lane = items[index].Lane < 0 ? 0 : items[index].Lane;
+            lane = lane < laneCount ? lane : laneCount - 1;
+            lanes[lane][fill[lane]++] = index;
+        }
+
+        for (int lane = 0; lane < laneCount; lane++)
+        {
+            int[] laneItems = lanes[lane];
+            long maximumEnd = long.MinValue;
+            for (int index = 0; index < laneItems.Length; index++)
+            {
+                maximumEnd = Math.Max(maximumEnd, items[laneItems[index]].EndTick);
+                prefixes[lane][index] = maximumEnd;
+            }
+        }
+
+        _laneItems = lanes;
+        _laneMaximumEndPrefix = prefixes;
+    }
+
+    private static int FirstPrefixEndGreaterThan(long[] prefix, long value)
+    {
+        int low = 0;
+        int high = prefix.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (prefix[middle] > value)
+            {
+                high = middle;
+            }
+            else
+            {
+                low = middle + 1;
+            }
+        }
+
+        return low;
     }
 
     private long ComputeMaximumEndTick()
@@ -130,9 +272,8 @@ public sealed class EditableMidiSource :
         return Math.Max(1, maximum);
     }
 
-    private TimelineRenderItem[] BuildItems()
+    private TimelineRenderItem[] BuildItems(EditableMidiTrack track)
     {
-        EditableMidiTrack track = _project.Tracks[_trackIndex];
         List<TimelineRenderItem> items = new(track.Notes.Count + track.Events.Count);
         foreach (EditableMidiNote note in track.Notes)
         {

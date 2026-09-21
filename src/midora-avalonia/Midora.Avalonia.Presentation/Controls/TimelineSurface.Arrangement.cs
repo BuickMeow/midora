@@ -288,8 +288,14 @@ public sealed partial class TimelineSurface
     private readonly List<TimelineNoteDrawEntry> _noteDrawEntries = [];
 
     /// <summary>Review-only: batches and vertex bytes retained by the GPU preview cache.</summary>
-    internal (int Batches, long VertexBytes) PreviewBatchDiagnostics =>
+    public (int Batches, long VertexBytes) PreviewBatchDiagnostics =>
         (_noteBatchCache.Count, _noteBatchCache.TotalVertexBytes);
+
+    /// <summary>Review-only: piano roll GPU batch cache and last visible note count.</summary>
+    public (int Batches, long VertexBytes, int VisibleNotes, long Hits, long Misses)
+        PianoRollBatchDiagnostics =>
+        (_pianoRollBatchCache.Count, _pianoRollBatchCache.TotalVertexBytes, _pianoRollVisibleCount,
+            _pianoRollBatchCache.Hits, _pianoRollBatchCache.Misses);
 
     /// <summary>
     /// Draws every pending Segment preview. Notes are horizontal bars in their pitch row and events

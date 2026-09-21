@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Midora.Avalonia.Presentation.Rendering;
 using Midora.Domain;
 
@@ -432,6 +433,49 @@ public sealed partial class TimelineSurface : Control
         TraceRenderFrame(renderStart);
     }
 
+    private long _modeGridMilliseconds;
+    private long _modeRulerMilliseconds;
+    private long _modeSurfaceMilliseconds;
+    private long _modeSpanTicks;
+
+    /// <summary>Review-only per-phase timings of the last mode surface frame.</summary>
+    public (long SpanTicks, long GridMs, long RulerMs, long ModeMs) ModePhaseDiagnostics =>
+        (_modeSpanTicks, _modeGridMilliseconds, _modeRulerMilliseconds, _modeSurfaceMilliseconds);
+
+    /// <summary>
+    /// Review-only offscreen frame benchmark. Renders the surface into a <see cref="RenderTargetBitmap"/>
+    /// at the current display scaling so the shape path and the GPU batch path can be compared
+    /// deterministically, without depending on window visibility or compositor throttling. The caller
+    /// must run it after layout, otherwise the surface has no bounds and nothing is rendered.
+    /// </summary>
+    public (double Average, double Maximum, bool HasBounds) BenchmarkRenderFrames(int frames)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(frames, 1);
+        if (Bounds.Width <= 0 || Bounds.Height <= 0)
+        {
+            return (0, 0, false);
+        }
+
+        double scaling = (VisualRoot as TopLevel)?.RenderScaling ?? 1.0;
+        using var target = new RenderTargetBitmap(
+            new PixelSize(
+                Math.Max(1, (int)Math.Round(Bounds.Width * scaling)),
+                Math.Max(1, (int)Math.Round(Bounds.Height * scaling))),
+            new Vector(96 * scaling, 96 * scaling));
+        double total = 0;
+        double maximum = 0;
+        for (int frame = 0; frame < frames; frame++)
+        {
+            long start = Environment.TickCount64;
+            target.Render(this);
+            double elapsed = Environment.TickCount64 - start;
+            total += elapsed;
+            maximum = Math.Max(maximum, elapsed);
+        }
+
+        return (total / frames, maximum, true);
+    }
+
     /// <summary>
     /// Review-only frame cost trace (MIDORA_TIMELINE_TRACE=1): reports the average and worst
     /// render duration every 60 frames so preview/tile regressions stay measurable.
@@ -447,15 +491,22 @@ public sealed partial class TimelineSurface : Control
         _renderFrameCount++;
         _renderTotalMilliseconds += elapsed;
         _renderMaximumMilliseconds = Math.Max(_renderMaximumMilliseconds, elapsed);
-        if (_renderFrameCount % 30 != 0)
+        bool each = Environment.GetEnvironmentVariable("MIDORA_TIMELINE_TRACE_EACH") == "1";
+        if (!each && _renderFrameCount != 1 && _renderFrameCount % 30 != 0)
         {
             return;
         }
 
         (int previewBatches, long previewVertexBytes) = PreviewBatchDiagnostics;
+        (int rollBatches, long rollVertexBytes, int rollVisible, long rollHits, long rollMisses) =
+            PianoRollBatchDiagnostics;
         Console.Out.WriteLine(
             $"MIDORA-RENDER frames={_renderFrameCount} avg={_renderTotalMilliseconds / _renderFrameCount:F2} ms max={_renderMaximumMilliseconds:F0} ms"
-            + $" batches={previewBatches} vertexMB={previewVertexBytes / (1024.0 * 1024.0):F1}");
+            + $" batches={previewBatches} vertexMB={previewVertexBytes / (1024.0 * 1024.0):F1}"
+            + $" rollBatches={rollBatches} rollVertexMB={rollVertexBytes / (1024.0 * 1024.0):F1}"
+            + $" rollVisible={rollVisible} rollHits={rollHits} rollMisses={rollMisses}"
+            + $" span={_modeSpanTicks} grid={_modeGridMilliseconds} ruler={_modeRulerMilliseconds}"
+            + $" mode={_modeSurfaceMilliseconds}");
         Console.Out.Flush();
     }
 
@@ -492,14 +543,19 @@ public sealed partial class TimelineSurface : Control
             BorderPen,
             new Point(0, Math.Round(rulerHeight) + 0.5),
             new Point(width, Math.Round(rulerHeight) + 0.5));
+        long phaseStart = Environment.TickCount64;
         if (GridVisible)
         {
             DrawGrid(context, viewport, width, height);
         }
         FlushShapes(context);
+        _modeGridMilliseconds = Environment.TickCount64 - phaseStart;
 
+        phaseStart = Environment.TickCount64;
         DrawRulerMarkerLabels(context, viewport, width);
+        _modeRulerMilliseconds = Environment.TickCount64 - phaseStart;
 
+        phaseStart = Environment.TickCount64;
         switch (SurfaceMode)
         {
             case TimelineSurfaceMode.PianoRoll:
@@ -518,6 +574,8 @@ public sealed partial class TimelineSurface : Control
 
         DrawPlaybackCursor(context, viewport, height);
         DrawMarquee(context, width, height);
+        _modeSurfaceMilliseconds = Environment.TickCount64 - phaseStart;
+        _modeSpanTicks = viewport.TickLength;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)

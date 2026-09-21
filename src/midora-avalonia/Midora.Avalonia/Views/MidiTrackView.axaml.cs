@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -268,11 +269,47 @@ public partial class MidiTrackView : UserControl
         Timeline.ValueMinimum = DefaultValueMinimum;
         Timeline.ValueMaximum = DefaultValueMaximum;
         Timeline.TickSpan = Math.Max(1, _ticksPerQuarterNote * 4L);
+        if (long.TryParse(
+                Environment.GetEnvironmentVariable("MIDORA_TRACK_SPAN"),
+                out long requestedSpan) && requestedSpan > 0)
+        {
+            // Review-only: starts the track view at a given span so zoomed-out frame cost is
+            // measurable without interactive input.
+            Timeline.TickSpan = requestedSpan;
+        }
+
         Timeline.StartTick = 0;
         Timeline.SelectedId = null;
 
         SetMode(DefaultModeForTrack(_trackIndex));
         ShowPointerTick(-1);
+        if (int.TryParse(
+                Environment.GetEnvironmentVariable("MIDORA_TRACK_BENCH"),
+                out int benchFrames) && benchFrames > 0)
+        {
+            // Review-only: runs after layout so the offscreen benchmark sees real bounds.
+            Dispatcher.UIThread.Post(
+                () =>
+                {
+                    Timeline.BenchmarkRenderFrames(2);
+                    (double average, double maximum, bool hasBounds) =
+                        Timeline.BenchmarkRenderFrames(benchFrames);
+                    (int rollBatches, long rollVertexBytes, int rollVisible, long rollHits, long rollMisses) =
+                        Timeline.PianoRollBatchDiagnostics;
+                    (long spanTicks, long gridMs, long rulerMs, long modeMs) =
+                        Timeline.ModePhaseDiagnostics;
+                    Console.Out.WriteLine(
+                        $"MIDORA-TRACK-BENCH frames={benchFrames} hasBounds={hasBounds} "
+                        + $"avg={average:F2} ms max={maximum:F0} ms "
+                        + $"span={Timeline.TickSpan} mode={Timeline.SurfaceMode} "
+                        + $"rollVisible={rollVisible} rollBatches={rollBatches} "
+                        + $"rollVertexMB={rollVertexBytes / (1024.0 * 1024.0):F1} "
+                        + $"rollHits={rollHits} rollMisses={rollMisses} "
+                        + $"viewSpan={spanTicks} grid={gridMs} ruler={rulerMs} modeMs={modeMs}");
+                    Console.Out.Flush();
+                },
+                DispatcherPriority.Loaded);
+        }
     }
 
     /// <summary>

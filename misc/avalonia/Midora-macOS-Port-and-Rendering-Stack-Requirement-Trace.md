@@ -850,3 +850,46 @@ Skia lease 绘制；批自持 paint；批缓存按字节预算 LRU 淘汰并**�
 - 验证：`MIDORA_MIDI_PORTMAP=32:1` 钩子验证重试路径（port 32 文件导入成功）；
   `MIDORA_PORTMAP_DIALOG=1` 钩子验证对话框 XAML 加载与默认一对一分配（无异常、等待输入）。
 - 注意：普通 `FF 21` Port 元事件不必然产生越界源 Port；该分支只在确有越界源 Port 时触发。
+
+## Slice V：Piano Roll 的 GPU 批渲染与渲染源索引
+
+测试文件：`pianoroll-200k.mid`（20 万音符、键 60–71、200,000 ticks），`MIDORA_TRACK_BENCH` 离屏确定性基准
+（`RenderTargetBitmap`，布局完成后执行，60 帧平均）。
+
+### 根因：渲染源每帧整轨重建
+
+`EditableMidiSource.QueryInto` 每次都调用 `BuildItems()`，即**构建并排序整轨全部 item**（20 万项），
+而每帧至少查询两次（ruler 标记 + 钢琴卷帘）：
+
+| 项 | 修改前 | 修改后 |
+| --- | --- | --- |
+| ruler 阶段 | **63 ms** | **0 ms** |
+| mode 阶段（20 万可见音符，形状路径） | 168–214 ms | 100–107 ms |
+
+修复：`EditableMidiSource` 增加**版本键缓存**（`Project.Version` + `Track.Version`）与**分 lane 索引**
+（每 lane 存排序后的 item 下标 + `EndTick` 前缀最大值，查询用前缀二分跳过不相交区间），
+指纹与 `MaximumEndTick` 一并缓存。
+
+### Piano Roll GPU 批通道
+
+超过每帧形状预算（默认 20,000）时，可见音符由**一个** custom op 以预建 `SKVertices` 绘制；
+批缓存键 = 渲染源 + 区间指纹 + `PixelsPerTick` + `LaneHeight` + device pixel + 可见区间 + 颜色，
+命中时零重建；选中音符仍走精确形状层覆盖在批之上（因此选择变化不使批失效）。
+
+| 场景 | 形状路径 | GPU 批路径 | 提升 |
+| --- | --- | --- | --- |
+| 整轨展开（20 万音符可见，span 300000） | 106.17 ms（mode 100 ms） | **26.75 ms（mode 23 ms）** | **4.0×** |
+| 常规缩放（3 万音符可见，span 30000） | 20.45 ms（mode 16 ms） | **7.75 ms（mode 3 ms）** | **2.6×** |
+
+批缓存实测：1 次构建 + 42 次命中（60 帧基准）。
+
+### 评审钩子
+
+`MIDORA_TRACK_BENCH=N`（轨道视图离屏基准，输出可见音符数/批数/顶点 MB/命中未命中/各阶段耗时）、
+`MIDORA_TRACK_SPAN=N`（初始视野跨度）、`MIDORA_TIMELINE_TRACE_EACH=1`（逐帧 trace）。
+
+### 遗留
+
+- 整轨展开时仍有约 20 ms/帧：主要来自可见项遍历（20 万项查询与可见性判断），
+  可改为 visitor 直写顶点或引入密度摘要层。
+- `MIDORA_GPU_NOTE_THRESHOLD` 同时覆盖 Arrangement 与 Piano Roll 的每帧预算，如需分别调优再拆分。

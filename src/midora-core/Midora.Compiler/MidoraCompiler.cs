@@ -414,14 +414,28 @@ public sealed partial class MidoraCompiler : IDisposable
         }
 
         request.Progress?.Report(CompilationPhase.PublishingMidi);
+        bool publishTrace = System.Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
+        long publishStart = System.Environment.TickCount64;
+        void TracePublish(string label)
+        {
+            if (publishTrace)
+            {
+                System.Console.Out.WriteLine(
+                    $"MIDORA-IMPORT publishStage={label} ms={System.Environment.TickCount64 - publishStart}");
+                System.Console.Out.Flush();
+            }
+        }
+
         CanonicalSmfTrackDescriptor[] smfTracks = FreezeSmfTrackDescriptors(
             pureMidiPlan,
             allocation.UnitByRoot);
+        TracePublish("freezeSmfTracks");
         CanonicalOpaqueMidiEvent[] opaqueMidiEvents = pureMidiPlan.OpaqueEvents;
         CanonicalMidiChannelModeSystemExclusiveEvent[] channelModeSystemExclusiveEvents =
             MaterializePureMidiChannelModeSystemExclusiveEvents(
                 pureMidiPlan,
                 allocation.UnitByRoot);
+        TracePublish("channelModeSysEx");
         ICanonicalMidiEventPageSource? pagedEventSource = endTick > request.StartTick
             && pureMidiPlan.Roots.Any(root => root.HasParticipatingSegments)
             ? new PureMidiPagedCanonicalSource(
@@ -435,11 +449,15 @@ public sealed partial class MidoraCompiler : IDisposable
         if (!usesPagedPureMidi && pagedEventSource is not null)
         {
             List<CanonicalMidiEvent> merged = new(ranged);
+            TracePublish($"pagedSourceCreated preMergeCount={merged.Count}");
             foreach (CanonicalMidiEventPage page in pagedEventSource.QueryPages(
                 request.StartTick, endTick, includeStateAtStart: true, cancellationToken))
                 merged.AddRange(page.Items);
+            TracePublish($"queryPages mergedCount={merged.Count}");
             merged.Sort(CanonicalComparer.Instance);
+            TracePublish("sort");
             ranged = merged.ToArray();
+            TracePublish("toArray");
             pagedEventSource = null;
         }
         request.Progress?.Report(CompilationPhase.Fingerprinting);

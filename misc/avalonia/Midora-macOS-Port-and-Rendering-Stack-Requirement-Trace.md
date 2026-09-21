@@ -749,3 +749,13 @@
   `TimelineTempoTileRasterizer`、`TimelineSegmentPreviewRasterizer`、`TimelineRasterPlacement`
   与 `TimelineRasterLayer` 枚举中的未使用层；`TimelineRenderModel` 仍持有 `TimelineSegmentPreview`
   数据结构（指纹方法已无调用者）。
+
+### Slice S 修正：预览音符几何与视口映射
+
+- **音符**必须是**横条**：用 `NormalizedStart..NormalizedEnd` 得到左右边界，高度为 128 行中的一行
+  （`full.Height / 128`）；此前误用"起点 + 单像素宽 + 直到行底"的自动化式竖条。
+- **映射必须走完整 Segment 矩形**（`full`，由 `TickToX(StartTick/EndTick)` 得出，可超出视口），
+  再用可见区做裁剪；此前用被裁剪后的 `bounds` 做归一化映射，导致缩放/滚动后位置与长度全错。
+- **同屏上限**：单帧 50 000 图元；超限时按 **stride 均匀抽稀**（而非截断），因此不会出现"某块区域
+  完全没有音符"。
+- 实测（约 104 小节、12 轨整曲）：平均 **4.3 ms/帧**、最差 20 ms，仍在 60 Hz 预算内。

@@ -270,13 +270,14 @@ public sealed partial class TimelineSurface
     }
 
     /// <summary>Upper bound for the direct preview drawing of a single frame.</summary>
-    private const int MaximumDirectPreviewPrimitives = 20_000;
+    private const int MaximumDirectPreviewPrimitives = 50_000;
 
     /// <summary>
-    /// Draws every pending Segment preview directly through the batched shape pass. The tile cache
-    /// was removed after the Skia pipeline made direct drawing cheap enough: notes and events are
-    /// queued as coloured rectangles and flushed once per Segment (the clip must be active while
-    /// flushing), so a dense frame costs a few submissions instead of one call per primitive.
+    /// Draws every pending Segment preview directly through the batched shape pass. Notes are
+    /// horizontal bars in their pitch row and events are vertical ticks, both mapped through the
+    /// FULL Segment rectangle (which may extend past the viewport) and clipped to the visible part,
+    /// so zoom and scrolling place them correctly. When a frame exceeds the primitive ceiling the
+    /// previews are thinned uniformly by stride instead of truncating, so no region goes blank.
     /// </summary>
     private void DrawSegmentPreviewDeferred(DrawingContext context, TimelineViewport viewport)
     {
@@ -285,52 +286,62 @@ public sealed partial class TimelineSurface
         int drawn = 0;
         foreach (PendingSegmentPreview pending in _pendingSegmentPreviews)
         {
-            Rect bounds = pending.Bounds;
+            Rect visible = pending.Bounds;
+            TimelineRenderItem item = pending.Item;
             ITimelineSegmentPreviewSource preview = pending.Preview;
-            using (context.PushClip(bounds))
+            double fullLeft = viewport.TickToX(item.StartTick);
+            double fullRight = viewport.TickToX(item.EndTick);
+            Rect full = new(
+                fullLeft,
+                visible.Y,
+                Math.Max(1, fullRight - fullLeft),
+                visible.Height);
+            double rowHeight = Math.Max(devicePixel, full.Height / 128d);
+            using (context.PushClip(visible))
             {
                 if (preview.HasNoteContent)
                 {
                     _previewNotes.Clear();
                     preview.QueryNotes(0, 1, _previewNotes);
-                    foreach (TimelineSegmentPreviewNote note in _previewNotes)
+                    int stride = Math.Max(
+                        1,
+                        _previewNotes.Count / Math.Max(1, MaximumDirectPreviewPrimitives));
+                    for (int index = 0; index < _previewNotes.Count; index += stride)
                     {
-                        if (drawn >= MaximumDirectPreviewPrimitives)
-                        {
-                            break;
-                        }
-
-                        double x = SnapToDevicePixel(
-                            bounds.X + Math.Clamp(note.NormalizedStart, 0, 1) * bounds.Width,
-                            devicePixel);
-                        double pitch = Math.Clamp(note.Pitch, 0, 127);
-                        double top = bounds.Y + (127 - pitch) / 127d * bounds.Height;
+                        TimelineSegmentPreviewNote note = _previewNotes[index];
+                        double left = full.X + Math.Clamp(note.NormalizedStart, 0, 1) * full.Width;
+                        double right = full.X + Math.Clamp(note.NormalizedEnd, 0, 1) * full.Width;
+                        double top = full.Y
+                            + (127 - Math.Clamp(note.Pitch, 0, 127)) / 128d * full.Height;
                         AddFill(
                             SegmentNotePreviewBrush,
-                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
+                            new Rect(
+                                left,
+                                top,
+                                Math.Max(devicePixel, right - left),
+                                rowHeight));
                         drawn++;
                     }
                 }
 
-                if (preview.HasEventContent && drawn < MaximumDirectPreviewPrimitives)
+                if (preview.HasEventContent)
                 {
                     _previewEvents.Clear();
                     preview.QueryEvents(0, 1, _previewEvents);
-                    foreach (TimelineSegmentPreviewEvent value in _previewEvents)
+                    int stride = Math.Max(
+                        1,
+                        _previewEvents.Count / Math.Max(1, MaximumDirectPreviewPrimitives));
+                    for (int index = 0; index < _previewEvents.Count; index += stride)
                     {
-                        if (drawn >= MaximumDirectPreviewPrimitives)
-                        {
-                            break;
-                        }
-
+                        TimelineSegmentPreviewEvent value = _previewEvents[index];
                         double x = SnapToDevicePixel(
-                            bounds.X + Math.Clamp(value.NormalizedTick, 0, 1) * bounds.Width,
+                            full.X + Math.Clamp(value.NormalizedTick, 0, 1) * full.Width,
                             devicePixel);
-                        double top = bounds.Y
-                            + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * bounds.Height;
+                        double top = full.Y
+                            + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * full.Height;
                         AddFill(
                             EventPreviewBrush,
-                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
+                            new Rect(x, top, devicePixel, Math.Max(devicePixel, full.Bottom - top)));
                         drawn++;
                     }
                 }
@@ -339,6 +350,7 @@ public sealed partial class TimelineSurface
             }
         }
 
+        _ = drawn;
         _pendingSegmentPreviews.Clear();
     }
 

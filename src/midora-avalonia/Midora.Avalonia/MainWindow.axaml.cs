@@ -104,12 +104,34 @@ public partial class MainWindow : Window
     {
         try
         {
+            bool trace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
+            long started = Environment.TickCount64;
             byte[] bytes = File.ReadAllBytes(path);
+            if (trace)
+            {
+                Console.Out.WriteLine(
+                    $"MIDORA-IMPORT read={Environment.TickCount64 - started} ms bytes={bytes.Length}");
+                Console.Out.Flush();
+            }
+
             var project = ImportedMidiProject.Parse(bytes, System.IO.Path.GetFileName(path));
+            if (trace)
+            {
+                Console.Out.WriteLine(
+                    $"MIDORA-IMPORT parse={Environment.TickCount64 - started} ms");
+                Console.Out.Flush();
+            }
+
             Session.CreateProjectFromMidi(
                 System.IO.Path.GetFileNameWithoutExtension(path),
                 project,
                 bytes);
+            if (trace)
+            {
+                Console.Out.WriteLine(
+                    $"MIDORA-IMPORT session={Environment.TickCount64 - started} ms");
+                Console.Out.Flush();
+            }
         }
         catch (Exception ex)
         {

@@ -918,3 +918,42 @@ Skia lease 绘制；批自持 paint；批缓存按字节预算 LRU 淘汰并**�
 - 经验记录：**visitor + 委托/闭包在本平台比"列表拷贝"更慢**（实测 GPU 26.75→43.92ms、形状 106→194ms），
   因此钢琴卷帘保留列表路径，仅把遍历下沉到结构体 sink；若要进一步去列表化，需要 `ITimelineRenderItemSource`
   增加泛型 struct visitor 重载（公共接口变更，暂不做）。
+
+## Slice W：Piano Roll LOD（音符合并，yinhe 式中期逻辑）
+
+### 触发与语义
+
+- 触发条件：`可见项数 >= 2000` 且 `平均音符宽度 < 1 设备像素`（`TickLength / 可见项数 × PixelsPerTick`）。
+  典型 MIDI（音符约 120 tick）在常规缩放下音符约 4.8px → **不触发**，仍逐音符精确绘制；只有音符真的亚像素时才合并。
+- 合并粒度：**每个 (lane, chunk) 一个四边形**，chunk 为索引里的 256 项；包络 = chunk 的 `[首个音符起点, 最大结束点]`，
+  是**保守并集**（不会丢弃任何本应可见的音符，符合"不得设显示上限"）。Piano Roll 的 lane 就是音高，
+  所以纵向**完全精确**，只有横向是包络近似（在亚像素缩放下与逐音符视觉等价）。
+- 选中音符仍由**精确形状层**覆盖在批之上；无选中时（`HasAnySelection`）跳过该遍历。
+  命中测试/选择/编辑仍走精确索引，不从包络或位图反推语义。
+
+### 索引与接口
+
+- `TimelineLaneChunkIndex.VisitChunks<TChunkSink>`：chunk 级遍历（结构体 sink、零委托），
+  与 `QueryInto`/`VisitInto`/`Count` 共用同一套 chunk 边界逻辑。
+- `ITimelineRenderItemSource` 新增 `CountInRange(...)`（默认实现保底，`EditableMidiSource` 用索引 O(chunk) 回答）
+  与 `HasAnySelection`（默认保守 true，`EditableMidiSource` 在构建 item 时顺带计算）。
+- 新增 2 项测试：chunk 包络必须覆盖区间内每个音符（保守性）、chunk 项数与 lane 边界；
+  测试总计 **26/26**。
+
+### 实测（20 万音符，`MIDORA_TRACK_BENCH=150`，离屏确定性基准）
+
+| 场景 | p50 |
+| --- | --- |
+| 同进程 A/B：LOD | **4.06 ms** |
+| 同进程 A/B：形状路径（禁用 LOD 与批） | **178.67 ms** |
+| 整轨展开（span 300000，20 万音符可见） | 4.66 ms（顶点 0.0MB，原逐音符批为 8.4MB） |
+| 常规缩放（span 30000，3 万音符可见） | 1.28 ms |
+| 基准下限（span 3000，3 千音符） | 0.28 ms |
+
+LOD 相对逐音符 GPU 批约 **6–9×**、相对形状路径约 **44×**，且成本只随可见 chunk 数（n/256）增长。
+
+### 遗留
+
+- LOD 批的缓存键包含内容指纹，而指纹含选中状态 → 选中变化会重建 LOD 批（几何其实无关）。
+  当前只在用户操作时发生，未优化。
+- Arrangement 的音符合并（AR）尚未做：需要每 chunk 的 min/max pitch（+0.06 字节/项）与外观决策（A1/A2/A3 粒度）。

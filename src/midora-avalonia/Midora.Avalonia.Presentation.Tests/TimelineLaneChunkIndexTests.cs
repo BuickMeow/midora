@@ -105,6 +105,73 @@ public sealed class TimelineLaneChunkIndexTests
     }
 
     [Fact]
+    public void ChunkEnvelopesCoverEveryIntersectingNote()
+    {
+        TimelineRenderItem[] items = BuildRandomItems(seed: 4242, count: 6_000, lanes: 12);
+        TimelineLaneChunkIndex chunkIndex = TimelineLaneChunkIndex.BuildSorted(items);
+        Random random = new(31337);
+        for (int iteration = 0; iteration < 200; iteration++)
+        {
+            long start = random.Next(0, 10_000);
+            long end = start + random.Next(1, 2_000);
+            int firstLane = random.Next(0, 13);
+            int lastLane = firstLane + random.Next(0, 5);
+            CoverageSink sink = new();
+            chunkIndex.VisitChunks(start, end, firstLane, lastLane, ref sink);
+            long effectiveStart = Math.Max(0, start);
+            foreach (TimelineRenderItem item in items)
+            {
+                if (item.Lane < firstLane || item.Lane >= lastLane) continue;
+                if (item.StartTick >= end || item.EndTick <= effectiveStart) continue;
+                bool covered = false;
+                foreach ((int lane, long chunkStart, long chunkEnd, int count) in sink.Chunks)
+                {
+                    if (lane == item.Lane && chunkStart <= item.StartTick && chunkEnd >= item.EndTick)
+                    {
+                        covered = true;
+                        break;
+                    }
+                }
+
+                Assert.True(
+                    covered,
+                    $"note {item.Id.Value} [{item.StartTick},{item.EndTick}) lane {item.Lane} "
+                    + $"was not covered for range [{start},{end}) lanes [{firstLane},{lastLane})");
+            }
+        }
+    }
+
+    [Fact]
+    public void ChunkEnvelopesReportItemCountsAndLaneBounds()
+    {
+        List<TimelineRenderItem> items = [];
+        for (int index = 0; index < TimelineLaneChunkIndex.ChunkSize * 2 + 3; index++)
+        {
+            items.Add(Item(index + 1, lane: 2, start: index * 4L, end: index * 4L + 2));
+        }
+
+        TimelineRenderItem[] sorted = Sort(items);
+        TimelineLaneChunkIndex chunkIndex = TimelineLaneChunkIndex.BuildSorted(sorted);
+        CoverageSink sink = new();
+        chunkIndex.VisitChunks(0, long.MaxValue / 2, 0, 8, ref sink);
+        Assert.Equal(3, sink.Chunks.Count);
+        Assert.Equal(TimelineLaneChunkIndex.ChunkSize, sink.Chunks[0].Count);
+        Assert.Equal(TimelineLaneChunkIndex.ChunkSize, sink.Chunks[1].Count);
+        Assert.Equal(3, sink.Chunks[2].Count);
+        Assert.All(sink.Chunks, chunk => Assert.Equal(2, chunk.Lane));
+    }
+
+    private struct CoverageSink : TimelineLaneChunkIndex.IChunkSink
+    {
+        public readonly List<(int Lane, long StartTick, long EndTick, int Count)> Chunks { get; }
+
+        public CoverageSink() => Chunks = [];
+
+        public void Chunk(int lane, long startTick, long endTick, int itemCount) =>
+            Chunks.Add((lane, startTick, endTick, itemCount));
+    }
+
+    [Fact]
     public void BuildRejectsUnsortedItems()
     {
         TimelineRenderItem[] items =

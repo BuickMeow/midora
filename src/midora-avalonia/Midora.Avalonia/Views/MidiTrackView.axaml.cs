@@ -297,12 +297,15 @@ public partial class MidiTrackView : UserControl
                     if (Environment.GetEnvironmentVariable("MIDORA_TRACK_BENCH_AB") == "1")
                     {
                         int budget = TimelineSurface.GpuNoteBatchThreshold;
+                        int lodMinimum = TimelineSurface.PianoRollLodMinimumNotes;
                         TimelineSurface.GpuNoteBatchThreshold = int.MaxValue;
+                        TimelineSurface.PianoRollLodMinimumNotes = int.MaxValue;
                         Timeline.ClearGpuBatchCaches();
                         Timeline.BenchmarkRenderFrames(2);
                         (double shapeAverage, double shapeMedian, double shapeMaximum, _) =
                             Timeline.BenchmarkRenderFrames(benchFrames);
                         TimelineSurface.GpuNoteBatchThreshold = budget;
+                        TimelineSurface.PianoRollLodMinimumNotes = lodMinimum;
                         Timeline.ClearGpuBatchCaches();
                         Console.Out.WriteLine(
                             $"MIDORA-TRACK-BENCH-AB gpuAvg={average:F2} gpuP50={median:F2} "

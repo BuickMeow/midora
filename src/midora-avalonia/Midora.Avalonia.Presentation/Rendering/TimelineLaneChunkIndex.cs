@@ -198,6 +198,68 @@ public sealed class TimelineLaneChunkIndex
     }
 
     /// <summary>
+    /// Sink for chunk level aggregation (LOD). A chunk is emitted once with its envelope
+    /// [startTick, endTick] and item count; the caller unions envelopes instead of visiting items.
+    /// </summary>
+    public interface IChunkSink
+    {
+        void Chunk(int lane, long startTick, long endTick, int itemCount);
+    }
+
+    /// <summary>
+    /// Visits every chunk that can intersect the tick range, with the chunk's first note start and
+    /// maximum end tick. Envelopes are conservative: a chunk is emitted whenever any of its notes
+    /// can intersect, so the union of emitted envelopes covers every intersecting note.
+    /// </summary>
+    public void VisitChunks<TChunkSink>(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        ref TChunkSink sink)
+        where TChunkSink : struct, IChunkSink
+    {
+        long effectiveStart = Math.Max(0, startTick);
+        if (endTick <= effectiveStart || firstLane >= lastLaneExclusive)
+        {
+            return;
+        }
+
+        int first = Math.Max(0, firstLane);
+        int last = Math.Min(lastLaneExclusive, _laneFirstItem.Length);
+        for (int lane = first; lane < last; lane++)
+        {
+            int count = _laneItemCount[lane];
+            if (count == 0)
+            {
+                continue;
+            }
+
+            long[] starts = _laneChunkStart[lane];
+            long[] maxEnds = _laneChunkMaxEnd[lane];
+            int firstChunk = FirstChunkReachingInto(lane, effectiveStart);
+            if (firstChunk >= starts.Length)
+            {
+                continue;
+            }
+
+            int lastChunk = LastChunkStartingBefore(starts, endTick);
+            if (lastChunk < firstChunk)
+            {
+                continue;
+            }
+
+            int laneFirst = _laneFirstItem[lane];
+            for (int chunk = firstChunk; chunk <= lastChunk; chunk++)
+            {
+                int from = laneFirst + chunk * ChunkSize;
+                int to = Math.Min(laneFirst + count, from + ChunkSize);
+                sink.Chunk(lane, starts[chunk], maxEnds[chunk], to - from);
+            }
+        }
+    }
+
+    /// <summary>
     /// Sink used by the traversal. A struct sink keeps the hot loop free of delegates and closures,
     /// which dominated the query cost when a large range was collected.
     /// </summary>

@@ -16,6 +16,7 @@ public sealed class EditableMidiSource :
     private long _maximumEndTick;
     private long _builtProjectVersion = -1;
     private long _builtTrackVersion = -1;
+    private bool _hasAnySelection;
 
     public EditableMidiSource(EditableMidiProject project, int trackIndex)
     {
@@ -40,6 +41,15 @@ public sealed class EditableMidiSource :
         {
             EditableMidiTrack track = _project.Tracks[_trackIndex];
             return track.Notes.Count + track.Events.Count;
+        }
+    }
+
+    public bool HasAnySelection
+    {
+        get
+        {
+            EnsureBuilt();
+            return _hasAnySelection;
         }
     }
 
@@ -71,6 +81,28 @@ public sealed class EditableMidiSource :
         ArgumentNullException.ThrowIfNull(destination);
         EnsureBuilt();
         _index!.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
+    }
+
+    public int CountInRange(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive)
+    {
+        EnsureBuilt();
+        return _index!.Count(startTick, endTick, firstLane, lastLaneExclusive);
+    }
+
+    public void VisitChunks<TChunkSink>(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        ref TChunkSink sink)
+        where TChunkSink : struct, TimelineLaneChunkIndex.IChunkSink
+    {
+        EnsureBuilt();
+        _index!.VisitChunks(startTick, endTick, firstLane, lastLaneExclusive, ref sink);
     }
 
     public void VisitInto(
@@ -156,6 +188,16 @@ public sealed class EditableMidiSource :
 
         TimelineRenderItem[] items = BuildItems(track);
         _items = items;
+        _hasAnySelection = false;
+        foreach (TimelineRenderItem item in items)
+        {
+            if (item.State.HasFlag(TimelineItemState.Selected))
+            {
+                _hasAnySelection = true;
+                break;
+            }
+        }
+
         _fingerprint = TimelineContentFingerprint.Combine(
             TimelineContentFingerprint.ForRenderItems(items),
             unchecked((ulong)projectVersion));

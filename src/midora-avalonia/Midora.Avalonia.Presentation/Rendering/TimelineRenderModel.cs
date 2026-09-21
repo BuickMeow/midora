@@ -476,6 +476,12 @@ public interface ITimelineRenderItemSource
     bool HasHitTestableItems => Count > 0;
 
     /// <summary>
+    /// Whether any item is selected. Callers that draw an exact selection layer over a level-of-detail
+    /// batch can skip that extra traversal when nothing is selected. The default is conservative.
+    /// </summary>
+    bool HasAnySelection => true;
+
+    /// <summary>
     /// Returns a bounded-cost fingerprint for a presentation range. Large
     /// paged sources override this with page metadata; the default deliberately
     /// invalidates broadly but never enumerates source items on the UI thread.
@@ -515,6 +521,45 @@ public interface ITimelineRenderItemSource
         List<TimelineRenderItem> values = [];
         QueryInto(startTick, endTick, firstLane, lastLaneExclusive, values);
         foreach (TimelineRenderItem value in values) visitor(value);
+    }
+
+    /// <summary>
+    /// Number of items intersecting the range. Sources backed by an index override this so callers
+    /// can size work (for example a level-of-detail decision) without materializing the items.
+    /// </summary>
+    int CountInRange(long startTick, long endTick, int firstLane, int lastLaneExclusive)
+    {
+        List<TimelineRenderItem> values = [];
+        QueryInto(startTick, endTick, firstLane, lastLaneExclusive, values);
+        return values.Count;
+    }
+
+    /// <summary>
+    /// Visits chunk level envelopes for a range. Indexed sources merge many items per chunk; the
+    /// default reports one envelope per item, which is correct but gives no level-of-detail saving.
+    /// </summary>
+    void VisitChunks<TChunkSink>(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        ref TChunkSink sink)
+        where TChunkSink : struct, TimelineLaneChunkIndex.IChunkSink
+    {
+        ChunkSinkAdapter<TChunkSink> adapter = new(sink);
+        VisitInto(startTick, endTick, firstLane, lastLaneExclusive, adapter.Add);
+        sink = adapter.Sink;
+    }
+
+    private sealed class ChunkSinkAdapter<TChunkSink>
+        where TChunkSink : struct, TimelineLaneChunkIndex.IChunkSink
+    {
+        public ChunkSinkAdapter(TChunkSink sink) => Sink = sink;
+
+        public TChunkSink Sink;
+
+        public void Add(TimelineRenderItem item) =>
+            Sink.Chunk(item.Lane, item.StartTick, item.EndTick, 1);
     }
 
     bool TryGetById(MidoraId id, out TimelineRenderItem item);

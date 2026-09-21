@@ -61,7 +61,14 @@ public partial class App : global::Avalonia.Application
                         // Review-only: keep the window frontmost so macOS does not throttle the
                         // render loop while the frame trace is being measured.
                         mainWindow.Activate();
-                        mainWindow.OpenMidiForReview(reviewMidi);
+                        if (Environment.GetEnvironmentVariable("MIDORA_MIDI_OPEN_DIALOG") == "1")
+                        {
+                            mainWindow.OpenMidiWithProgressForReview(reviewMidi);
+                        }
+                        else
+                        {
+                            mainWindow.OpenMidiForReview(reviewMidi);
+                        }
                     };
                 }
 

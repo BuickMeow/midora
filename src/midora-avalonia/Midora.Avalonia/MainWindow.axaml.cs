@@ -99,6 +99,15 @@ public partial class MainWindow : Window
 
     internal ShellSession Session { get; }
 
+    /// <summary>
+    /// Review-only entry point that exercises the progress dialog import path, so the dialog XAML and
+    /// the background streaming import can be verified without clicking the menu.
+    /// </summary>
+    internal void OpenMidiWithProgressForReview(string path) =>
+        _ = ImportMidiWithProgressAsync(
+            path,
+            System.IO.Path.GetFileNameWithoutExtension(path));
+
     /// <summary>Review-only entry point used by the <c>MIDORA_MIDI_OPEN</c> env var.</summary>
     internal void OpenMidiForReview(string path)
     {
@@ -337,14 +346,28 @@ public partial class MainWindow : Window
             return;
         }
 
+        await ImportMidiWithProgressAsync(path, System.IO.Path.GetFileNameWithoutExtension(files[0].Name));
+    }
+
+    /// <summary>
+    /// Imports a MIDI file with the streaming path on a background thread, reporting determinate
+    /// progress and allowing cancellation while the shell stays responsive.
+    /// </summary>
+    private async Task ImportMidiWithProgressAsync(string path, string projectName)
+    {
+        MidiImportProgressDialog dialog =
+            MidiImportProgressDialog.Show(this, System.IO.Path.GetFileName(path));
         try
         {
-            byte[] bytes = await File.ReadAllBytesAsync(path);
-            var project = ImportedMidiProject.Parse(bytes, System.IO.Path.GetFileName(path));
-            Session.CreateProjectFromMidi(
-                System.IO.Path.GetFileNameWithoutExtension(files[0].Name),
-                project,
-                bytes);
+            await Session.CreateProjectFromMidiFileAsync(
+                projectName,
+                path,
+                new Progress<Midora.Application.MidiProjectImportProgress>(dialog.Report),
+                dialog.CancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            Session.SetStatusMessage("MIDI import cancelled.");
         }
         catch (Exception ex)
         {
@@ -354,6 +377,10 @@ public partial class MainWindow : Window
                 "Open MIDI as New Project",
                 MessageDialogButtons.Ok,
                 MessageDialogIcon.Error);
+        }
+        finally
+        {
+            dialog.Complete();
         }
     }
 

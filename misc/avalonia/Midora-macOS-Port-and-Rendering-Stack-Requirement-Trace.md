@@ -785,3 +785,55 @@
 音符/事件等海量数据走 `ICustomDrawOperation` + `DrawVertices` 批渲染，CPU 侧只提交可见子集）。
 接入前需补 ADR：缓存身份（内容指纹+视口）、失效规则、内存预算、命中测试仍走 CPU 数据、
 以及"不把 grid/cursor/selection 烘焙进批数据"等 SRS 约束。
+
+## Slice U：大文件导入与渲染（方案 A / A1）
+
+验收文件：`tau2.5.9.mid`（50 MB、61 轨、12,573,475 canonical MIDI 事件），macOS arm64 Debug。
+
+### 导入链路
+
+| 阶段 | 修改前 | 修改后 |
+| --- | --- | --- |
+| 读文件 | 8 ms | 8–11 ms |
+| SMF 解析（Avalonia 模型） | 2,097 ms | 2,320 ms（后台线程） |
+| 导入服务（含被丢弃的完整发布编译 62 s） | 72,979 ms | 7,584–8,234 ms（流式分页） |
+| 采纳 + 激活 | >40 s | **104 ms** |
+| 可编辑模型 / 时间线源 / 应用 | 未测到 | 1,144 ms / 12 ms / 0 ms |
+| **导入到会话总计** | **>115 s（UI 阻塞）** | **11.4–12.0 s（UI 响应，带进度与取消）** |
+
+关键结论：慢的根因不是排序或编译器，而是
+
+1. 导入为校验跑了一次**随后被丢弃**的完整发布编译（`Import(byte[])` 内存路径）；
+2. 正式导入没有使用已存在的**流式 `ImportFile(path)`**，导致 `UsesPagedContent = false`，
+   编译器退化为"全量物化 1257 万事件 + 全量排序"；
+3. WPF 参考实现一直走流式路径，所以是 13 秒量级。
+
+### 渲染与内存
+
+| 指标 | 修改前 | 修改后 |
+| --- | --- | --- |
+| 帧渲染耗时（同屏 61 段、默认视野） | 13.6–22 ms，80 s 内 0 帧完成 | **3.8–4.3 ms** |
+| RSS | 2.1 GB → 3.1 GB 持续增长 | 2.0–2.1 GB 稳定（顶点缓存 256 MB 上限） |
+
+修复内容：预览只查询/提交**可见归一化区间**（`max-end` 前缀 + 二分，替代全表扫描）、
+屏外 Segment 直接跳过、可见区间进入批缓存键；全部可见 Segment 由**单个** custom op 用一次
+Skia lease 绘制；批自持 paint；批缓存按字节预算 LRU 淘汰并**释放 `SKVertices` 原生内存**
+（此前存在无界原生泄漏）。
+
+### 播放验证（分页 canonical 端到端）
+
+`MIDORA-AUTOPLAY=1`：warm-up 805 ms、started 154 ms，tick 0→48→96 正常推进，状态 `Playing`。
+
+### 评审钩子
+
+`MIDORA_IMPORT_TRACE`（分阶段/分编译阶段/发布四段计时）、`MIDORA_GPU_NOTE_THRESHOLD`
+（形状路径每帧预算覆盖）、`MIDORA_TIMELINE_TRACE`（每 30 帧含批数与顶点 MB）、
+`MIDORA_MIDI_OPEN_DIALOG=1`（走进度弹窗 + 后台导入路径）。
+
+### 遗留
+
+- RSS 仍约 2.0 GB：Avalonia 侧仍全量物化 `ImportedMidiProject` 与每段预览数组，
+  尚未真正"只读消费分页内容"（A1b/A2 范围，需要新增域工程访问 API 与 Track 映射）。
+- `PureMidiPagedCanonicalSource` 构造期索引成本与 `Adopt` 剩余开销未再细分。
+- `SingleApplicationInstanceCoordinatorTests.TruncatedClientDoesNotTerminateThePrimaryListener`
+  在 macOS 上偶发失败（命名管道 accept 的 `SocketException: Invalid argument`），与本次改动无关。

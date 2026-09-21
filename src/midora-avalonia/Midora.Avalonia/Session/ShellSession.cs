@@ -819,6 +819,71 @@ public sealed class ShellSession : INotifyPropertyChanged
             }
         }
 
+        CompleteProjectCreation(name, project, activation, adoptionError, importTrace, importStarted);
+    }
+
+    /// <summary>
+    /// Creates a Project from a MIDI file on disk with the heavy parse and streaming import on a
+    /// background thread, so the shell stays responsive and the import dialog can report progress.
+    /// The shell wiring itself runs on the caller's thread.
+    /// </summary>
+    public async Task CreateProjectFromMidiFileAsync(
+        string name,
+        string midiFilePath,
+        IProgress<MidiProjectImportProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(midiFilePath);
+        bool importTrace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
+        long importStarted = Environment.TickCount64;
+        ImportedMidiProject project = await Task.Run(
+            () => ImportedMidiProject.Parse(
+                File.ReadAllBytes(midiFilePath),
+                System.IO.Path.GetFileName(midiFilePath)),
+            cancellationToken);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT parse={Environment.TickCount64 - importStarted} ms");
+            Console.Out.Flush();
+        }
+
+        ProjectActivation? activation = null;
+        string? adoptionError = null;
+        if (_projectHost is not null)
+        {
+            try
+            {
+                activation = await Task.Run(
+                    () => _projectHost.ImportMidiFile(
+                        midiFilePath,
+                        name,
+                        cancellationToken,
+                        progress),
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                adoptionError = exception.Message;
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        CompleteProjectCreation(name, project, activation, adoptionError, importTrace, importStarted);
+    }
+
+    private void CompleteProjectCreation(
+        string name,
+        ImportedMidiProject project,
+        ProjectActivation? activation,
+        string? adoptionError,
+        bool importTrace,
+        long importStarted)
+    {
         if (importTrace)
         {
             Console.Out.WriteLine(
@@ -908,6 +973,7 @@ public sealed class ShellSession : INotifyPropertyChanged
             details: report,
             detailsTitle: "MIDI Import Report");
     }
+
 
     private static string BuildMidiImportReport(
         ImportedMidiProject project,

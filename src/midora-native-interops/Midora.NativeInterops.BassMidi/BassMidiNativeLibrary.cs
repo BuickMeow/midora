@@ -11,6 +11,29 @@ namespace Midora.NativeInterops.BassMidi;
 public static class BassMidiNativeLibrary
 {
     private static int _registered;
+    private static string? _searchDirectory;
+
+    /// <summary>
+    /// Registers the operator-supplied native directory explicitly (worker native-directory
+    /// argument). The environment variable <c>MIDORA_BASS_NATIVE_DIR</c> stays as a fallback.
+    /// </summary>
+    public static void SetSearchDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            Volatile.Write(ref _searchDirectory, null);
+            return;
+        }
+
+        string fullPath = Path.GetFullPath(directory);
+        if (!Directory.Exists(fullPath))
+        {
+            throw new DirectoryNotFoundException(
+                $"The BASSMIDI native directory does not exist: {fullPath}");
+        }
+
+        Volatile.Write(ref _searchDirectory, fullPath);
+    }
 
     public static void EnsureRegistered()
     {
@@ -34,7 +57,8 @@ public static class BassMidiNativeLibrary
         out IntPtr handle)
     {
         handle = IntPtr.Zero;
-        string? directory = Environment.GetEnvironmentVariable("MIDORA_BASS_NATIVE_DIR");
+        string? directory = Volatile.Read(ref _searchDirectory)
+            ?? Environment.GetEnvironmentVariable("MIDORA_BASS_NATIVE_DIR");
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
         {
             return false;

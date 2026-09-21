@@ -200,3 +200,32 @@ spike 发现的引擎必改点已落地（不影响 Windows 行为，Windows 分
 - `Directory.Build.props` 的全局 `RuntimeIdentifiers=win-x64` 改为按项目/平台声明（涉及各项目 `packages.lock.json` 的 RID 段重算）。
 - 发布脚本与测试脚本按平台拆分（macOS 初版；Windows 里程碑恢复）。
 - Avalonia 应用的 Windows 目标（BASS/BASSMIDI/BASSWASAPI 打包、设备枚举、进程宿主）作为 Windows 里程碑内容。
+
+## 11. 2026-09-21 正式音频接入（Win/Mac 通用）进展
+
+目标拓扑（两平台同一套代码，差异只在三个平台缝）：
+
+```text
+App → Midora.Playback (PlaybackController/投影/render plan)
+        → 子进程后端（中立）
+             ├─ 进程宿主：Windows Job Object / macOS 进程组 + tree kill + 父死看门狗
+             └─ Worker（各平台 Native AOT）
+                  ├─ Midora.Audio.Bass（引擎，中立）
+                  ├─ WorkerAudioOutputDeviceFactory（平台缝：BASSWASAPI / CoreAudio）
+                  └─ Midora.AudioDevice.Wave（离线，已平台化）
+```
+
+**已完成并验证**
+
+1. Worker 平台缝：`Midora.Audio.Bass.Worker` 新增 `WorkerAudioOutputDevice` / `WorkerAudioOutputDeviceFactory`，worker 主体只见中立外观；设备诊断/端点刷新抽为 `IAudioOutputDeviceDiagnostics` / `IAudioOutputDeviceFlushController`（Windows 行为不变，macOS 用 `Stop(flush)` 等价实现）。设备选择判定改为 `AudioOutputDeviceSelection.IsInvalidated`。
+2. Worker 发布矩阵：csproj 支持 `win-x64` 与 `osx-arm64`（各自原生库内容、manifest 与校验脚本），RID 校验与文案去掉 win-x64 专指。
+3. 原生目录：interop 新增 `SetSearchDirectory`（worker 参数显式注册），`MIDORA_BASS_NATIVE_DIR` 保留为回退。
+4. macOS 父死保护：`WorkerParentWatchdog`（`getppid` 变化视为所有者死亡）接入宿主循环与播放循环；Windows 继续由 Job kill-on-close 承担。
+5. 验证：worker 在 macOS 直接运行 `list-output-devices` 输出 `MIDORA-AUDIO-DEVICES-V1` 与 6 个真实设备（44.1k/48k）；引擎离线与实时出声已在 §7/§8 验证。
+
+**待办（按顺序）**
+
+1. W3：`Midora.Playback.BassWasapi/BassWasapiChildPlaybackBackend` 传输骨架中立化（worker 可执行名/参数与进程宿主按平台注入），macOS 与 Windows 共用同一后端类。
+2. W4：App 接线——偏好持久化（SoundFont 列表/设备/Render-Ahead）→ 打开/编译工程 → canonical → render plan → `PlaybackController` → Worker；Play/Stop/位置/设备切换走正式链路。
+3. W5：App 内离线渲染（worker `file-render` + `.tmp/AudioCache` + 原子发布）。
+4. 未验证：父死看门狗的端到端（应用崩溃后 worker 退出）需在 W3/W4 接线后实测；macOS 设备丢失/默认设备变化检测尚未实现（当前 `DeviceLost`/`DefaultDeviceChanged` 恒为 false，由工厂级重新枚举兜底）。

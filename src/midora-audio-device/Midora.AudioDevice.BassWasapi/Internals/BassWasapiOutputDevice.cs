@@ -6,7 +6,10 @@ using NativeBass = Midora.NativeInterops.Bass.BASS;
 
 namespace Midora.AudioDevice.BassWasapi.Internals;
 
-public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
+public sealed unsafe class BassWasapiOutputDevice :
+    IAudioOutputDevice,
+    IAudioOutputDeviceDiagnostics,
+    IAudioOutputDeviceFlushController
 {
     private const int SubmissionHistoryCapacity = 4_096;
     private AudioOutputDeviceInfo _info;

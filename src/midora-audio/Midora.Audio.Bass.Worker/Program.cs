@@ -1,6 +1,4 @@
 using Midora.AudioDevice;
-using Midora.AudioDevice.BassWasapi.Internals;
-using Midora.AudioDevice.BassWasapi.Settings;
 using Midora.AudioDevice.Wave;
 using Midora.Common;
 using Midora.Midi;
@@ -28,6 +26,7 @@ public static class Program
     public static unsafe int Main(string[] args)
     {
         _ = MidoraWindowsApplicationIdentity.TryApplyToCurrentProcess();
+        WorkerParentWatchdog.Start();
         SharedAudioWorkerControl? control = null;
         try
         {
@@ -136,11 +135,10 @@ public static class Program
             LoadBassLibraries(nativeDirectory, includeWasapi: true);
         }
 
-        BassWasapiOutputDeviceFactory factory = new(
-            new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+        WorkerAudioOutputDeviceFactory factory = new(deviceBufferRequestMilliseconds);
         AudioOutputDeviceInfo device = SelectDevice(factory, requestedDeviceId);
         using SilentSource source = new(device.AudioFormat);
-        BassWasapiOutputDevice probe = (BassWasapiOutputDevice)factory.Open(device, source);
+        WorkerAudioOutputDevice probe = factory.Open(device, source);
         int actualSampleRate = probe.Info.AudioFormat.SampleRate;
         int actualBufferFrames = checked((int)probe.ActualBufferFrameCount);
         probe.Dispose();
@@ -180,6 +178,11 @@ public static class Program
 
         while (true)
         {
+            if (WorkerParentWatchdog.ParentExited)
+            {
+                return 0;
+            }
+
             if (!control.TryDequeue(out AudioWorkerControlCommand command))
             {
                 Thread.Sleep(1);
@@ -569,10 +572,9 @@ public static class Program
                 $"Render-ahead Preparing failed: {DescribeRenderAheadFault(renderWorker, renderer)}");
         }
 
-        BassWasapiOutputDeviceFactory factory = new(
-            new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+        WorkerAudioOutputDeviceFactory factory = new(deviceBufferRequestMilliseconds);
         AudioOutputDeviceInfo device = SelectDevice(factory, requestedDeviceId);
-        using BassWasapiOutputDevice output = (BassWasapiOutputDevice)factory.Open(device, ring);
+        using WorkerAudioOutputDevice output = factory.Open(device, ring);
         if (output.Info.AudioFormat.SampleRate != expectedSampleRate)
         {
             throw new MidoraAudioDeviceException(
@@ -582,7 +584,8 @@ public static class Program
         control.PublishPrepared(expectedSampleRate, checked((int)output.ActualBufferFrameCount));
         MidiMonitoringCommand[] monitoringCommandBatch =
             new MidiMonitoringCommand[SharedAudioWorkerControl.CommandCapacity];
-        Func<bool> stopCommandPending = control.HasPendingStopCommand;
+        Func<bool> stopCommandPending = () =>
+            control.HasPendingStopCommand() || WorkerParentWatchdog.ParentExited;
         Func<bool> recoverySuperseded = () =>
             control.HasPendingStopCommand()
             || control.HasPendingMonitoringCommand();
@@ -1010,7 +1013,7 @@ public static class Program
                 return 0;
             }
 
-            bool outputSelectionInvalidated = BassWasapiOutputDevice.IsOutputSelectionInvalidated(
+            bool outputSelectionInvalidated = WorkerAudioOutputDevice.IsOutputSelectionInvalidated(
                 requestedDeviceId is null,
                 output.DefaultDeviceChanged,
                 deviceLost: false);
@@ -1149,7 +1152,7 @@ public static class Program
     }
 
     private static bool TryStartOutputAndConfirmMonitoringProgress(
-        BassWasapiOutputDevice output,
+        WorkerAudioOutputDevice output,
         AudioFrameRingBuffer ring,
         SharedAudioWorkerControl control,
         long consumerFrontierFrame,
@@ -1356,7 +1359,7 @@ public static class Program
     }
 
     private static AudioOutputDeviceInfo SelectDevice(
-        BassWasapiOutputDeviceFactory factory,
+        WorkerAudioOutputDeviceFactory factory,
         string? requestedDeviceId)
     {
         IReadOnlyList<AudioOutputDeviceInfo> devices = factory.GetDevices();
@@ -1374,8 +1377,7 @@ public static class Program
             nativeDirectoryArgument,
             "native library");
         LoadBassLibraries(nativeDirectory, includeWasapi: true);
-        BassWasapiOutputDeviceFactory factory = new(
-            new BassWasapiAudioOutputDeviceSettings(50));
+        WorkerAudioOutputDeviceFactory factory = new(50);
         IReadOnlyList<AudioOutputDeviceInfo> devices = factory.GetDevices();
 
         // Private, versioned, line-oriented protocol. Base64 prevents device names and endpoint IDs
@@ -1597,6 +1599,17 @@ public static class Program
 
     private static void LoadBassLibraries(string nativeDirectory, bool includeWasapi)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            // macOS/Linux resolve libbass/libbassmidi from the explicit native directory;
+            // BASSWASAPI does not exist on these platforms.
+            Midora.NativeInterops.Bass.BassNativeLibrary.SetSearchDirectory(nativeDirectory);
+            Midora.NativeInterops.BassMidi.BassMidiNativeLibrary.SetSearchDirectory(nativeDirectory);
+            Midora.NativeInterops.Bass.BassNativeLibrary.EnsureRegistered();
+            Midora.NativeInterops.BassMidi.BassMidiNativeLibrary.EnsureRegistered();
+            return;
+        }
+
         nint bassHandle = NativeLibrary.Load(Path.Combine(nativeDirectory, "bass.dll"));
         nint bassMidiHandle = NativeLibrary.Load(Path.Combine(nativeDirectory, "bassmidi.dll"));
         NativeLibrary.SetDllImportResolver(
@@ -1701,7 +1714,7 @@ public static class Program
         private readonly PersistentBassMidiSoundFont _soundFont;
         private uint _streamHandle;
         private PitchAuditionRenderSource? _source;
-        private BassWasapiOutputDevice? _output;
+        private WorkerAudioOutputDevice? _output;
         private string? _deviceId;
         private int _deviceBufferRequestMilliseconds;
         private int _currentPitch = -1;
@@ -1785,8 +1798,7 @@ public static class Program
                 FreeStream();
             }
 
-            BassWasapiOutputDeviceFactory factory = new(
-                new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+            WorkerAudioOutputDeviceFactory factory = new(deviceBufferRequestMilliseconds);
             AudioOutputDeviceInfo device = SelectDevice(factory, deviceId);
             if (_streamHandle == 0)
             {
@@ -1796,7 +1808,7 @@ public static class Program
             }
             if (_output is null)
             {
-                _output = (BassWasapiOutputDevice)factory.Open(device, _source!);
+                _output = factory.Open(device, _source!);
                 _output.Start();
             }
         }
@@ -1849,7 +1861,7 @@ public static class Program
 
         private void DisposeOutput()
         {
-            BassWasapiOutputDevice? output = _output;
+            WorkerAudioOutputDevice? output = _output;
             _output = null;
             if (output is null)
             {

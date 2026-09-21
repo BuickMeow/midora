@@ -10,7 +10,10 @@ namespace Midora.AudioDevice.Bass.Internals;
 /// from BASS's output thread; the Windows path remains reserved through the same
 /// <see cref="IAudioOutputDevice"/> contract and the WASAPI project is left dormant.
 /// </summary>
-public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
+public sealed unsafe class BassAudioOutputDevice :
+    IAudioOutputDevice,
+    IAudioOutputDeviceDiagnostics,
+    IAudioOutputDeviceFlushController
 {
     private readonly IAudioRenderSource _audioRenderSource;
     private GCHandle _sourceHandle;
@@ -67,6 +70,24 @@ public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
     /// <summary>Device minimum buffer reported by BASS after initialization, in frames.</summary>
     public uint ActualBufferFrameCount => _actualBufferFrameCount;
 
+    public bool IsProcessingStarted => !_isDisposed && _isStarted;
+
+    /// <summary>
+    /// macOS device-loss detection is not wired yet; the platform reports no loss so the
+    /// worker never invalidates the selection for this reason.
+    /// </summary>
+    public bool DeviceLost => false;
+
+    /// <summary>
+    /// macOS system-default-device change detection is not wired yet; the platform reports no
+    /// change so the worker never invalidates the selection for this reason.
+    /// </summary>
+    public bool DefaultDeviceChanged => false;
+
+    public bool CleanupFaulted { get; private set; }
+
+    public int CleanupErrorCode { get; private set; }
+
     public void Start()
     {
         ThrowIfDisposed();
@@ -118,13 +139,21 @@ public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
         if (_streamHandle != 0)
         {
             _ = NativeBass.ChannelStop(_streamHandle);
-            _ = NativeBass.StreamFree(_streamHandle);
+            if (NativeBass.StreamFree(_streamHandle) == 0)
+            {
+                CaptureCleanupFailure();
+            }
+
             _streamHandle = 0;
         }
 
         if (_isDeviceInitialized)
         {
-            _ = NativeBass.Free();
+            if (NativeBass.Free() == 0)
+            {
+                CaptureCleanupFailure();
+            }
+
             _isDeviceInitialized = false;
         }
 
@@ -132,6 +161,28 @@ public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
         {
             _sourceHandle.Free();
         }
+    }
+
+    private void CaptureCleanupFailure()
+    {
+        if (CleanupFaulted)
+        {
+            return;
+        }
+
+        CleanupErrorCode = NativeBass.ErrorGetCode();
+        CleanupFaulted = true;
+    }
+
+    /// <summary>
+    /// CoreAudio exposes no endpoint-buffer reset; stopping the stream with a position reset
+    /// is the documented macOS equivalent (see the macOS audio ADR).
+    /// </summary>
+    public long StopAndResetBufferedOutput()
+    {
+        ThrowIfDisposed();
+        Stop(flush: true);
+        return ConsumedFrameCount;
     }
 
     private void Initialize(BassAudioOutputDeviceSettings settings)

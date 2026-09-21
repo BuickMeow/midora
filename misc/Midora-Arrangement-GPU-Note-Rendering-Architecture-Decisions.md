@@ -22,8 +22,9 @@
    `Control.Render(DrawingContext)` → `context.Custom(op)`，`op : ICustomDrawOperation` 在
    `Render(ImmediateDrawingContext)` 中取得 `ISkiaSharpApiLeaseFeature` 的 `SkCanvas`，
    用 `DrawVertices`（每批 ≤ 16k 四边形，索引为 ushort）提交。
-3. 切换阈值：单个 Segment 的**可见**音符/事件数低于阈值（初值 20,000）时仍走现有精确形状路径
-   （形状与抗锯齿最优）；超过阈值走 GPU 批路径。阈值集中定义，便于按真实工程调优。
+3. 切换阈值：**每帧**精确形状路径的图元预算（初值 20,000）。按 Arrangement 顺序累计，预算用尽后
+   其余 Segment 预览一律走 GPU 批路径；小预览保持精确形状（抗锯齿最优），同时一帧内不可能累计出
+   无界图元数。阈值可由 `MIDORA_GPU_NOTE_THRESHOLD` 覆盖用于评审对照。
 
 ## 3. 数据与坐标
 

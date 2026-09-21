@@ -56,7 +56,13 @@ public partial class App : global::Avalonia.Application
                 var reviewMidi = Environment.GetEnvironmentVariable("MIDORA_MIDI_OPEN");
                 if (!string.IsNullOrEmpty(reviewMidi) && File.Exists(reviewMidi))
                 {
-                    mainWindow.Opened += (_, _) => mainWindow.OpenMidiForReview(reviewMidi);
+                    mainWindow.Opened += (_, _) =>
+                    {
+                        // Review-only: keep the window frontmost so macOS does not throttle the
+                        // render loop while the frame trace is being measured.
+                        mainWindow.Activate();
+                        mainWindow.OpenMidiForReview(reviewMidi);
+                    };
                 }
 
                 if (int.TryParse(Environment.GetEnvironmentVariable("MIDORA_OPEN_TRACK"), out int trackIndex))

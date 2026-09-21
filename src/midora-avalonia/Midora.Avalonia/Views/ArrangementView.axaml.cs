@@ -174,6 +174,7 @@ public partial class ArrangementView : UserControl
             Console.Out.WriteLine($"MIDORA-TIMELINE {ContextText.Text}");
             Console.Out.Flush();
         }
+
     }
 
     private int CountSegments()

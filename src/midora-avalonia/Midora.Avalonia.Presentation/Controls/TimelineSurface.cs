@@ -447,7 +447,7 @@ public sealed partial class TimelineSurface : Control
         _renderFrameCount++;
         _renderTotalMilliseconds += elapsed;
         _renderMaximumMilliseconds = Math.Max(_renderMaximumMilliseconds, elapsed);
-        if (_renderFrameCount % 60 != 0)
+        if (_renderFrameCount % 30 != 0)
         {
             return;
         }

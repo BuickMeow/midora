@@ -269,21 +269,36 @@ public sealed partial class TimelineSurface
         }
     }
 
-    /// <summary>Upper bound for the direct preview drawing of a single frame.</summary>
-    private const int MaximumDirectPreviewPrimitives = 50_000;
+    /// <summary>
+    /// Per-frame primitive budget for the exact shape path. A Segment preview switches to the GPU
+    /// vertex batch path as soon as this budget is used up, so the precise shapes stay sharp for
+    /// small previews while a frame full of large ones cannot accumulate an unbounded primitive
+    /// count (the vertex batch costs roughly six nanoseconds per primitive instead of a hundred).
+    /// </summary>
+    private static readonly int GpuNoteBatchThreshold = ReadGpuNoteBatchThreshold();
+
+    private static int ReadGpuNoteBatchThreshold() =>
+        int.TryParse(
+            Environment.GetEnvironmentVariable("MIDORA_GPU_NOTE_THRESHOLD"),
+            out int value) && value >= 0
+            ? value
+            : 20_000;
+
+    private readonly TimelineNoteBatchCache _noteBatchCache = new();
 
     /// <summary>
-    /// Draws every pending Segment preview directly through the batched shape pass. Notes are
-    /// horizontal bars in their pitch row and events are vertical ticks, both mapped through the
-    /// FULL Segment rectangle (which may extend past the viewport) and clipped to the visible part,
-    /// so zoom and scrolling place them correctly. When a frame exceeds the primitive ceiling the
-    /// previews are thinned uniformly by stride instead of truncating, so no region goes blank.
+    /// Draws every pending Segment preview. Notes are horizontal bars in their pitch row and events
+    /// are vertical ticks, both mapped through the FULL Segment rectangle (which may extend past the
+    /// viewport) and clipped to the visible part, so zoom and scrolling place them correctly. Small
+    /// previews go through the batched shape pass; large ones are drawn from immutable Skia vertex
+    /// batches, and neither path thins or truncates the content.
     /// </summary>
     private void DrawSegmentPreviewDeferred(DrawingContext context, TimelineViewport viewport)
     {
-        _ = viewport;
         double devicePixel = GetDevicePixelWidth();
-        int drawn = 0;
+        uint noteColor = TimelineNoteVertexBatch.ColorOf(SegmentNotePreviewBrush);
+        uint eventColor = TimelineNoteVertexBatch.ColorOf(EventPreviewBrush);
+        int shapeBudget = GpuNoteBatchThreshold;
         foreach (PendingSegmentPreview pending in _pendingSegmentPreviews)
         {
             Rect visible = pending.Bounds;
@@ -296,62 +311,88 @@ public sealed partial class TimelineSurface
                 visible.Y,
                 Math.Max(1, fullRight - fullLeft),
                 visible.Height);
-            double rowHeight = Math.Max(devicePixel, full.Height / 128d);
-            using (context.PushClip(visible))
+            var key = new TimelineNoteBatchKey(
+                preview,
+                preview.HasNoteContent,
+                preview.HasEventContent,
+                preview.NoteContentFingerprint,
+                preview.EventContentFingerprint,
+                full.Width,
+                full.Height,
+                devicePixel,
+                noteColor,
+                eventColor);
+            if (!_noteBatchCache.TryGet(key, out TimelineNoteVertexBatch batch))
             {
+                _previewNotes.Clear();
+                _previewEvents.Clear();
                 if (preview.HasNoteContent)
                 {
-                    _previewNotes.Clear();
                     preview.QueryNotes(0, 1, _previewNotes);
-                    int stride = Math.Max(
-                        1,
-                        _previewNotes.Count / Math.Max(1, MaximumDirectPreviewPrimitives));
-                    for (int index = 0; index < _previewNotes.Count; index += stride)
-                    {
-                        TimelineSegmentPreviewNote note = _previewNotes[index];
-                        double left = full.X + Math.Clamp(note.NormalizedStart, 0, 1) * full.Width;
-                        double right = full.X + Math.Clamp(note.NormalizedEnd, 0, 1) * full.Width;
-                        double top = full.Y
-                            + (127 - Math.Clamp(note.Pitch, 0, 127)) / 128d * full.Height;
-                        AddFill(
-                            SegmentNotePreviewBrush,
-                            new Rect(
-                                left,
-                                top,
-                                Math.Max(devicePixel, right - left),
-                                rowHeight));
-                        drawn++;
-                    }
                 }
 
                 if (preview.HasEventContent)
                 {
-                    _previewEvents.Clear();
                     preview.QueryEvents(0, 1, _previewEvents);
-                    int stride = Math.Max(
-                        1,
-                        _previewEvents.Count / Math.Max(1, MaximumDirectPreviewPrimitives));
-                    for (int index = 0; index < _previewEvents.Count; index += stride)
-                    {
-                        TimelineSegmentPreviewEvent value = _previewEvents[index];
-                        double x = SnapToDevicePixel(
-                            full.X + Math.Clamp(value.NormalizedTick, 0, 1) * full.Width,
-                            devicePixel);
-                        double top = full.Y
-                            + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * full.Height;
-                        AddFill(
-                            EventPreviewBrush,
-                            new Rect(x, top, devicePixel, Math.Max(devicePixel, full.Bottom - top)));
-                        drawn++;
-                    }
                 }
 
-                FlushShapes(context);
+                if (_previewNotes.Count + _previewEvents.Count <= shapeBudget)
+                {
+                    shapeBudget -= _previewNotes.Count + _previewEvents.Count;
+                    using (context.PushClip(visible))
+                    {
+                        DrawSegmentPreviewShapes(context, full, devicePixel);
+                        FlushShapes(context);
+                    }
+
+                    continue;
+                }
+
+                batch = TimelineNoteVertexBatch.Build(
+                    _previewNotes,
+                    _previewEvents,
+                    full.Width,
+                    full.Height,
+                    devicePixel,
+                    noteColor,
+                    eventColor);
+                _noteBatchCache.Store(key, batch);
             }
+
+            context.Custom(new TimelineNoteDrawOperation(batch, visible, full.X, full.Y));
         }
 
-        _ = drawn;
         _pendingSegmentPreviews.Clear();
+    }
+
+    /// <summary>
+    /// Exact shape path for a small Segment preview, drawn from the already queried note and event
+    /// lists. Every primitive is emitted; the caller owns the clip and the flush.
+    /// </summary>
+    private void DrawSegmentPreviewShapes(DrawingContext context, Rect full, double devicePixel)
+    {
+        _ = context;
+        double rowHeight = Math.Max(devicePixel, full.Height / 128d);
+        foreach (TimelineSegmentPreviewNote note in _previewNotes)
+        {
+            double left = full.X + Math.Clamp(note.NormalizedStart, 0, 1) * full.Width;
+            double right = full.X + Math.Clamp(note.NormalizedEnd, 0, 1) * full.Width;
+            double top = full.Y + (127 - Math.Clamp(note.Pitch, 0, 127)) / 128d * full.Height;
+            AddFill(
+                SegmentNotePreviewBrush,
+                new Rect(left, top, Math.Max(devicePixel, right - left), rowHeight));
+        }
+
+        foreach (TimelineSegmentPreviewEvent value in _previewEvents)
+        {
+            double x = SnapToDevicePixel(
+                full.X + Math.Clamp(value.NormalizedTick, 0, 1) * full.Width,
+                devicePixel);
+            double top = full.Y + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * full.Height;
+            AddFill(
+                EventPreviewBrush,
+                new Rect(x, top, devicePixel, Math.Max(devicePixel, full.Bottom - top)));
+        }
     }
 
     private void DrawConductorPoint(

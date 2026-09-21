@@ -701,3 +701,29 @@
 **未完成（下一步）**：Avalonia App 尚未接入 `SingleApplicationInstanceCoordinator`（SRS 01/17 单实例），
 因此可以同时运行多个 App 实例、各自持有音频 Worker——本次"后台还在播放"部分也源于此（旧实例仍在播放）。
 需要在 `Program.Main` 接入 StartOrForward、主实例消费转发请求（打开对应 Project 并前置窗口）。
+
+## Slice R：Ti 预览闪烁/空白、Pi 方向、空格键（2026-09-21）
+
+1. **Ti 缩放时音符闪烁或整块空白**：LOD 切换后精确瓦片缺失，而回退已按需求删除 → 该帧整行不画。
+   新增**陈旧瓦片续画**：在等待新 LOD 栅格时，绘制该 Segment 已缓存的任意 LOD 瓦片，并按该瓦片
+   自身 LOD 的 contentWidth 映射到正确时间位置；仅精确瓦片缺失时启用，瓦片到齐后自动恢复清晰。
+   实测渲染仍为平均 1.1 ms/帧、最差 17 ms。
+2. **Pi 垂直方向**：音高行是自下而上（`UsesPitchLanes`），同一滚轮方向需要反向移动；已对音高模式取反。
+3. **空格键**：Avalonia App 之前完全没有 Space 处理，焦点在按钮上时会被按钮消费。现在在
+   `MainWindow` 用 **Tunnel** 阶段拦截 `Key.Space`（无修饰键）：焦点在 `TextBox`/`NumericUpDown`/
+   可编辑 `ComboBox` 内时放行，否则一律切换播放/停止（SRS 20.1.5）。
+
+### 渲染架构说明（回答"逻辑混乱"）
+
+- **视口**：`TimelineViewport`（`StartTick`/`TickSpan`/`FirstLane`/`LaneHeight`）→ `TickToX`/`XToTick`；
+  Ruler、Lane、Canvas 共用同一视口，缩放平移天然同步。所有模式（Arrangement/PianoRoll/Velocity/
+  EventLanes/Conductor）共用同一 `TimelineSurface`，只是绘制分支不同。
+- **音符（Pi/Event/Velocity）**：直接绘制，但走 `_shapeBatch` 批量通道（`AddFill`/`AddLine`/`AddShape`
+  → 一次 `FlushShapes`），即"一批图元一次提交"，没有瓦片。
+- **Arrangement Segment 预览**：唯一使用**瓦片缓存**的路径（`TimelineRasterCache` 后台栅格，
+  `SegmentPreviewTiles` 静态字典 + LRU 上限 768）。LOD 由 `SelectDisplayLod(pixelsPerTick, TPQN)` 决定，
+  瓦片按 LOD 固定宽度（96 px/四分音符基准）生成；缩放改变 LOD → 生成新瓦片。
+- **省性能手段**：① 批量形状通道；② 预览瓦片 + LOD + LRU；③ 可见范围查询（`QueryInto` 只取视口内项）；
+  ④ 网格线按 device-pixel 最小间距抽样；⑤ 背景/网格/内容一次性 flush 分层绘制；
+  ⑥ 陈旧瓦片续画避免闪烁；⑦ 移除逐图元回退。
+- **已知取舍**：瓦片未就绪的首帧可能显示较粗的陈旧瓦片（比空白更可取）；值轴纵向视口仍未实现。

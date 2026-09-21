@@ -35,6 +35,44 @@ public partial class MainWindow : Window
         ApplyPlatformChrome();
         PopulateWindowsMenu();
         RefreshSoundFontState();
+        // Space is reserved for Play/Stop everywhere except while editing text, so it must be
+        // handled during tunneling before a focused button can consume it (SRS 20.1.5).
+        AddHandler(KeyDownEvent, OnWindowPreviewKeyDown, RoutingStrategies.Tunnel);
+    }
+
+    private void OnWindowPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Space || e.KeyModifiers != KeyModifiers.None || IsTextEditingFocused())
+        {
+            return;
+        }
+
+        e.Handled = true;
+        Session.TogglePlayback();
+    }
+
+    /// <summary>True when the keyboard focus is inside a text-editing control.</summary>
+    private bool IsTextEditingFocused()
+    {
+        if (FocusManager?.GetFocusedElement() is not Control focused)
+        {
+            return false;
+        }
+
+        for (Control? current = focused; current is not null; current = current.Parent as Control)
+        {
+            if (current is TextBox or NumericUpDown)
+            {
+                return true;
+            }
+
+            if (current is ComboBox { IsEditable: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void RefreshSoundFontState()

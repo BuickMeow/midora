@@ -855,9 +855,12 @@ public sealed partial class TimelineSurface : Control
 
         _laneWheelResidual -= whole;
         int maximumFirstLane = Math.Max(0, Math.Max(1, LaneCount) - viewport.LaneCount);
+        // Pitch lanes are bottom-up, so the same wheel direction must move the opposite way to
+        // match what the row order shows.
+        int laneDelta = UsesPitchLanes ? whole : -whole;
         SetCurrentValue(
             FirstLaneProperty,
-            Math.Clamp(viewport.FirstLane - whole, 0, maximumFirstLane));
+            Math.Clamp(viewport.FirstLane + laneDelta, 0, maximumFirstLane));
     }
 
     /// <summary>

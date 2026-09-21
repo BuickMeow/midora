@@ -164,7 +164,77 @@ public sealed partial class TimelineSurface
             }
         }
 
+        if (!complete)
+        {
+            DrawStaleSegmentPreviewTiles(
+                context,
+                visibleBounds,
+                fullSegmentBounds,
+                item,
+                noteArgb,
+                eventArgb,
+                normalizedVisibleLeft,
+                normalizedVisibleRight,
+                dpi);
+        }
+
         return complete;
+    }
+
+    /// <summary>
+    /// Draws whatever cached tiles this Segment already has while the exact LOD rasterizes. Zoom
+    /// changes the LOD, and without this pass the tile-only preview would blank the row (or flicker)
+    /// until the new tiles arrive. Stale tiles are mapped through their own LOD content width, so a
+    /// coarser or finer tile still lands at the correct time position.
+    /// </summary>
+    private void DrawStaleSegmentPreviewTiles(
+        DrawingContext context,
+        Rect visibleBounds,
+        Rect fullSegmentBounds,
+        TimelineRenderItem item,
+        uint noteArgb,
+        uint eventArgb,
+        double normalizedVisibleLeft,
+        double normalizedVisibleRight,
+        DpiScale dpi)
+    {
+        foreach ((SegmentPreviewTileKey key, SegmentPreviewTile tile) in SegmentPreviewTiles)
+        {
+            if (key.SegmentId != item.Id.Value
+                || key.NoteColor != noteArgb
+                || key.EventColor != eventArgb)
+            {
+                continue;
+            }
+
+            long contentWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
+                Math.Max(1, item.EndTick - item.StartTick),
+                Math.Max(1, (int)Math.Clamp(TicksPerQuarterNote, 1, 32767)),
+                key.Lod);
+            if (contentWidth <= 0)
+            {
+                continue;
+            }
+
+            long tileLeft = checked(key.Tile * TimelineSegmentPreviewRasterizer.FixedPreviewTileSize);
+            double tileStart = tileLeft / (double)contentWidth;
+            double tileEnd = (tileLeft + tile.Bitmap.PixelSize.Width) / (double)contentWidth;
+            if (tileEnd <= normalizedVisibleLeft || tileStart >= normalizedVisibleRight)
+            {
+                continue;
+            }
+
+            Rect destination = TimelineRasterPlacement.GetSegmentPreviewTileDestination(
+                fullSegmentBounds,
+                contentWidth,
+                tileLeft,
+                tile.Bitmap.PixelSize.Width,
+                dpi);
+            using (context.PushClip(new RoundedRect(visibleBounds)))
+            {
+                context.DrawImage(tile.Bitmap, destination);
+            }
+        }
     }
 
     private TimelineSegmentPreview GetSegmentPreview(

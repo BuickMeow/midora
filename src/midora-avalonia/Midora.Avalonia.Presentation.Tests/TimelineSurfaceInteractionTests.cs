@@ -183,6 +183,20 @@ public sealed class TimelineSurfaceInteractionTests
         Assert.InRange(Math.Abs(tickAfter - tickUnderOrigin), 0, 2);
     }
 
+    [AvaloniaFact]
+    public void TouchPadMagnifyZoomsHorizontallyAroundTheGestureOrigin()
+    {
+        (Window window, TimelineSurface surface) = CreateSurface();
+        _ = window;
+        long spanBefore = surface.TickSpan;
+        long tickUnderOrigin = TickAt(surface, 400);
+
+        Assert.True(surface.ApplyMagnifyDelta(0.5, new Point(400, ContentY)));
+
+        Assert.True(surface.TickSpan < spanBefore, "magnifying out must zoom in");
+        Assert.InRange(Math.Abs(TickAt(surface, 400) - tickUnderOrigin), 0, 3);
+    }
+
     private static long TickAt(TimelineSurface surface, double x) =>
         surface.StartTick + (long)Math.Round(x / surface.Bounds.Width * surface.TickSpan);
 

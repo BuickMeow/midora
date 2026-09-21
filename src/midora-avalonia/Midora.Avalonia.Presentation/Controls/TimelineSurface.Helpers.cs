@@ -53,6 +53,10 @@ public sealed partial class TimelineSurface
         public static readonly global::Avalonia.Media.Color Red =
             global::Avalonia.Media.Color.FromRgb(0xE5, 0x48, 0x4D);
 
+        /// <summary>White-key piano-roll rows: lighter than the surface, matching the keyboard strip.</summary>
+        public static readonly global::Avalonia.Media.Color PianoWhiteKeyRow =
+            global::Avalonia.Media.Color.FromRgb(0x1B, 0x20, 0x27);
+
         public static readonly global::Avalonia.Media.Color Info =
             global::Avalonia.Media.Color.FromRgb(0x62, 0xA6, 0xF6);
 
@@ -80,6 +84,7 @@ public sealed partial class TimelineSurface
         global::Avalonia.Media.Color.FromRgb(0x0E, 0x11, 0x15));
     private static readonly Pen MarkerChipPen = new(TextTertiaryBrush, 1);
     private static readonly SolidColorBrush RedBrush = new(Color.Red);
+    private static readonly SolidColorBrush PianoWhiteKeyRowBrush = new(Color.PianoWhiteKeyRow);
     private static readonly SolidColorBrush EditCursorBrush = new(Color.Info);
     private static readonly SolidColorBrush TimeRangeFillBrush = new(
         global::Avalonia.Media.Color.FromArgb(0x24, 0x62, 0xA6, 0xF6));

@@ -1281,7 +1281,9 @@ public sealed class ShellSession : INotifyPropertyChanged
 
     private void StartPlaybackClock()
     {
-        _playbackTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        // 60 Hz keeps the playback cursor smooth; the surface render costs about a millisecond,
+        // and the position comes straight from the audio engine.
+        _playbackTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _playbackTimer.Tick -= OnPlaybackTimerTick;
         _playbackTimer.Tick += OnPlaybackTimerTick;
         _playbackTimer.Start();

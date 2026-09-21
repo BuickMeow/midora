@@ -40,8 +40,9 @@ public sealed partial class TimelineSurface : Control
     private long _lastPointerTick = long.MinValue;
     private bool _suppressSelectionEvent;
     private readonly TimelineRulerGesture _rulerGesture = new();
-    private double _horizontalWheelResidual;
+    private double _horizontalWheelTicksResidual;
     private double _laneWheelResidual;
+    private double _zoomWheelResidual;
 
     /// <summary>
     /// Per-event noise floor for wheel deltas. Trackpads report a small cross-axis component on
@@ -78,7 +79,13 @@ public sealed partial class TimelineSurface : Control
     {
         ClipToBounds = true;
         Focusable = true;
+        // Touch/pen pinch (and Windows precision touchpads) arrive through the gesture recognizer.
+        // The macOS backend has no magnify support, so Ctrl+wheel remains the trackpad zoom path
+        // mandated by SRS 20.1.5.
+        GestureRecognizers.Add(new PinchGestureRecognizer());
         AddHandler(InputElement.PinchEvent, OnPinchGesture);
+        // macOS and Windows precision touchpads report a relative magnification per event.
+        AddHandler(InputElement.PointerTouchPadGestureMagnifyEvent, OnTouchPadMagnify);
     }
 
     public static readonly StyledProperty<ITimelineRenderItemSource?> SourceProperty =
@@ -808,18 +815,18 @@ public sealed partial class TimelineSurface : Control
     /// </summary>
     private void PanHorizontally(double delta)
     {
-        long step = Math.Max(1, (long)Math.Round(Math.Max(1, TickSpan) * WheelPanFraction));
-        // Trackpads report sub-unit deltas, so accumulate them instead of forcing a whole step
-        // per event (which also destroyed the direction for tiny deltas).
-        _horizontalWheelResidual += delta;
-        long whole = (long)Math.Truncate(_horizontalWheelResidual);
+        // Continuous panning: the wheel fraction of the visible span is converted to ticks and
+        // accumulated, so scrolling moves by individual ticks instead of quantized span steps.
+        long span = Math.Max(1, TickSpan);
+        _horizontalWheelTicksResidual += -delta * span * WheelPanFraction;
+        long whole = (long)Math.Truncate(_horizontalWheelTicksResidual);
         if (whole == 0)
         {
             return;
         }
 
-        _horizontalWheelResidual -= whole;
-        SetCurrentValue(StartTickProperty, TimelineTickMath.Pan(StartTick, -whole * step));
+        _horizontalWheelTicksResidual -= whole;
+        SetCurrentValue(StartTickProperty, TimelineTickMath.Pan(StartTick, whole));
     }
 
     /// <summary>Vertical wheel/trackpad delta: scrolls lanes, or the value window in value modes.</summary>
@@ -933,6 +940,31 @@ public sealed partial class TimelineSurface : Control
         }
     }
 
+    private void OnTouchPadMagnify(PointerDeltaEventArgs e)
+    {
+        double magnitude = e.Delta.X != 0 ? e.Delta.X : e.Delta.Y;
+        if (ApplyMagnifyDelta(magnitude, e.GetPosition(this)))
+        {
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// Applies a relative touchpad magnification delta (NSEvent.magnification style) anchored at
+    /// the gesture origin. A full pinch reports roughly +-1.0 in total, so each event only zooms a
+    /// few percent and the motion stays smooth.
+    /// </summary>
+    public bool ApplyMagnifyDelta(double magnitude, Point origin)
+    {
+        if (!double.IsFinite(magnitude) || Math.Abs(magnitude) < 1e-4)
+        {
+            return false;
+        }
+
+        ZoomBy(origin, Math.Pow(ZoomStep, -magnitude * 2));
+        return true;
+    }
+
     /// <summary>
     /// Applies a trackpad pinch to the shared time viewport. Returns false when the reported scale
     /// carries no zoom, so the caller can leave the event unhandled.
@@ -966,8 +998,20 @@ public sealed partial class TimelineSurface : Control
             Math.Clamp(viewport.FirstLane - step, 0, maximumFirstLane));
     }
 
-    private void ZoomAt(Point position, double delta) =>
-        ZoomBy(position, delta > 0 ? 1 / ZoomStep : ZoomStep);
+    private void ZoomAt(Point position, double delta)
+    {
+        // Continuous zoom for trackpads: accumulate the wheel delta and apply it as a power of the
+        // zoom step, so a slow two-finger scroll zooms smoothly instead of 1.25x per event.
+        _zoomWheelResidual += delta;
+        double whole = Math.Truncate(_zoomWheelResidual);
+        if (whole == 0)
+        {
+            return;
+        }
+
+        _zoomWheelResidual -= whole;
+        ZoomBy(position, Math.Pow(ZoomStep, -whole));
+    }
 
     private void ZoomBy(Point position, double factor)
     {

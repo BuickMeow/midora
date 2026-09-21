@@ -29,11 +29,20 @@ public sealed partial class TimelineSurface
                 break;
             }
 
-            bool shaded = UsesPitchLanes
-                ? !PianoKeyPresentation.IsBlackKey(
-                    Math.Clamp(LaneAtRow(viewport, index), 0, 127))
-                : (index & 1) != 0;
-            if (shaded)
+            // Pitch lanes mirror the piano keyboard: white-key rows are the lighter shade and
+            // black-key rows stay on the dark surface, so the light/dark banding is visible again.
+            if (UsesPitchLanes)
+            {
+                int pitch = Math.Clamp(LaneAtRow(viewport, index), 0, 127);
+                if (!PianoKeyPresentation.IsBlackKey(pitch))
+                {
+                    double whiteBottom = Math.Min(height, laneTop + viewport.LaneHeight);
+                    AddFill(
+                        PianoWhiteKeyRowBrush,
+                        new Rect(0, laneTop, width, Math.Max(0, whiteBottom - laneTop)));
+                }
+            }
+            else if ((index & 1) != 0)
             {
                 double laneBottom = Math.Min(height, laneTop + viewport.LaneHeight);
                 AddFill(
@@ -260,9 +269,12 @@ public sealed partial class TimelineSurface
         }
     }
 
-    /// <summary>Upper bound for the per-frame fallback preview, above which only tiles are used.</summary>
-    private const int MaximumFallbackPreviewPrimitives = 4_000;
-
+    /// <summary>
+    /// Draws each pending Segment preview from the shared tile cache. Tile rasterization runs on
+    /// the background raster cache; a frame that still waits for tiles simply draws nothing for
+    /// that Segment, because the batched per-primitive fallback was removed once the tile path
+    /// became fast enough.
+    /// </summary>
     private void DrawSegmentPreviewDeferred(DrawingContext context, TimelineViewport viewport)
     {
         foreach (PendingSegmentPreview pending in _pendingSegmentPreviews)
@@ -278,7 +290,7 @@ public sealed partial class TimelineSurface
                 bounds.Y,
                 Math.Max(1, fullRight - fullLeft),
                 bounds.Height);
-            bool tilesComplete = DrawSegmentPreviewTiles(
+            _ = DrawSegmentPreviewTiles(
                 context,
                 bounds,
                 fullBounds,
@@ -289,66 +301,9 @@ public sealed partial class TimelineSurface
                 viewport.PixelsPerTick,
                 Color.SegmentNotePreview,
                 Color.EventPreview);
-            if (!tilesComplete)
-            {
-                DrawSegmentPreview(context, bounds, preview);
-            }
         }
 
         _pendingSegmentPreviews.Clear();
-    }
-
-    private void DrawSegmentPreview(
-        DrawingContext context,
-        Rect bounds,
-        ITimelineSegmentPreviewSource preview)
-    {
-        double devicePixel = GetDevicePixelWidth();
-        using (context.PushClip(bounds))
-        {
-            // The tile cache normally covers the preview. While tiles are still being rasterized
-            // the fallback runs, so it queues batched shapes instead of issuing one drawing call
-            // per note/event and skips pathologically dense previews (SRS 24.11 LOD intent).
-            if (preview.HasNoteContent)
-            {
-                _previewNotes.Clear();
-                preview.QueryNotes(0, 1, _previewNotes);
-                if (_previewNotes.Count <= MaximumFallbackPreviewPrimitives)
-                {
-                    foreach (TimelineSegmentPreviewNote note in _previewNotes)
-                    {
-                        double x = SnapToDevicePixel(
-                            bounds.X + Math.Clamp(note.NormalizedStart, 0, 1) * bounds.Width,
-                            devicePixel);
-                        double pitch = Math.Clamp(note.Pitch, 0, 127);
-                        double top = bounds.Y + (127 - pitch) / 127d * bounds.Height;
-                        AddFill(
-                            SegmentNotePreviewBrush,
-                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
-                    }
-                }
-            }
-
-            if (preview.HasEventContent)
-            {
-                _previewEvents.Clear();
-                preview.QueryEvents(0, 1, _previewEvents);
-                if (_previewEvents.Count <= MaximumFallbackPreviewPrimitives)
-                {
-                    foreach (TimelineSegmentPreviewEvent value in _previewEvents)
-                    {
-                        double x = SnapToDevicePixel(
-                            bounds.X + Math.Clamp(value.NormalizedTick, 0, 1) * bounds.Width,
-                            devicePixel);
-                        double top = bounds.Y
-                            + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * bounds.Height;
-                        AddFill(
-                            EventPreviewBrush,
-                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
-                    }
-                }
-            }
-        }
     }
 
     private void DrawConductorPoint(

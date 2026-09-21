@@ -671,3 +671,17 @@
   `RealtimePlaybackSession.TryCreate` 调用 `BeginDefaultPlaybackPreparation`。
 - 实测（预热完成后）：Play 阻塞 **139 ms**（仅范围编译 + plan 投影 + 后端启动）。
 - 新增评审钩子 `MIDORA_AUTOPLAY_DELAY_MS` 与 `MIDORA_RENDER`/`MIDORA-TIMELINE` 计时 trace 便于复测。
+
+## Slice P：回退移除、连续平移/缩放、键色条与触控板捏合（2026-09-21）
+
+1. **移除 Segment 预览回退**：tile 栅格已足够快，未就绪的帧不再逐图元绘制（只等瓦片）。
+   实测 12 轨整曲播放中渲染平均 **1.08 ms/帧**，最差 16 ms。
+2. **水平滚轮连续化**：不再按 `TickSpan/10` 整步跳，而是把增量换算成 tick 后累积，按 tick 平移。
+3. **Piano Roll 键色条**：修正反色（原先把白键行填成深色）并改用与左侧键盘一致的语义——
+   白键行用较亮的 `#1B2027`，黑键行保持深色底；网格在底色之上，因此白键行也能看到竖线。
+4. **播放指示条**：UI 泵从 33 ms 提到 **16 ms（60 Hz）**，位置直接取自音频引擎。
+5. **触控板捏合（根因修正）**：Avalonia 的 `InputElement.PinchEvent` 只用于触摸接触点；macOS
+   原生后端通过 `magnifyWithEvent:` 发出的是 `InputElement.PointerTouchPadGestureMagnify`
+   （`PointerDeltaEventArgs`）。现已接入该事件并新增可测的 `ApplyMagnifyDelta`：按
+   `pow(1.25, -magnitude * 2)` 平滑缩放、以指针为锚；同时保留 `PinchGestureRecognizer`（触摸）。
+   headless 测试 17/17。

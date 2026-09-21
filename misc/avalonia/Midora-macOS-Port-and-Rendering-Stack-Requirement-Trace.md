@@ -323,7 +323,7 @@
 
 - **SDK**：用户级安装 .NET SDK 10.0.400 到 `~/.dotnet`（`dotnet-install.sh --no-path`，未 sudo、未改 PATH），`~/.dotnet/dotnet --version` = 10.0.400，满足 `global.json`（`rollForward: disable`）。后续命令统一用 `$HOME/.dotnet/dotnet`。
 - **非 UI 构建**：`src/midora-core/midora-core.slnx` Debug 构建 20 s 完成 15 个项目；唯一失败为 `Midora.Audio.Bass.Worker`（win-x64/AOT 专用，macOS 无 assets；音频后置，暂不处理）。首次 restore 耗时约 30 分钟，原因是 nuget.org 元数据/包下载极慢（实测包下载约 289 KB/s，元数据 5～22 KB/s）。
-- **Avalonia 骨架**：新建 `src/midora-avalonia/midora-avalonia.slnx` + `Midora.Avalonia`（`net10.0`、覆盖全局 RID 为 `osx-arm64`）；Avalonia 版本暂定 **11.3.22**（存在 12.1.2；11.3 为成熟稳定线，降低大规模 WPF 移植的 API 风险，后续可评估升级）。
+- **Avalonia 骨架**：新建 `src/midora-avalonia/midora-avalonia.slnx` + `Midora.Avalonia`（`net10.0`、覆盖全局 RID 为 `osx-arm64`）；Avalonia 版本暂定 **11.3.22**（存在 12.1.2；11.3 为成熟稳定线，降低大规模 WPF 移植的 API 风险，后续可评估升级）。（**已被 2026-09-21 Slice L 取代：现为 12.1.2**。）
 - **运行 smoke 成功**：restore 完成（慢网导致多次超时，最终 178+ 包落盘）；Debug 构建 0 警告 0 错误；`Midora.Avalonia` 进程启动并已在 macOS 窗口服务器注册（`lsappinfo` 可见），屏幕显示暗色最小窗口。
 - **用户指示**：可以开始逐步复刻 UI，并预留 macOS 与 Windows 适配。
 - **结构决定（覆盖 D-STRUCT01 原建议）**：用户明确允许「抄 WPF 的 UI」。执行方式：Avalonia 侧复制/适配，**不改动 WPF 侧**（WPF 保持上游原样，避免双向分叉失控）；框架中立的 `Midora.Presentation` 抽取延后到回贡前再评估。
@@ -506,3 +506,86 @@
 - 复核方式：`MIDORA_WINDOW_CYCLE=1` 评审钩子（+5s 最大化 → +15s 还原 → +10s 改尺寸 1200×700），逐状态截图并测量红绿灯：窗口顶边 78 device、红灯中心 103.5 device（按钮高 12 logical）→ 距顶 12.75–13.75 logical，对应 28px 栏的几何中心（14）在测量误差内；**启动态与最大化态数值完全一致**（修复前两者相差 4 logical）。
 
 验证：构建 0 警告 0 错误；`SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；`MIDORA_WINDOW_CYCLE` 截图 + 像素测量核对。
+
+### 2026-09-21（本轮）Slice L：Avalonia 11.3.22 → 12.1.2 迁移
+
+**决定**：升级到 **12.1.2**（GitHub Releases 标记非 prerelease/非 draft，2026-09-02 发布；包为 MIT）。`Avalonia.Skia` 12.1.2 的传递依赖固定 **SkiaSharp 3.119.4**（v12 已删除 2.88 支持），因此 `Midora.Avalonia.Presentation` 的显式 `SkiaSharp` 引用同步升到 3.119.4。两个 `.csproj` 的 `Avalonia*` 全部 12.1.2；`packages.lock.json` 经 `restore --force-evaluate` 重算。
+
+**逐项破坏性变更与处理**（只列本次实际命中项）：
+
+1. **`Avalonia.Diagnostics` 包被移除**：项目只在 Debug 引用、从未调用 `AttachDevTools`，直接删除该 PackageReference。替代品 `AvaloniaUI.DiagnosticsSupport`（Avalonia Plus，nuspec 无 license 元数据）未引入，等待产品所有者决定是否需要。
+2. **`Window.ExtendClientAreaChromeHints` / `SystemDecorations` 移除 → `WindowDecorations`（`None`/`BorderOnly`/`Full`）**：
+   - 44 个对话框/窗口的 `ExtendClientAreaChromeHints="NoChrome"` → `WindowDecorations="BorderOnly"`；
+   - 主窗口 macOS 分支的 `PreferSystemChrome` → `WindowDecorations = WindowDecorations.Full`（`MainWindow.axaml.cs`）。
+   - 依据（Avalonia.Native 12.1.2 源码核对）：`BorderOnly` 保留 `NSWindowStyleMaskTitled`（macOS 圆角/阴影、Windows 边框）但隐藏红绿灯与系统标题栏，可见效果与 v11 的 `SystemDecorations.Full + NoChrome` 一致；只有 `WindowDecorations.Full` 才会让 macOS 上报扩展标题栏高度（`InvalidateExtendedMargins`），这是自定义 28 pt 标题栏行偏移的来源。
+3. **`ToggleButton.Checked/Unchecked/Indeterminate` 事件移除 → `IsCheckedChanged`**：Humanize/NewProject/TimelineGeneration 共 5 处；处理器均为幂等状态刷新。注意 `IsCheckedChanged` 在 RadioButton 组内会双向触发（选中与取消各一次），现有处理器只读当前状态，语义不变。
+4. **`IClipboard.SetTextAsync` 改为 `Avalonia.Input.Platform.ClipboardExtensions` 扩展方法**：`TextDetailsDialog` 补 `using Avalonia.Input.Platform;`。
+5. **`TextBox.Watermark` 废弃 → `PlaceholderText`**：Diagnostics 搜索框。
+6. **SkiaSharp 2.88.9 → 3.119.4**：自定义批处理 `TimelineShapeDrawOperation` 只用 `SKCanvas`/`SKPaint`/`SKRect`/`SKColor`，无 API 变更；截图确认渲染正常。
+7. **稳定性回归（SMOKE 发现并修复）**：v12 的 `SelectingItemsControl.EndInit` 在编译 XAML 仍在给命名字段赋值时就触发 `SelectionChanged`，`HumanizeSelectionDialog.UpdateEnabledState()` 解引用尚未赋值的控件导致 NRE（`WINDOW-SMOKE` 由 0 失败变 1 失败）。修复：处理器增加完整字段存在性守卫（`IsInitialized` + 全部相关控件非 null），不再假设“`IsInitialized` 为真即字段齐全”。
+8. **未命中项（已核对不需要改）**：`WindowState` 变 direct property（本项目只在代码设置）、`Gestures.*` 事件迁移（未使用）、`TopLevel`/`VisualLayerManager`/`Clipboard` 旧接口（未使用）、`RenderOptions.TextRenderingMode`/`LetterSpacing`（未使用）；被覆盖的 Fluent 部件名（`TextBox#PART_BorderElement`、`ComboBox#Background`、`ScrollBar Thumb`）在 12.1.2 仍存在（已核对 v12.1.2 主题源码）。
+
+**未采纳的 v12 新特性及理由**：
+
+- `WindowDrawnDecorations` / `WindowDecorationsTheme`：macOS `NeedsManagedDecorations=false`，且会重写已批准的自绘标题栏结构，收益不抵回归风险；Windows 侧未在本机验证。
+- 编译绑定（`x:DataType` + 去掉 `x:CompileBindings="False"`）：49 个 XAML 仍显式关闭。需逐窗口补数据类型并处理 ItemTemplate，超出迁移范围；列为后续性能项（v12 默认已开启，仅因显式 False 未生效）。
+- `TextOptions.BaselinePixelAlignment`/`TextHintingMode`/`TextRenderingMode`：会改变已批准的文字渲染基线，暂不启用。
+- `Bitmap.Save(format)`、`TableView`、`OpenFileWithResultAsync`、`Dispatcher.Yield/Resume`：当前功能不需要。
+
+**附带改动**：`WINDOW-SMOKE` 失败明细由 `Type: Message` 改为完整异常 `ToString()`，便于后续定位（本次即靠它定位到 #7 的调用栈）。
+
+**验证**：
+
+- `~/.dotnet/dotnet build src/midora-avalonia/midora-avalonia.slnx -c Debug -t:Rebuild` → 0 警告 0 错误。
+- `SHELL-SMOKE failures=0`；`WINDOW-SMOKE total=44 failures=0`。
+- `MIDORA_WINDOW_CYCLE=1` 三态截图 + 像素测量：启动/最大化/还原的红灯中心距窗口顶边均为 **12.5 logical**（三态完全一致），Slice K 的 28 pt 平台化结论在 v12 保持。
+- `MIDORA_MIDI_OPEN` + `MIDORA_OPEN_TRACK=0` 截图：SkiaSharp 3 批处理（钢琴键盘/网格/泳道）与 Arrangement 预览瓦片、轨道色带渲染正常。
+
+**未验证**：Windows 平台 `WindowDecorations="BorderOnly"` 的实机行为（本机无 Windows；Windows/WPF 端口非本轮范围）。
+
+### 2026-09-21（续）Slice M1：真实 Project 会话 → 编译 → 真实诊断（A 级第一批）
+
+**目标**：打通 AGENTS.md 要求的 `Domain → Compiler → Canonical → Consumer` 最小垂直切片，作为 A 级"平台中立引擎已存在、只差接线"的第一批。
+
+**改动**：
+
+1. `Midora.Avalonia` 首次引用核心库：`Midora.Application`（传递 Persistence/Compiler/Midi/Mapping.Contract.V2/Common；也传递 Playback/Audio/AudioRender，见下方架构发现）。
+2. 新增 `Session/ProjectSessionHost.cs`：真实工程生命周期适配器（对照 WPF `DesktopSessionController.ProjectContext` 的最小职责集）：
+   - `CreateUnsaved/CreateAsync`（`ProjectCreationCoordinator`）、`OpenAsync`（`ProjectOpenCoordinator` + `ProjectOpenCandidate` 所有权保留到工程切换）、`ImportMidi`（`MidiProjectImportService`）、`SaveAsync/SaveCopyAsync`（`ProjectPersistenceCoordinator`）、`Compile()`（`ProjectCompilationSession.Recompile(ProjectChangeSet.Everything)`，Synchronous 模式）、`Close`。
+   - 数据根：`MidoraProgramData.Resolve(AppContext.BaseDirectory)` + `EnsureReadyAndProbe`（沿用 WPF 的 fail-closed 语义；macOS 上实测通过，见验证）。
+3. `ShellSession` 接线：`HasProjectSession`、`CurrentProjectPath`、`CreateProjectAsync/OpenProjectAsync/SaveProjectAsync/SaveCopyAsync`、真实 `CompileAsync`（后台线程编译、UI 线程应用结果）、`ProjectState` 按 document origin 显示 `Saved/Unsaved/Modified`、`CanSaveProject` 由 `Persistence.CanSaveProject` 决定、`CanRunProjectTask` 要求真实会话、`Diagnostics` 集合 + `HasDiagnostics`。
+4. `MainWindow`：New Project（TPQN/元数据/可保存路径/覆盖授权）、Open Project（真实打开）、Save（首次另存 + 覆盖确认；已有路径直接保存）、Save Copy（另存 + 覆盖确认）、Open MIDI（字节只读一次：DTO 预览 + `MidiProjectImportService` 真实工程采用）。
+5. `DiagnosticsView` 显示真实编译诊断（严重级别/代码/消息/来源 tick），摘要绑定 `IssueSummary`；空状态用 `HasDiagnostics`。
+6. 命名冲突修复：因 `Midora.Application` 命名空间与 `Avalonia.Application` 同名，在 `Midora.Avalonia` 命名空间内需写 `global::Avalonia.Application`（App/ShellSession/LaneHeaderStrip）。
+7. 评审/验证：新增 `MIDORA_DIAGNOSTICS=1` 钩子（编译 + 打开 Diagnostics 工作区）；`SHELL-SMOKE` 扩展为断言式生命周期（create → save → 重新打开 → compile）+ MIDI 采用断言 + 输出编译汇总。
+
+**验证**：
+
+- 构建：`midora-avalonia.slnx` Debug/Release 均 0 警告 0 错误；`SHELL-SMOKE failures=0 Compile Succeeded diagnostics=0 errors=0 warnings=0`；`WINDOW-SMOKE total=44 failures=0`。
+- 产物：临时目录生成真实 `.midora`（Format 4：`manifest.json`、`project.json`、`metadata.json`、`conductor-track.json`、`settings/{project-settings,global-reset-defaults,global-event-scope-defaults,project-presentation}.json`、`settings/instrument-changes.pb`；ZIP 时间戳固定 1980-01-01）。
+- **macOS 数据根通过**：可执行目录下成功创建 `Data\{Preferences,Recent,Catalogs,Presets,Diagnostics}` 与 `.tmp\{AudioCache,SessionContent,CompilerRuns,AudioWorkerExchange}`（`EnsureReadyAndProbe` 的固定盘判定与事务探针在 macOS 上可用）。
+- 诊断消费：用构造的 SMF（tick 240 处插入 3/4 拍号）触发编译器 `MIDORA1018` Warning，`MIDORA_MIDI_OPEN` + `MIDORA_DIAGNOSTICS=1` 截图确认 Diagnostics 视图显示 `0 Errors, 1 Warnings` 与该行（代码/消息/`tick 240`）。
+
+**已知中间状态（未完成，不视为已通过）**：
+
+- 导入 MIDI 的 DTO 预览编辑尚未写回 Domain 工程：预览里的 Draw/Select/Velocity 编辑不会进入编译与保存；`Compile` 只针对采用时的工程状态，状态栏会提示"imported MIDI is still preview data"。
+- 打开 `.midora` 后 Arrangement 无车道投影（Domain→timeline 投影层未实现），状态消息明确说明。
+- 播放/试听/音频仍缺（B 级：macOS 音频后端未选型）。
+
+**架构发现（本轮实测）**：`Midora.Application` 的 `ProjectReference` 闭包包含 `Midora.Playback`、`Midora.Audio`、`Midora.AudioRender`（为工程持久化/编译也要拖入整条音频链），说明该库的层次边界需要拆分；详见后续架构讨论。
+
+### 2026-09-21（续）Slice M2：新库 `Midora.Session` + MIDI 导出接线
+
+**A 级继续，全程不修改既有库**（满足 2026-09-21 分层 ADR 的 WPF 冻结与"零既有库改动"约束）。
+
+1. **新库 `src/midora-core/Midora.Session`**：把 `ProjectSessionHost`/`ProjectActivation` 从 UI 程序集迁出并公开（`Midora.Session` 命名空间，引用 `Midora.Application`）；`Midora.Avalonia` 改引该库，`ShellSession` 仅加 `using`。`Midora.Application` 与 WPF 侧零修改。
+2. **MIDI 导出接线**（A 级第 5 项）：`Midora.Session/MidiExportSessionService.cs` 移植 WPF `DesktopMidiExportService` 语义——冻结编译（`MidiExportCompilationCoordinator`）+ 冻结输出计划（`MidiExportOutputPlanner`：WholeProject/PerLogicalTrack/PerPort）+ README 请求（`MidiExportReadmeFactory`）+ `MidiExportTaskRunner.ExecuteAsync`；对宿主返回失败原因、写入路径、条目诊断与 `MidiExportPaddingSummary`。
+3. **Avalonia 侧**：`MidiExportDialog` 接受真实轨道行（`MidoraId` 稳定 ID，不再用演示数据）；`OnMidiExportClick` 组装 options → 后台 `Prepare` → 计划失败显示诊断 → 需要覆盖时列出冻结路径并请求授权（§7.15）→ 后台执行 → 状态栏汇总 + 详情报告（写入文件、padding 汇总、条目诊断）。
+4. **冒烟**：`SHELL-SMOKE` 在 MIDI 导入采用后执行整曲导出到临时目录，并断言导出的 `.mid` 能被 `StandardMidiFile.ParseType0Or1` 重新解析；输出新增 `midi-export=N`。
+
+**验证**：
+
+- 构建：`midora-core.slnx` 与 `midora-avalonia.slnx` 均 0 警告 0 错误；`SHELL-SMOKE failures=0 Compile Succeeded diagnostics=0 errors=0 warnings=0 midi-export=2`；`WINDOW-SMOKE total=44 failures=0`。
+- 产物核对（smoke MIDI，1 个逻辑轨道）：`midora-smoke.mid` 313 字节、Format 1、2 个 MTrk（Conductor 轨名 `midora-smoke`，事件轨 `Piano`）、TPQN 480，可重新解析；`README.md` 含 Project 元数据、`Mode: Whole Project`、`Range: [0, 9548)`、`Routing: Compact`、TPQ/事件计数与逐轨导出选择。
+
+**未完成（与 Slice M1 相同）**：DTO 预览编辑仍未写回 Domain 工程；打开 `.midora` 的车道投影未实现；`PerLogicalTrack/PerPort` 在 UI 上可用但本轮只用整曲路径做过自动验证。`MidiExportDialog` 仍保留"演示轨道行"构造（供窗口目录/冒烟使用），真实会话走注入行。

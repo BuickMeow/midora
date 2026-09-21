@@ -2,7 +2,7 @@
 
 状态：工作指南，配合 `misc/Midora-macOS-Port-and-Rendering-Stack-Requirement-Trace.md`
 适用范围：把 `src/midora-desktop/Midora.Desktop/*.xaml(.cs)` 的 WPF 窗口移植到
-`src/midora-avalonia/Midora.Avalonia/Windows/`（Avalonia 11.3.22 / .NET 10）。
+`src/midora-avalonia/Midora.Avalonia/Windows/`（Avalonia 12.1.2 / .NET 10）。
 
 ## 硬约束
 
@@ -50,7 +50,7 @@ WPF `Style="{StaticResource Text.Caption}"` → Avalonia `Classes="caption"`；
 | `Visibility="..."` / `BooleanToVisibility` | `IsVisible="..."`（bool 直接绑定） |
 | `Style.Triggers` / `DataTrigger` / `MultiDataTrigger` | 伪类选择器（`:pointerover`、`:pressed`、`:disabled`、`:checked`、`:selected`、`:focus`）或代码隐藏；复杂触发器可省略并在报告说明 |
 | `Background="Transparent"` 用于命中 | Avalonia 中 `Background="{x:Null}"` 不参与命中，透明要写 `Background="Transparent"`（同 WPF） |
-| `TextBox.Text` / `Watermark` | 同；占位提示用 `Watermark` |
+| `TextBox.Text` / `Watermark` | 同；占位提示用 `PlaceholderText`（Avalonia 12 起 `Watermark` 已废弃） |
 | `PasswordBox` | `TextBox PasswordChar="●"` |
 | `ListBox`/`ComboBox`/`TabControl`/`TreeView`/`Expander`/`Slider`/`ProgressBar`/`CheckBox`/`RadioButton`/`ToggleButton` | 同名可用 |
 | `DataGrid` | 不存在；用 `ListBox` + 标题行或省略，报告中说明 |
@@ -77,10 +77,13 @@ WPF `Style="{StaticResource Text.Caption}"` → Avalonia `Classes="caption"`；
 ## 数量参考
 
 - WPF 窗口基本都已设置 `WindowStyle=None` + `WindowChrome`：Avalonia 移植统一用
-  `ExtendClientAreaToDecorationsHint="True"`、`ExtendClientAreaChromeHints="NoChrome"`、
+  `ExtendClientAreaToDecorationsHint="True"`、`WindowDecorations="BorderOnly"`、
   `WindowStartupLocation="CenterOwner"`、`ShowInTaskbar="False"`（对话框）、`CanResize` 按源；
   标题栏用 Grid 自绘（可参考 `MainWindow.axaml` 的 36px 标题栏结构），
   关闭按钮走 `Close()`。无 WindowChrome 的简单对话框可直接用系统边框（`CanResize="False"`）。
+  `BorderOnly` 是 Avalonia 12 对旧 `ExtendClientAreaChromeHints="NoChrome"` 的等价映射：
+  保留原生标题窗框（macOS 圆角/阴影、Windows 边框）但不画系统标题栏与红绿灯；
+  主窗口在 macOS 上由 `MainWindow.axaml.cs` 覆盖为 `WindowDecorations.Full` 以显示红绿灯。
 - 迁移时保留原 `Title`、`Width`/`Height`/`MinWidth`/`MinHeight`、`ResizeMode` 对应物。
 
 ## 报告格式（最终消息）

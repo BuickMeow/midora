@@ -2,12 +2,12 @@
 
 配合 `misc/avalonia/Midora-Avalonia-Window-Porting-Guide.md`（窗口移植规范）。
 本指南只适用于把 `src/midora-desktop/Midora.Desktop.Presentation` 的呈现核心移植到
-`src/midora-avalonia/Midora.Avalonia.Presentation`（Avalonia 11.3.22 / .NET 10）。
+`src/midora-avalonia/Midora.Avalonia.Presentation`（Avalonia 12.1.2 / SkiaSharp 3.119.4 / .NET 10）。
 
 ## 硬约束
 
 1. 只写分配给你的文件（路径按命名空间映射）；不要改共享文件、`.csproj`、其他 Agent 的文件。
-2. **不得引用任何 WPF/`System.Windows*`/`Midora.Desktop*`**，不得新增 NuGet 包（只用 Avalonia 11.3.22）。
+2. **不得引用任何 WPF/`System.Windows*`/`Midora.Desktop*`**，不得新增 NuGet 包（只用 Avalonia 12.1.2 与其传递依赖 SkiaSharp 3.119.4）。
 3. 不要构建（并行任务争抢 obj/bin）；写完自检语法与 API，构建由主任务统一执行。
 4. 命名空间映射：`Midora.Desktop.Presentation.Rendering` → `Midora.Avalonia.Presentation.Rendering`；
    `...Interaction` → `Midora.Avalonia.Presentation.Interaction`；`...Controls` → `Midora.Avalonia.Presentation.Controls`。

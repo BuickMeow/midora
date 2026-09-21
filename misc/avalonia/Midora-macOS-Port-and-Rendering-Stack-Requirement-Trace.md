@@ -685,3 +685,19 @@
    （`PointerDeltaEventArgs`）。现已接入该事件并新增可测的 `ApplyMagnifyDelta`：按
    `pow(1.25, -magnitude * 2)` 平滑缩放、以指针为锚；同时保留 `PinchGestureRecognizer`（触摸）。
    headless 测试 17/17。
+
+## Slice Q：捏合崩溃与孤儿 Worker 修复（2026-09-21）
+
+1. **捏合即崩溃（TargetParameterCountException）**：`AddHandler(InputElement.PointerTouchPadGestureMagnifyEvent, …)`
+   传入的是 1 参数方法，只能绑定到非泛型 `AddHandler(RoutedEvent, Delegate)` 的 `Action<T>`；而事件按
+   `(sender, e)` 调用 → 反射调用参数个数不匹配。改为显式 `(object? sender, T e)` 后由编译器绑定到
+   `EventHandler<T>`。`PinchEventArgs` 处理器同样修正。
+2. **App 崩溃后 Worker 继续播放**：`RunPlayback` 主循环只检查 `control.TryDequeuePendingStop`，从不
+   读取 `WorkerParentWatchdog.ParentExited`（该检查此前只在监视/恢复路径与最外层宿主循环里，而宿主
+   循环被阻塞在播放循环内）。现主循环与渲染循环都直接检查父进程死亡并停止；重新发布 AOT Worker。
+   实测：`kill -9` App 后 Worker **1 秒内退出**（此前会成为 ppid=1 的孤儿继续播放）。
+3. 立即止血手段：`pkill -f 'Midora.Audio.Bass.Worker'`。
+
+**未完成（下一步）**：Avalonia App 尚未接入 `SingleApplicationInstanceCoordinator`（SRS 01/17 单实例），
+因此可以同时运行多个 App 实例、各自持有音频 Worker——本次"后台还在播放"部分也源于此（旧实例仍在播放）。
+需要在 `Program.Main` 接入 StartOrForward、主实例消费转发请求（打开对应 Project 并前置窗口）。

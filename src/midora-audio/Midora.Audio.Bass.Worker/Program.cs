@@ -597,6 +597,16 @@ public static class Program
         long heldPreviewPlanGeneration = 0;
         while (!stopRequested && !completed)
         {
+            if (WorkerParentWatchdog.ParentExited)
+            {
+                // The owning application process died: stop synthesizing instead of playing on as
+                // an orphan. The macOS/Linux watchdog is the only signal available there because
+                // only Windows has the Job Object kill-on-close guarantee.
+                stopRequested = true;
+                flushOnStop = false;
+                break;
+            }
+
             if (control.TryDequeuePendingStop(out bool prioritizedStopFlush))
             {
                 stopRequested = true;
@@ -1189,6 +1199,12 @@ public static class Program
             + MonitoringOutputResumeTimeoutMilliseconds;
         while (true)
         {
+            if (WorkerParentWatchdog.ParentExited)
+            {
+                throw new MidoraAudioException(
+                    "The owning application process exited during audio rendering.");
+            }
+
             if (control.TryDequeuePendingStop(out bool stopFlush))
             {
                 stopRequested = true;

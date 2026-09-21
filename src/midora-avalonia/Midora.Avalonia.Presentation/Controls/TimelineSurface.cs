@@ -932,7 +932,7 @@ public sealed partial class TimelineSurface : Control
     /// Trackpad pinch zoom. SRS 20.1.5 defines Ctrl+Wheel zoom; pinch mirrors it so the pointer
     /// anchor, bounds and the shared ruler/lane/canvas viewport stay identical.
     /// </summary>
-    private void OnPinchGesture(PinchEventArgs e)
+    private void OnPinchGesture(object? sender, PinchEventArgs e)
     {
         if (ApplyPinchZoom(e.Scale, e.ScaleOrigin))
         {
@@ -940,7 +940,7 @@ public sealed partial class TimelineSurface : Control
         }
     }
 
-    private void OnTouchPadMagnify(PointerDeltaEventArgs e)
+    private void OnTouchPadMagnify(object? sender, PointerDeltaEventArgs e)
     {
         double magnitude = e.Delta.X != 0 ? e.Delta.X : e.Delta.Y;
         if (ApplyMagnifyDelta(magnitude, e.GetPosition(this)))

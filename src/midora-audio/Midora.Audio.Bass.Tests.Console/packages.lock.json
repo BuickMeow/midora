@@ -45,6 +45,13 @@
       "midora.audiodevice": {
         "type": "Project"
       },
+      "midora.audiodevice.bass": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )"
+        }
+      },
       "midora.audiodevice.basswasapi": {
         "type": "Project",
         "dependencies": {

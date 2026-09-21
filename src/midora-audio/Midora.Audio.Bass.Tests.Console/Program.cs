@@ -1,14 +1,21 @@
 using Midora.Audio.Bass;
 using Midora.AudioDevice;
+using Midora.AudioDevice.Bass.Internals;
+using Midora.AudioDevice.Bass.Settings;
 using Midora.AudioDevice.BassWasapi.Internals;
 using Midora.AudioDevice.BassWasapi.Settings;
 using Midora.AudioDevice.Wave;
 using Midora.Midi;
+using Midora.NativeInterops.Bass;
+using Midora.NativeInterops.BassMidi;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace Midora.Audio.Bass.Tests.Console;
 
+// The harness carries the Windows platform annotation because it still exercises the
+// Windows-only child/WASAPI modes; macOS runs use offline/realtime and reject the
+// Windows-only modes at runtime (see Main).
 [SupportedOSPlatform("windows")]
 public static partial class Program
 {
@@ -23,6 +30,13 @@ public static partial class Program
             LoadBassLibraries();
             string mode = args.Length >= 1 ? args[0].ToLowerInvariant() : "offline";
             string soundFontPath = args.Length >= 2 ? args[1] : DefaultSoundFontPath;
+
+            if (!OperatingSystem.IsWindows()
+                && mode is "realtime-child" or "logic-realtime" or "logic-realtime-child" or "wasapi-probe")
+            {
+                throw new PlatformNotSupportedException(
+                    $"模式“{mode}”需要 Windows（BASSWASAPI 或子进程宿主）；macOS 可用 offline、logic-offline、realtime。");
+            }
 
             return mode switch
             {
@@ -100,8 +114,7 @@ public static partial class Program
         const int deviceBufferRequestMilliseconds = 50;
         const int workFrameCount = InitialReleaseAudioRuntimePolicy.WorkFrameCount;
 
-        BassWasapiOutputDeviceFactory deviceFactory = new(
-            new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+        IAudioOutputDeviceFactory deviceFactory = CreateDeviceFactory(deviceBufferRequestMilliseconds);
         IReadOnlyList<AudioOutputDeviceInfo> devices = deviceFactory.GetDevices();
         if (devices.Count == 0)
         {
@@ -141,16 +154,50 @@ public static partial class Program
             throw new MidoraAudioDeviceException($"Render-ahead Preparing 失败：{renderer.Fault}");
         }
 
-        using BassWasapiOutputDevice output = (BassWasapiOutputDevice)deviceFactory.Open(selected, ring);
+        using IAudioOutputDevice output = deviceFactory.Open(selected, ring);
         global::System.Console.WriteLine(
-            $"实时播放：{selected.Name}；actual={output.Info.AudioFormat.SampleRate} Hz；actual device buffer={output.ActualBufferFrameCount} frames");
+            $"实时播放：{selected.Name}；actual={output.Info.AudioFormat.SampleRate} Hz；actual device buffer={DescribeActualBufferFrames(output)} frames");
         global::System.Console.WriteLine(
             $"Render-Ahead={renderAheadMilliseconds} ms；Device Request={deviceBufferRequestMilliseconds} ms；事件按 sample-frame 推进，不使用 Thread.Sleep 调度 MIDI。");
 
+        bool trace = Environment.GetEnvironmentVariable("MIDORA_AUDIO_TRACE") == "1";
+        DateTime startedAt = DateTime.UtcNow;
+        int lastTraceSecond = -1;
         output.Start();
         while (!ring.ProducerFaulted
             && !(ring.ProducerCompleted && ring.AvailableFrameCount == 0))
         {
+            if (ring.IsBuffering && ring.AvailableFrameCount >= ringCapacityFrames / 2)
+            {
+                // Dev harness only: production playback releases the latched underrun through
+                // PlaybackController's buffering recovery. The harness has no controller, so it
+                // releases once the ring has recovered to at least half capacity.
+                ring.ReleaseBuffering();
+            }
+
+            if (trace)
+            {
+                int second = (int)(DateTime.UtcNow - startedAt).TotalSeconds;
+                if (second != lastTraceSecond)
+                {
+                    lastTraceSecond = second;
+                    global::System.Console.WriteLine(
+                        $"[trace {second}s] callbacks={DescribeCallbackCount(output)}"
+                        + $" consumedFrames={DescribeConsumedFrames(output)}"
+                        + $" lastCallbackFrames={DescribeLastCallbackFrames(output)}"
+                        + $" lastCallbackBytes={DescribeLastCallbackBytes(output)}"
+                        + $" producerCompleted={ring.ProducerCompleted}"
+                        + $" producerFaulted={ring.ProducerFaulted}"
+                        + $" available={ring.AvailableFrameCount}"
+                        + $" underruns={ring.UnderrunCount}");
+                }
+            }
+
+            if (startedAt.AddSeconds(600) < DateTime.UtcNow)
+            {
+                throw new TimeoutException("实时播放等待超过 600 秒，视为挂起。");
+            }
+
             Thread.Sleep(10);
         }
 
@@ -159,17 +206,72 @@ public static partial class Program
         worker.Stop();
 
         global::System.Console.WriteLine(
-            $"播放结束：callbacks={output.CallbackCount}；callback allocations={output.CallbackAllocatedBytes} B；underruns={ring.UnderrunCount}；render-thread allocations={worker.RenderingThreadAllocatedBytes} B");
-        global::System.Console.WriteLine($"callback fault={output.CallbackFaulted}；producer fault={ring.ProducerFaulted}；renderer fault={renderer.Fault}");
+            $"播放结束：callbacks={DescribeCallbackCount(output)}；callback allocations={DescribeCallbackAllocations(output)} B；underruns={ring.UnderrunCount}；render-thread allocations={worker.RenderingThreadAllocatedBytes} B");
+        global::System.Console.WriteLine($"callback fault={DescribeCallbackFaulted(output)}；producer fault={ring.ProducerFaulted}；renderer fault={renderer.Fault}");
 
-        return !output.CallbackFaulted
+        return !DescribeCallbackFaulted(output)
             && !ring.ProducerFaulted
             && renderer.Fault.Code == AudioRenderFaultCode.None
-            && output.CallbackAllocatedBytes == 0
+            && DescribeCallbackAllocations(output) == 0
             && worker.RenderingThreadAllocatedBytes == 0
             ? 0
             : 1;
     }
+
+    private static IAudioOutputDeviceFactory CreateDeviceFactory(int deviceBufferRequestMilliseconds) =>
+        OperatingSystem.IsWindows()
+            ? new BassWasapiOutputDeviceFactory(
+                new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds))
+            : new BassAudioOutputDeviceFactory(
+                new BassAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+
+    private static uint DescribeActualBufferFrames(IAudioOutputDevice device) => device switch
+    {
+        BassWasapiOutputDevice wasapi => wasapi.ActualBufferFrameCount,
+        BassAudioOutputDevice bass => bass.ActualBufferFrameCount,
+        _ => 0
+    };
+
+    private static long DescribeCallbackCount(IAudioOutputDevice device) => device switch
+    {
+        BassWasapiOutputDevice wasapi => wasapi.CallbackCount,
+        BassAudioOutputDevice bass => bass.CallbackCount,
+        _ => 0
+    };
+
+    private static long DescribeCallbackAllocations(IAudioOutputDevice device) => device switch
+    {
+        BassWasapiOutputDevice wasapi => wasapi.CallbackAllocatedBytes,
+        BassAudioOutputDevice bass => bass.CallbackAllocatedBytes,
+        _ => 0
+    };
+
+    private static bool DescribeCallbackFaulted(IAudioOutputDevice device) => device switch
+    {
+        BassWasapiOutputDevice wasapi => wasapi.CallbackFaulted,
+        BassAudioOutputDevice bass => bass.CallbackFaulted,
+        _ => false
+    };
+
+    private static long DescribeConsumedFrames(IAudioOutputDevice device) => device switch
+    {
+        BassWasapiOutputDevice wasapi => wasapi.ConsumedFrameCount,
+        BassAudioOutputDevice bass => bass.ConsumedFrameCount,
+        _ => 0
+    };
+
+    private static int DescribeLastCallbackFrames(IAudioOutputDevice device) => device switch
+    {
+        BassWasapiOutputDevice wasapi => wasapi.LastCallbackFrameCount,
+        BassAudioOutputDevice bass => bass.LastCallbackFrameCount,
+        _ => 0
+    };
+
+    private static long DescribeLastCallbackBytes(IAudioOutputDevice device) => device switch
+    {
+        BassAudioOutputDevice bass => bass.LastCallbackRequestedBytes,
+        _ => -1
+    };
 
     private static int RunOfflineChild(
         string repositoryRoot,
@@ -395,6 +497,15 @@ public static partial class Program
 
     private static void LoadBassLibraries()
     {
+        BassNativeLibrary.EnsureRegistered();
+        BassMidiNativeLibrary.EnsureRegistered();
+        if (!OperatingSystem.IsWindows())
+        {
+            // macOS/Linux resolve libbass/libbassmidi through the platform resolver
+            // (MIDORA_BASS_NATIVE_DIR or the application directory).
+            return;
+        }
+
         string bassPath = GetBassNativeDirectory();
 
         _ = NativeLibrary.Load(Path.Combine(bassPath, "bass.dll"));

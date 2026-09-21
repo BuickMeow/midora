@@ -27,6 +27,26 @@ public static class BassMidiNativeLibrary
         NativeLibrary.SetDllImportResolver(typeof(BASSMIDI).Assembly, Resolve);
     }
 
+    private static bool TryLoadFromOperatorDirectory(
+        string fileName,
+        Assembly assembly,
+        DllImportSearchPath? searchPath,
+        out IntPtr handle)
+    {
+        handle = IntPtr.Zero;
+        string? directory = Environment.GetEnvironmentVariable("MIDORA_BASS_NATIVE_DIR");
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return false;
+        }
+
+        return NativeLibrary.TryLoad(
+            Path.Combine(directory, fileName),
+            assembly,
+            searchPath,
+            out handle);
+    }
+
     private static IntPtr Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         if (!string.Equals(libraryName, BASSMIDI.LibraryName, StringComparison.Ordinal))
@@ -34,10 +54,17 @@ public static class BassMidiNativeLibrary
             return IntPtr.Zero;
         }
 
-        if (OperatingSystem.IsMacOS()
-            && NativeLibrary.TryLoad("libbassmidi.dylib", assembly, searchPath, out IntPtr macHandle))
+        if (OperatingSystem.IsMacOS())
         {
-            return macHandle;
+            if (TryLoadFromOperatorDirectory("libbassmidi.dylib", assembly, searchPath, out IntPtr operatorHandle))
+            {
+                return operatorHandle;
+            }
+
+            if (NativeLibrary.TryLoad("libbassmidi.dylib", assembly, searchPath, out IntPtr macHandle))
+            {
+                return macHandle;
+            }
         }
 
         return OperatingSystem.IsLinux()

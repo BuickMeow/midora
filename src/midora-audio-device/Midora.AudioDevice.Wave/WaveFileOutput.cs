@@ -2,17 +2,12 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.ExceptionServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace Midora.AudioDevice.Wave;
 
 public static unsafe partial class WaveFileOutput
 {
-    private const uint GenericWrite = 0x40000000;
-    private const uint CreateNew = 1;
-    private const uint FileAttributeNormal = 0x80;
-    private const uint FileFlagSequentialScan = 0x08000000;
-    private static readonly nint InvalidHandleValue = -1;
-
     public static WaveFileRenderResult Render(
         IAudioRenderSource source,
         long frameCount,
@@ -60,7 +55,7 @@ public static unsafe partial class WaveFileOutput
             $".{Path.GetFileName(fullTargetPath)}.{Guid.NewGuid():N}.tmp");
         nuint bufferByteCount = checked((nuint)workFrameCount * WaveFileSize.StereoFloat32BytesPerFrame);
         float* buffer = (float*)NativeMemory.Alloc(bufferByteCount);
-        nint fileHandle = InvalidHandleValue;
+        SafeFileHandle? fileHandle = null;
         long renderedFrames = 0;
         int failureCode = 0;
         WaveRenderFailure failure = WaveRenderFailure.None;
@@ -75,30 +70,40 @@ public static unsafe partial class WaveFileOutput
 
         try
         {
-            fileHandle = CreateFile(
-                temporaryPath,
-                GenericWrite,
-                0,
-                null,
-                CreateNew,
-                FileAttributeNormal | FileFlagSequentialScan,
-                0);
-
-            if (fileHandle == InvalidHandleValue)
+            try
             {
-                throw new IOException(
-                    $"Could not create the temporary WAVE file; Win32 error {Marshal.GetLastPInvokeError()}.");
+                // Platform-neutral exclusive write-through handle: Windows previously used
+                // CreateFileW with FILE_FLAG_SEQUENTIAL_SCAN; these FileOptions map to the
+                // same semantics and keep the writer usable on macOS.
+                fileHandle = File.OpenHandle(
+                    temporaryPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    FileOptions.WriteThrough | FileOptions.SequentialScan);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException("Could not create the temporary WAVE file.", exception);
             }
 
             Span<byte> header = stackalloc byte[WaveFileSize.HeaderByteCount];
             WriteHeader(header, format.SampleRate, size);
+            long fileOffset = 0;
             fixed (byte* headerPointer = header)
             {
-                if (!TryWriteAll(fileHandle, headerPointer, WaveFileSize.HeaderByteCount, out failureCode))
+                if (!TryWriteAll(
+                    fileHandle,
+                    fileOffset,
+                    headerPointer,
+                    (uint)WaveFileSize.HeaderByteCount,
+                    out failureCode))
                 {
-                    throw new IOException($"Could not write the WAVE header; Win32 error {failureCode}.");
+                    throw new IOException($"Could not write the WAVE header; error {failureCode}.");
                 }
             }
+
+            fileOffset = WaveFileSize.HeaderByteCount;
 
             AudioPullResult warmupPull = source.PullFrames(buffer, 0);
             if (warmupPull.FrameCount != 0 || warmupPull.Status == AudioPullStatus.Fault)
@@ -157,11 +162,12 @@ public static unsafe partial class WaveFileOutput
 
                 uint byteCount = checked((uint)(pull.FrameCount * WaveFileSize.StereoFloat32BytesPerFrame));
                 long allocatedBeforeWrite = GC.GetAllocatedBytesForCurrentThread();
-                if (!TryWriteAll(fileHandle, buffer, byteCount, out failureCode))
+                if (!TryWriteAll(fileHandle, fileOffset, buffer, byteCount, out failureCode))
                 {
                     failure = WaveRenderFailure.WriteFailed;
                     break;
                 }
+                fileOffset += byteCount;
                 sampleWriteAllocatedBytes += GC.GetAllocatedBytesForCurrentThread() - allocatedBeforeWrite;
 
                 renderedFrames += pull.FrameCount;
@@ -190,10 +196,17 @@ public static unsafe partial class WaveFileOutput
                 monitor?.BeginFinalizing();
             }
 
-            if (failure == WaveRenderFailure.None && FlushFileBuffers(fileHandle) == 0)
+            if (failure == WaveRenderFailure.None)
             {
-                failureCode = Marshal.GetLastPInvokeError();
-                failure = WaveRenderFailure.FlushFailed;
+                try
+                {
+                    RandomAccess.FlushToDisk(fileHandle);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    failureCode = exception.HResult;
+                    failure = WaveRenderFailure.FlushFailed;
+                }
             }
         }
         catch (Exception exception)
@@ -203,13 +216,17 @@ public static unsafe partial class WaveFileOutput
         finally
         {
             NativeMemory.Free(buffer);
-            if (fileHandle != InvalidHandleValue)
+            if (fileHandle is not null)
             {
-                if (CloseHandle(fileHandle) == 0)
+                try
                 {
-                    int error = Marshal.GetLastPInvokeError();
+                    fileHandle.Dispose();
+                }
+                catch (Exception exception)
+                {
                     cleanupFailure = new IOException(
-                        $"Closing the temporary WAVE file failed with Win32 error {error}.");
+                        "Closing the temporary WAVE file failed.",
+                        exception);
                 }
             }
         }
@@ -300,26 +317,28 @@ public static unsafe partial class WaveFileOutput
         BinaryPrimitives.WriteUInt32LittleEndian(header[52..], size.DataByteCount);
     }
 
-    private static bool TryWriteAll(nint fileHandle, void* buffer, uint byteCount, out int errorCode)
+    private static bool TryWriteAll(
+        SafeFileHandle fileHandle,
+        long fileOffset,
+        void* buffer,
+        uint byteCount,
+        out int errorCode)
     {
-        byte* current = (byte*)buffer;
-        uint remaining = byteCount;
-
-        while (remaining != 0)
+        try
         {
-            uint written;
-            if (WriteFile(fileHandle, current, remaining, &written, null) == 0 || written == 0)
-            {
-                errorCode = Marshal.GetLastPInvokeError();
-                return false;
-            }
-
-            current += written;
-            remaining -= written;
+            RandomAccess.Write(
+                fileHandle,
+                new ReadOnlySpan<byte>(buffer, checked((int)byteCount)),
+                fileOffset);
+            errorCode = 0;
+            return true;
         }
-
-        errorCode = 0;
-        return true;
+        catch (Exception exception)
+            when (exception is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException)
+        {
+            errorCode = exception.HResult;
+            return false;
+        }
     }
 
     private static bool ContainsNonFinite(float* samples, int sampleCount)
@@ -358,9 +377,9 @@ public static unsafe partial class WaveFileOutput
             WaveRenderFailure.NonFiniteSample => new MidoraAudioDeviceException(
                 $"The audio source produced NaN or Infinity after {renderedFrames} frames."),
             WaveRenderFailure.WriteFailed => new IOException(
-                $"Writing WAVE samples failed with Win32 error {nativeErrorCode} after {renderedFrames} frames."),
+                $"Writing WAVE samples failed with error {nativeErrorCode} after {renderedFrames} frames."),
             WaveRenderFailure.FlushFailed => new IOException(
-                $"Flushing the WAVE file failed with Win32 error {nativeErrorCode}."),
+                $"Flushing the WAVE file failed with error {nativeErrorCode}."),
             _ => new UnreachableException()
         };
     }
@@ -376,30 +395,6 @@ public static unsafe partial class WaveFileOutput
             // The original rendering failure remains primary. A later task cleanup can retry.
         }
     }
-
-    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
-    private static partial nint CreateFile(
-        string fileName,
-        uint desiredAccess,
-        uint shareMode,
-        void* securityAttributes,
-        uint creationDisposition,
-        uint flagsAndAttributes,
-        nint templateFile);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    private static partial int WriteFile(
-        nint file,
-        void* buffer,
-        uint numberOfBytesToWrite,
-        uint* numberOfBytesWritten,
-        void* overlapped);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    private static partial int FlushFileBuffers(nint file);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    private static partial int CloseHandle(nint handle);
 
     private enum WaveRenderFailure : byte
     {

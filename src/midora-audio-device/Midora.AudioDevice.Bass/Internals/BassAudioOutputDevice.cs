@@ -25,8 +25,11 @@ public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
     private long _consumedFrameCount;
     private int _lastCallbackFrameCount;
     private long _callbackPullFailureCount;
+    private long _lastCallbackRequestedBytes;
+    private long _zeroLengthCallbackCount;
     private uint _updatePeriodMilliseconds;
     private uint _bufferMilliseconds;
+    private uint _actualBufferFrameCount;
 
     public BassAudioOutputDevice(
         AudioOutputDeviceInfo info,
@@ -53,9 +56,16 @@ public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
 
     public int LastCallbackFrameCount => Volatile.Read(ref _lastCallbackFrameCount);
 
+    public long LastCallbackRequestedBytes => Volatile.Read(ref _lastCallbackRequestedBytes);
+
+    public long ZeroLengthCallbackCount => Volatile.Read(ref _zeroLengthCallbackCount);
+
     public uint UpdatePeriodMilliseconds => _updatePeriodMilliseconds;
 
     public uint BufferMilliseconds => _bufferMilliseconds;
+
+    /// <summary>Device minimum buffer reported by BASS after initialization, in frames.</summary>
+    public uint ActualBufferFrameCount => _actualBufferFrameCount;
 
     public void Start()
     {
@@ -173,6 +183,7 @@ public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
         }
 
         _info = _info with { AudioFormat = format };
+        _actualBufferFrameCount = checked((uint)((long)info.minbuf * format.SampleRate / 1_000));
         _sourceHandle = GCHandle.Alloc(this);
         _streamHandle = NativeBass.StreamCreate(
             (uint)format.SampleRate,
@@ -210,37 +221,56 @@ public sealed unsafe class BassAudioOutputDevice : IAudioOutputDevice
         Interlocked.Increment(ref _callbackCount);
 
         int bytesPerFrame = _info.AudioFormat.BytesPerFrame;
-        if (!BassAudioInitializationPolicy.TryGetFrameCount(length, bytesPerFrame, out int frames))
+        Volatile.Write(ref _lastCallbackRequestedBytes, length);
+        if (length == 0)
         {
-            FailCallback();
-            return NativeBass.BASS_STREAMPROC_END;
+            Interlocked.Increment(ref _zeroLengthCallbackCount);
         }
 
-        AudioPullResult result = _audioRenderSource.PullFrames((float*)buffer, frames);
-        if (!result.IsValidForRequest(frames) || result.Status == AudioPullStatus.Fault)
+        int requestedBytes = checked((int)length);
+
+        // BASS may request a byte count that is not a whole number of frames. Round down to
+        // whole frames, render those, and silence the (sub-frame) tail. Treating a non-aligned
+        // request as a failure would end the stream and stall the render source.
+        int frames = requestedBytes / bytesPerFrame;
+        int usedBytes = frames * bytesPerFrame;
+        AudioPullStatus status = AudioPullStatus.Continue;
+
+        if (frames > 0)
         {
-            Interlocked.Increment(ref _callbackPullFailureCount);
-            FailCallback();
-            return NativeBass.BASS_STREAMPROC_END;
+            AudioPullResult result = _audioRenderSource.PullFrames((float*)buffer, frames);
+            if (!result.IsValidForRequest(frames) || result.Status == AudioPullStatus.Fault)
+            {
+                Interlocked.Increment(ref _callbackPullFailureCount);
+                FailCallback();
+                return NativeBass.BASS_STREAMPROC_END;
+            }
+
+            status = result.Status;
+            if (result.FrameCount < frames)
+            {
+                new Span<byte>(
+                    (byte*)buffer + result.FrameCount * bytesPerFrame,
+                    (frames - result.FrameCount) * bytesPerFrame).Clear();
+            }
+
+            Interlocked.Add(ref _consumedFrameCount, result.FrameCount);
+            Volatile.Write(ref _lastCallbackFrameCount, result.FrameCount);
         }
 
-        if (result.FrameCount < frames)
+        if (usedBytes < requestedBytes)
         {
-            new Span<byte>(
-                (byte*)buffer + result.FrameCount * bytesPerFrame,
-                (frames - result.FrameCount) * bytesPerFrame).Clear();
+            new Span<byte>((byte*)buffer + usedBytes, requestedBytes - usedBytes).Clear();
         }
 
-        Interlocked.Add(ref _consumedFrameCount, result.FrameCount);
-        Volatile.Write(ref _lastCallbackFrameCount, result.FrameCount);
         Volatile.Write(
             ref _callbackAllocatedBytes,
             Volatile.Read(ref _callbackAllocatedBytes)
                 + (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore));
 
-        return result.Status == AudioPullStatus.EndOfStream
+        return status == AudioPullStatus.EndOfStream
             ? NativeBass.BASS_STREAMPROC_END
-            : (uint)(frames * bytesPerFrame);
+            : (uint)requestedBytes;
     }
 
     private void FailCallback() => Volatile.Write(ref _callbackFaulted, 1);

@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Bass\Midora.AudioDevice.Bass.csproj" />
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.BassWasapi\Midora.AudioDevice.BassWasapi.csproj" />
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Wave\Midora.AudioDevice.Wave.csproj" />
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />

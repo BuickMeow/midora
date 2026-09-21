@@ -17,6 +17,7 @@ using Midora.Compiler;
 using Midora.Domain;
 using Midora.Persistence;
 using Midora.Session;
+using Midora.Session.Audio;
 
 namespace Midora.Avalonia.Session;
 
@@ -64,11 +65,16 @@ public sealed class ShellSession : INotifyPropertyChanged
     private readonly ProjectSessionHost? _projectHost;
     private readonly string? _projectHostError;
 
-    public ShellSession()
+    public ShellSession(ApplicationPreferences? preferences = null)
     {
+        Preferences = preferences;
         try
         {
-            _projectHost = new ProjectSessionHost("0.1.0-avalonia-port");
+            _projectHost = new ProjectSessionHost(
+                SoftwareVersion,
+                new ProjectSessionHostOptions(
+                    EnableRealtimePlayback: preferences is not null,
+                    Preferences: preferences));
         }
         catch (Exception exception)
         {
@@ -859,7 +865,15 @@ public sealed class ShellSession : INotifyPropertyChanged
         }
     }
 
-    public void SetStatus(string text) => SetStatusMessage(text);
+    public void SetStatus(string text)
+    {
+        SetStatusMessage(text);
+        if (Environment.GetEnvironmentVariable("MIDORA_PLAYBACK_TRACE") == "1")
+        {
+            Console.Out.WriteLine($"MIDORA-STATUS {text}");
+            Console.Out.Flush();
+        }
+    }
 
     public void SetStatusMessage(
         string? text,
@@ -1020,8 +1034,13 @@ public sealed class ShellSession : INotifyPropertyChanged
         RaiseDerived();
     }
 
-    // Transport / compile placeholders.
+    /// <summary>Persisted application preferences in effect for this shell, when loaded.</summary>
+    internal ApplicationPreferences? Preferences { get; private set; }
 
+    /// <summary>Formal realtime playback engine for the open Project, when available.</summary>
+    internal RealtimePlaybackSession? PlaybackEngine => _projectHost?.Playback;
+
+    /// <summary>Starts or stops realtime playback of the open Project.</summary>
     public void TogglePlayback()
     {
         if (!HasProject)
@@ -1029,23 +1048,75 @@ public sealed class ShellSession : INotifyPropertyChanged
             return;
         }
 
-        IsPlaying = !IsPlaying;
         if (IsPlaying)
         {
-            StartPlaybackClock();
+            StopPlayback();
+            return;
         }
-        else
+
+        RealtimePlaybackSession? playback = PlaybackEngine;
+        if (playback is null)
         {
-            StopPlaybackClock();
+            SetStatus(
+                _projectHost?.PlaybackFailure
+                ?? "Realtime playback needs the formal audio worker for this platform.");
+            return;
         }
+
+        try
+        {
+            playback.Start(_playbackTick > 0 ? _playbackTick : null);
+        }
+        catch (Exception exception)
+        {
+            SetStatus("Playback could not start: " + exception.Message);
+            return;
+        }
+
+        IsPlaying = true;
+        StartPlaybackClock();
+        SetStatus("Playback started.");
+        TracePlayback($"started tick={playback.CurrentTick} state={playback.State}");
     }
 
     public void StopPlayback()
     {
+        PlaybackEngine?.Stop();
         if (IsPlaying)
         {
             IsPlaying = false;
             StopPlaybackClock();
+            SetStatus("Playback stopped.");
+            TracePlayback("stopped");
+        }
+    }
+
+    /// <summary>Re-applies persisted preferences, rebuilding the audio worker when required.</summary>
+    internal async Task ApplyPreferencesAsync(ApplicationPreferences preferences)
+    {
+        Preferences = preferences;
+        if (_projectHost is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _projectHost.ApplyPreferencesAsync(preferences).ConfigureAwait(true);
+        }
+        catch (Exception exception)
+        {
+            SetStatus("Audio settings could not be applied: " + exception.Message);
+        }
+    }
+
+    /// <summary>Review-only playback trace used by the MIDORA_PLAYBACK_TRACE hook.</summary>
+    private static void TracePlayback(string message)
+    {
+        if (Environment.GetEnvironmentVariable("MIDORA_PLAYBACK_TRACE") == "1")
+        {
+            Console.Out.WriteLine($"MIDORA-PLAYBACK {message}");
+            Console.Out.Flush();
         }
     }
 
@@ -1054,36 +1125,47 @@ public sealed class ShellSession : INotifyPropertyChanged
         _playbackTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _playbackTimer.Tick -= OnPlaybackTimerTick;
         _playbackTimer.Tick += OnPlaybackTimerTick;
-        _playbackClock.Restart();
         _playbackTimer.Start();
     }
 
     private void StopPlaybackClock()
     {
         _playbackTimer?.Stop();
-        _playbackClock.Reset();
     }
 
     private void OnPlaybackTimerTick(object? sender, EventArgs e)
     {
-        double seconds = _playbackClock.Elapsed.TotalSeconds;
-        _playbackClock.Restart();
-
-        long ticksPerQuarterNote = Math.Max(1, _midiSource?.Project.TicksPerQuarterNote ?? 480);
-        long advance = Math.Max(1, (long)(seconds * _tempoBpm / 60.0 * ticksPerQuarterNote));
-        long maximum = Math.Max(1, _midiSource?.MaximumEndTick ?? _demoSource.MaximumEndTick);
-        long next = _playbackTick + advance;
-        if (next >= maximum)
+        RealtimePlaybackSession? playback = PlaybackEngine;
+        if (playback is null)
         {
-            next = IsLoopEnabled ? 0 : maximum - 1;
-            if (!IsLoopEnabled)
-            {
-                StopPlayback();
-            }
+            StopPlayback();
+            return;
         }
 
-        PlaybackTick = next;
-        UpdatePositionText(next, ticksPerQuarterNote);
+        playback.Update();
+        if (playback.FailureMessage is { } failure)
+        {
+            SetStatus(failure);
+            StopPlayback();
+            return;
+        }
+
+        if (!playback.IsActive)
+        {
+            // The engine reached the end of the rendered range on its own.
+            IsPlaying = false;
+            StopPlaybackClock();
+            SetStatus("Playback completed.");
+            TracePlayback($"completed tick={playback.CurrentTick}");
+            return;
+        }
+
+        long ticksPerQuarterNote = Math.Max(
+            1,
+            _projectHost?.Document?.Project.TicksPerQuarterNote ?? 480);
+        PlaybackTick = playback.CurrentTick;
+        UpdatePositionText(PlaybackTick, ticksPerQuarterNote);
+        TracePlayback($"tick={PlaybackTick} state={playback.State}");
     }
 
     private void UpdatePositionText(long tick, long ticksPerQuarterNote)

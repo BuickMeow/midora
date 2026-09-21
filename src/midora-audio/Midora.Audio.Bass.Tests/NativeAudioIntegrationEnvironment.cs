@@ -139,4 +139,18 @@ internal static class NativeAudioIntegrationEnvironment
         }
         return path;
     }
+
+    /// <summary>
+    /// Marks a test fixture as the native worker executable. Unix requires the execute bit for
+    /// the formal launch path, so fixtures that stand in for the published worker set it.
+    /// </summary>
+    public static void MakeWorkerExecutable(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
 }

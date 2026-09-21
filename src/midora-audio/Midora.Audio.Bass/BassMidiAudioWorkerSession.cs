@@ -746,13 +746,38 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
             throw new FileNotFoundException("The Midora Native AOT audio worker was not found.", workerPath);
         }
 
+        // The Native AOT worker is published as <name>.exe on Windows and as an extension-less
+        // executable on macOS. Note that the worker file name itself contains dots, so
+        // Path.GetExtension returns ".Worker" there; the managed .dll case is what must be
+        // recognized explicitly. A managed .dll launch stays test-only.
         string extension = Path.GetExtension(workerPath);
-        if (!string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase)
-            && !(allowManagedTestWorker
-                && string.Equals(extension, ".dll", StringComparison.OrdinalIgnoreCase)))
+        if (string.Equals(extension, ".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!allowManagedTestWorker)
+            {
+                throw new InvalidDataException(
+                    "Formal realtime playback requires the platform Native AOT worker executable; managed .dll launch is test-only.");
+            }
+
+            return;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            if (!string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    "The Windows audio worker must be the Native AOT .exe executable.");
+            }
+
+            return;
+        }
+
+        UnixFileMode mode = File.GetUnixFileMode(workerPath);
+        if ((mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) == 0)
         {
             throw new InvalidDataException(
-                "Formal realtime playback requires the win-x64 Native AOT .exe worker; managed .dll launch is test-only.");
+                $"The audio worker is not an executable file: {workerPath}");
         }
     }
 

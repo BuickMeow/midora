@@ -244,8 +244,25 @@
           "Midora.Midi": "[1.0.0-dev, )"
         }
       },
+      "midora.audio.bass": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Audio": "[1.0.0-dev, )",
+          "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.Common": "[1.0.0-dev, )",
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )",
+          "Midora.NativeInterops.BassMidi": "[1.0.0-dev, )"
+        }
+      },
       "midora.audiodevice": {
         "type": "Project"
+      },
+      "midora.audiodevice.basswasapi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.NativeInterops.BassWasapi": "[1.0.0-dev, )"
+        }
       },
       "midora.audiodevice.wave": {
         "type": "Project",
@@ -309,6 +326,21 @@
           "Midora.Midi": "[1.0.0-dev, )"
         }
       },
+      "midora.nativeinterops.bass": {
+        "type": "Project"
+      },
+      "midora.nativeinterops.bassmidi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )"
+        }
+      },
+      "midora.nativeinterops.basswasapi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )"
+        }
+      },
       "midora.persistence": {
         "type": "Project",
         "dependencies": {
@@ -325,10 +357,21 @@
           "Midora.Domain": "[1.0.0-dev, )"
         }
       },
+      "midora.playback.basswasapi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Audio.Bass": "[1.0.0-dev, )",
+          "Midora.AudioDevice.BassWasapi": "[1.0.0-dev, )",
+          "Midora.Playback": "[1.0.0-dev, )"
+        }
+      },
       "midora.session": {
         "type": "Project",
         "dependencies": {
-          "Midora.Application": "[1.0.0-dev, )"
+          "Midora.Application": "[1.0.0-dev, )",
+          "Midora.Audio.Bass": "[1.0.0-dev, )",
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )",
+          "Midora.Playback.BassWasapi": "[1.0.0-dev, )"
         }
       }
     },

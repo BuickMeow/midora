@@ -645,6 +645,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         string nativeWorker = Path.Combine(directory, "Midora.Audio.Bass.Worker.exe");
         string soundFont = Path.Combine(directory, "project.sf2");
         File.WriteAllBytes(nativeWorker, [0]);
+        NativeAudioIntegrationEnvironment.MakeWorkerExecutable(nativeWorker);
         File.WriteAllBytes(soundFont, [0]);
         HashSet<string> before = EnumerateOwnedPlanDirectories();
         try
@@ -682,6 +683,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         Directory.CreateDirectory(directory);
         string nativeWorker = Path.Combine(directory, "Midora.Audio.Bass.Worker.exe");
         File.WriteAllBytes(nativeWorker, [0]);
+        NativeAudioIntegrationEnvironment.MakeWorkerExecutable(nativeWorker);
         HashSet<string> before = EnumerateOwnedPlanDirectories();
         try
         {
@@ -716,6 +718,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         string managedWorker = Path.Combine(directory, "Midora.Audio.Bass.Worker.dll");
         string otherWorker = Path.Combine(directory, "Midora.Audio.Bass.Worker.bin");
         File.WriteAllBytes(nativeWorker, [0]);
+        NativeAudioIntegrationEnvironment.MakeWorkerExecutable(nativeWorker);
         File.WriteAllBytes(managedWorker, [0]);
         File.WriteAllBytes(otherWorker, [0]);
         try

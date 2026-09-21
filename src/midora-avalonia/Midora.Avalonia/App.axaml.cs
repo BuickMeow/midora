@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Midora.Application;
 
 namespace Midora.Avalonia;
 
@@ -13,8 +14,26 @@ public partial class App : global::Avalonia.Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var mainWindow = new MainWindow();
+            ApplicationPreferences preferences = ApplicationPreferences.Default;
+            string? preferencesNotice = null;
+            try
+            {
+                ApplicationPreferencesLoadResult loaded = new ApplicationPreferencesStore().Load();
+                preferences = loaded.Preferences;
+                preferencesNotice = loaded.Notice?.Message;
+            }
+            catch (Exception exception)
+            {
+                preferencesNotice = "Application Preferences could not be read: " + exception.Message;
+            }
+
+            var mainWindow = new MainWindow(preferences);
             desktop.MainWindow = mainWindow;
+            if (preferencesNotice is not null)
+            {
+                string notice = preferencesNotice;
+                mainWindow.Opened += (_, _) => mainWindow.Session.SetStatus(notice);
+            }
 
             if (desktop.Args?.Contains("--smoke-windows", StringComparer.Ordinal) == true)
             {

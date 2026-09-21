@@ -1,0 +1,129 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+using Midora.Audio.Bass;
+
+namespace Midora.Session.Audio;
+
+public sealed record FormalAudioOutputDevice(
+    string Id,
+    string Name,
+    int SampleRate,
+    int ChannelCount,
+    bool IsSystemDefault);
+
+/// <summary>
+/// Enumerates the formal output devices through the Native AOT audio worker. The application
+/// process never loads BASS itself, and the worker selects the platform backend internally
+/// (BASSWASAPI on Windows, CoreAudio on macOS).
+/// </summary>
+public static class FormalAudioOutputDeviceEnumerator
+{
+    private const string ProtocolHeader = "MIDORA-AUDIO-DEVICES-V1";
+
+    public static async Task<IReadOnlyList<FormalAudioOutputDevice>> EnumerateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!FormalAudioWorkerLocator.TryLocate(
+                out string? workerPath,
+                out string? nativeDirectory,
+                out string? failure))
+        {
+            throw new InvalidOperationException(failure);
+        }
+
+        ProcessStartInfo start = new(workerPath!)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+        start.ArgumentList.Add("list-output-devices");
+        start.ArgumentList.Add(nativeDirectory!);
+        using Process process = AudioWorkerProcessGroup.Start(
+            start,
+            "The formal audio worker could not be started.");
+        try
+        {
+            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            string stdout = await stdoutTask.ConfigureAwait(false);
+            string stderr = await stderrTask.ConfigureAwait(false);
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"The formal audio worker could not enumerate output devices. {stderr.Trim()}");
+            }
+
+            return Parse(stdout);
+        }
+        catch
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            throw;
+        }
+    }
+
+    internal static IReadOnlyList<FormalAudioOutputDevice> Parse(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        string[] lines = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length == 0 || !string.Equals(lines[0], ProtocolHeader, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("The audio worker returned an unsupported device-list protocol.");
+        }
+        if (lines.Length > 1025)
+        {
+            throw new InvalidDataException("The audio worker returned too many output devices.");
+        }
+
+        List<FormalAudioOutputDevice> result = new(lines.Length - 1);
+        HashSet<string> ids = new(StringComparer.Ordinal);
+        for (int index = 1; index < lines.Length; index++)
+        {
+            string[] fields = lines[index].Split('\t');
+            if (fields.Length != 5
+                || fields[0] is not ("0" or "1")
+                || !int.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out int sampleRate)
+                || !int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out int channels)
+                || sampleRate <= 0
+                || channels <= 0)
+            {
+                throw new InvalidDataException("The audio worker returned a malformed output-device row.");
+            }
+            string id;
+            string name;
+            try
+            {
+                id = Encoding.UTF8.GetString(Convert.FromBase64String(fields[3]));
+                name = Encoding.UTF8.GetString(Convert.FromBase64String(fields[4]));
+            }
+            catch (FormatException exception)
+            {
+                throw new InvalidDataException("The audio worker returned malformed device text.", exception);
+            }
+            if (string.IsNullOrWhiteSpace(id) || !ids.Add(id))
+            {
+                throw new InvalidDataException(
+                    "The audio worker returned an empty or duplicate output-device reference.");
+            }
+
+            result.Add(new(
+                id,
+                string.IsNullOrWhiteSpace(name) ? id : name,
+                sampleRate,
+                channels,
+                fields[0] == "1"));
+        }
+
+        return result;
+    }
+}

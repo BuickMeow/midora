@@ -9,5 +9,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Midora.Application\Midora.Application.csproj" />
+    <ProjectReference Include="..\Midora.Playback.BassWasapi\Midora.Playback.BassWasapi.csproj" />
+    <ProjectReference Include="..\..\midora-audio\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
+    <ProjectReference Include="..\..\midora-native-interops\Midora.NativeInterops.Bass\Midora.NativeInterops.Bass.csproj" />
   </ItemGroup>
 </Project>

@@ -6,6 +6,7 @@ using Avalonia.Platform.Storage;
 using Midora.Avalonia.Import;
 using Midora.Avalonia.Session;
 using Midora.Avalonia.Windows;
+using Midora.Application;
 using Midora.Domain;
 using Midora.Midi;
 using Midora.MidiExport;
@@ -22,12 +23,31 @@ public partial class MainWindow : Window
     private double TitleBarHeight => OperatingSystem.IsMacOS() ? 28d : 36d;
 
     public MainWindow()
+        : this(preferences: null)
+    {
+    }
+
+    public MainWindow(ApplicationPreferences? preferences)
     {
         InitializeComponent();
-        Session = new ShellSession();
+        Session = new ShellSession(preferences);
         DataContext = Session;
         ApplyPlatformChrome();
         PopulateWindowsMenu();
+        RefreshSoundFontState();
+    }
+
+    private void RefreshSoundFontState()
+    {
+        if (Session.Preferences is not { } preferences)
+        {
+            return;
+        }
+
+        int enabled = preferences.SoundFonts.Count(soundFont => soundFont.Enabled);
+        Session.SetSoundFontState(enabled == 1
+            ? "1 SoundFont Enabled"
+            : $"{enabled} SoundFonts Enabled");
     }
 
     private void OnWorkspaceTabPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -566,13 +586,28 @@ public partial class MainWindow : Window
 
     private async void OnApplicationPreferencesClick(object? sender, RoutedEventArgs e)
     {
-        var dialog = new ApplicationPreferencesDialog();
+        var dialog = new ApplicationPreferencesDialog(Session.Preferences);
         await dialog.ShowDialog(this);
-        if (dialog.Result is not null)
+        if (dialog.Preferences is not { } updated)
         {
-            Session.SetSoundFontState("1 SoundFont Enabled (placeholder)");
-            Session.SetStatus("Application Preferences saved (in-memory placeholder).");
+            return;
         }
+
+        ApplicationPreferencesSaveResult saved = new ApplicationPreferencesStore().Save(updated);
+        if (!saved.Succeeded)
+        {
+            Session.SetStatus(
+                "Application Preferences could not be saved: "
+                + (saved.Notice?.Message ?? "unknown error"));
+            return;
+        }
+
+        await Session.ApplyPreferencesAsync(updated);
+        RefreshSoundFontState();
+        Session.SetStatus(
+            saved.Notice is null
+                ? "Application Preferences saved."
+                : "Application Preferences saved. " + saved.Notice.Message);
     }
 
     private async void OnInstrumentCatalogsClick(object? sender, RoutedEventArgs e) =>

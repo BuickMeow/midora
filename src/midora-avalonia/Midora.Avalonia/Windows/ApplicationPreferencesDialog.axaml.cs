@@ -5,64 +5,55 @@ using System.IO;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Midora.Application;
+using Midora.Audio;
+using Midora.Domain;
+using Midora.Session.Audio;
 
 namespace Midora.Avalonia.Windows;
 
 public partial class ApplicationPreferencesDialog : Window
 {
     private const decimal BytesPerGibibyte = 1024m * 1024m * 1024m;
+    private const string SystemDefaultDeviceLabel = "System Default";
+
+    private readonly ApplicationPreferences _original;
 
     public ApplicationPreferencesDialog()
-        : this(0)
+        : this(preferences: null, initialPage: 0)
     {
     }
 
-    public ApplicationPreferencesDialog(int initialPage = 0)
+    public ApplicationPreferencesDialog(ApplicationPreferences? preferences, int initialPage = 0)
     {
+        _original = preferences ?? ApplicationPreferences.Default;
         InitializeComponent();
         StopCursorBox.ItemsSource = Enum.GetValues<StopCursorChoice>();
         LanguageBox.ItemsSource = new[] { "English" };
         SoundFontListBox.ItemsSource = SoundFonts;
         SoundFonts.CollectionChanged += (_, _) => UpdateSelectedSoundFontCount();
-        PopulateDefaults();
+        PopulateFromPreferences(_original);
         PreferencesTabs.SelectedIndex = Math.Clamp(initialPage, 0, 2);
         DataContext = this;
+        _ = PopulateDevicesAsync();
     }
 
     public ObservableCollection<SoundFontRow> SoundFonts { get; } = [];
 
+    private readonly List<string> _deviceIds = [];
+
     /// <summary>
-    /// Result semantics: null means the dialog was cancelled; a non-null value means
-    /// the user confirmed Apply. Avalonia has no DialogResult, so Close() is the signal.
+    /// Result semantics: null means the dialog was cancelled; a non-null value means the user
+    /// confirmed Apply. Avalonia has no DialogResult, so Close() is the signal.
     /// </summary>
-    public PreferencesDraft? Result { get; private set; }
+    public ApplicationPreferences? Preferences { get; private set; }
 
     public enum StopCursorChoice
     {
         ReturnToPlaybackStart,
         StayAtStoppedTick
     }
-
-    public sealed record SoundFontSummary(
-        string FullPath,
-        bool Enabled,
-        bool HasTarget,
-        string BankMsbText,
-        string BankLsbText,
-        string ProgramText);
-
-    public sealed record PreferencesDraft(
-        string? PlaybackOutputDeviceId,
-        int RenderAheadMilliseconds,
-        int DeviceBufferRequestMilliseconds,
-        int MaximumSampleVoicesPerUnitStream,
-        decimal MaximumReusableCacheGibibytes,
-        double PlaybackMasterVolumeDecibels,
-        bool LimiterEnabled,
-        StopCursorChoice StopCursorBehavior,
-        string Language,
-        bool ShowEventLaneLines,
-        IReadOnlyList<SoundFontSummary> ConfiguredSoundFonts);
 
     public sealed class SoundFontRow : INotifyPropertyChanged
     {
@@ -72,8 +63,16 @@ public partial class ApplicationPreferencesDialog : Window
         private string _bankLsbText;
         private string _programText;
 
-        public SoundFontRow(string fullPath, bool enabled, bool hasTarget, byte bankMsb, byte bankLsb, byte program)
+        public SoundFontRow(
+            string fullPath,
+            bool enabled,
+            bool hasTarget,
+            byte bankMsb,
+            byte bankLsb,
+            byte program,
+            SoundFontEntryId? entryId = null)
         {
+            EntryId = entryId;
             FullPath = fullPath;
             FileName = Path.GetFileName(fullPath);
             IsSfz = string.Equals(Path.GetExtension(fullPath), ".sfz", StringComparison.OrdinalIgnoreCase);
@@ -83,6 +82,9 @@ public partial class ApplicationPreferencesDialog : Window
             _bankLsbText = bankLsb.ToString(CultureInfo.InvariantCulture);
             _programText = program.ToString(CultureInfo.InvariantCulture);
         }
+
+        /// <summary>Stable application SoundFont entry identity; null for a newly added row.</summary>
+        public SoundFontEntryId? EntryId { get; }
 
         public string FullPath { get; }
 
@@ -146,8 +148,37 @@ public partial class ApplicationPreferencesDialog : Window
             ? "All original presets; no single target address."
             : $"Bank {_bankMsbText}:{_bankLsbText}, Program {_programText} (catalog not scanned)";
 
-        public SoundFontSummary ToSummary() =>
-            new(FullPath, Enabled, HasTarget, BankMsbText, BankLsbText, ProgramText);
+        /// <summary>
+        /// Converts the row into a persisted preference. SFZ always requires a target; SF2 keeps
+        /// one only when the user enabled Target mapping and all three fields parse.
+        /// </summary>
+        public ApplicationSoundFontPreference? ToPreference()
+        {
+            SoundFontTarget? target = null;
+            if (HasTarget)
+            {
+                if (!TryByte(BankMsbText, out byte msb)
+                    || !TryByte(BankLsbText, out byte lsb)
+                    || !TryByte(ProgramText, out byte program))
+                {
+                    return null;
+                }
+
+                target = new SoundFontTarget(msb, lsb, program);
+            }
+            else if (IsSfz)
+            {
+                return null;
+            }
+
+            return EntryId is { } entryId
+                ? new ApplicationSoundFontPreference(entryId, FullPath, Enabled, target)
+                : new ApplicationSoundFontPreference(FullPath, Enabled, target);
+        }
+
+        private static bool TryByte(string text, out byte value) =>
+            byte.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out value)
+            && value <= 127;
 
         private void SetText(ref string field, string? value, string propertyName)
         {
@@ -176,25 +207,62 @@ public partial class ApplicationPreferencesDialog : Window
         }
     }
 
-    private void PopulateDefaults()
+    private void PopulateFromPreferences(ApplicationPreferences preferences)
     {
-        PlaybackMasterVolumeBox.Text = (-0.1).ToString(CultureInfo.InvariantCulture);
-        PlaybackLimiterBox.IsChecked = true;
-        StopCursorBox.SelectedItem = StopCursorChoice.ReturnToPlaybackStart;
+        RealtimeAudioPreferences audio = preferences.RealtimeAudio;
+        PlaybackPreferences playback = preferences.Playback;
+        PlaybackMasterVolumeBox.Text = playback.MasterVolumeDecibels.ToString(
+            CultureInfo.InvariantCulture);
+        PlaybackLimiterBox.IsChecked = playback.LimiterEnabled;
+        StopCursorBox.SelectedItem = playback.StopCursorBehavior == StopCursorBehavior.StayAtStoppedTick
+            ? StopCursorChoice.StayAtStoppedTick
+            : StopCursorChoice.ReturnToPlaybackStart;
         LanguageBox.SelectedItem = "English";
-        EventLaneLinesBox.IsChecked = true;
-        DeviceBox.ItemsSource = new[] { "System Default", "Built-in Audio — 48,000 Hz · 2 ch" };
+        EventLaneLinesBox.IsChecked = preferences.Appearance.ShowEventLaneLines;
+        DeviceBox.ItemsSource = new[] { SystemDefaultDeviceLabel };
         DeviceBox.SelectedIndex = 0;
-        DeviceStatusText.Text =
-            "Device enumeration requires the formal audio worker; placeholder endpoints are shown.";
-        RenderAheadBox.Text = 100.ToString(CultureInfo.InvariantCulture);
-        DeviceRequestBox.Text = 50.ToString(CultureInfo.InvariantCulture);
-        VoicesBox.Text = 500.ToString(CultureInfo.InvariantCulture);
-        CacheQuotaBox.Text = "16";
-        ResetSoundFonts();
+        DeviceStatusText.Text = "Enumerating output devices through the audio worker...";
+        RenderAheadBox.Text = audio.RenderAheadMilliseconds.ToString(CultureInfo.InvariantCulture);
+        DeviceRequestBox.Text = audio.DeviceBufferRequestMilliseconds.ToString(CultureInfo.InvariantCulture);
+        VoicesBox.Text = audio.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture);
+        CacheQuotaBox.Text = (preferences.AudioCache.MaximumReusableBytes / BytesPerGibibyte)
+            .ToString("0.##", CultureInfo.InvariantCulture);
+        ResetSoundFonts(preferences.SoundFonts);
     }
 
-    private void ResetSoundFonts()
+    private async Task PopulateDevicesAsync()
+    {
+        try
+        {
+            IReadOnlyList<FormalAudioOutputDevice> devices =
+                await FormalAudioOutputDeviceEnumerator.EnumerateAsync();
+            List<string> labels = [SystemDefaultDeviceLabel];
+            string? selectedId = _original.RealtimeAudio.PlaybackOutputDeviceId;
+            int selectedIndex = 0;
+            _deviceIds.Clear();
+            foreach (FormalAudioOutputDevice device in devices)
+            {
+                _deviceIds.Add(device.Id);
+                labels.Add($"{device.Name} — {device.SampleRate:N0} Hz · {device.ChannelCount} ch");
+                if (string.Equals(device.Id, selectedId, StringComparison.Ordinal))
+                {
+                    selectedIndex = labels.Count - 1;
+                }
+            }
+
+            DeviceBox.ItemsSource = labels;
+            DeviceBox.SelectedIndex = selectedIndex;
+            DeviceStatusText.Text = devices.Count == 0
+                ? "The audio worker reported no enabled output devices."
+                : "Realtime audio is generated at the selected device's actual sample rate.";
+        }
+        catch (Exception exception)
+        {
+            DeviceStatusText.Text = "Output devices are unavailable: " + exception.Message;
+        }
+    }
+
+    private void ResetSoundFonts(IReadOnlyList<ApplicationSoundFontPreference> preferences)
     {
         foreach (SoundFontRow row in SoundFonts)
         {
@@ -202,28 +270,18 @@ public partial class ApplicationPreferencesDialog : Window
         }
 
         SoundFonts.Clear();
-        string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        AddSoundFontRow(new SoundFontRow(
-            Path.Combine(userProfile, "SoundFonts", "GeneralUser GS.sf2"),
-            enabled: true,
-            hasTarget: false,
-            bankMsb: 0,
-            bankLsb: 0,
-            program: 0));
-        AddSoundFontRow(new SoundFontRow(
-            Path.Combine(userProfile, "SoundFonts", "MuseScore_General.sf2"),
-            enabled: true,
-            hasTarget: true,
-            bankMsb: 0,
-            bankLsb: 0,
-            program: 0));
-        AddSoundFontRow(new SoundFontRow(
-            Path.Combine(userProfile, "SoundFonts", "Salamander Grand Piano.sfz"),
-            enabled: false,
-            hasTarget: true,
-            bankMsb: 0,
-            bankLsb: 0,
-            program: 0));
+        foreach (ApplicationSoundFontPreference preference in preferences)
+        {
+            AddSoundFontRow(new SoundFontRow(
+                preference.Path,
+                preference.Enabled,
+                preference.Target is not null,
+                preference.Target?.BankMsb ?? 0,
+                preference.Target?.BankLsb ?? 0,
+                preference.Target?.Program ?? 0,
+                preference.EntryId));
+        }
+
         UpdateSelectedSoundFontCount();
     }
 
@@ -249,18 +307,67 @@ public partial class ApplicationPreferencesDialog : Window
             : $"{count} SoundFonts selected";
     }
 
-    private void OnAddSoundFontsClick(object? sender, RoutedEventArgs e)
+    private async void OnAddSoundFontsClick(object? sender, RoutedEventArgs e)
     {
-        string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var row = new SoundFontRow(
-            Path.Combine(userProfile, "SoundFonts", $"Added SoundFont {SoundFonts.Count + 1}.sf2"),
-            enabled: true,
-            hasTarget: false,
-            bankMsb: 0,
-            bankLsb: 0,
-            program: 0);
-        AddSoundFontRow(row);
-        SoundFontListBox.SelectedItem = row;
+        FilePickerOpenOptions options = new()
+        {
+            Title = "Add SoundFonts",
+            AllowMultiple = true,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("SoundFonts")
+                {
+                    Patterns = ["*.sf2", "*.sfz"],
+                    AppleUniformTypeIdentifiers = ["public.data"],
+                    MimeTypes = ["application/octet-stream"]
+                },
+                new FilePickerFileType("SoundFont 2") { Patterns = ["*.sf2"] },
+                new FilePickerFileType("SFZ Instrument") { Patterns = ["*.sfz"] },
+                new FilePickerFileType("All files") { Patterns = ["*"] }
+            ]
+        };
+        string? lastDirectory = SoundFonts.Count == 0
+            ? null
+            : Path.GetDirectoryName(SoundFonts[^1].FullPath);
+        if (!string.IsNullOrEmpty(lastDirectory) && Directory.Exists(lastDirectory))
+        {
+            options.SuggestedStartLocation =
+                await StorageProvider.TryGetFolderFromPathAsync(lastDirectory);
+        }
+
+        IReadOnlyList<IStorageFile> selected = await StorageProvider.OpenFilePickerAsync(options);
+        SoundFontRow? lastAdded = null;
+        foreach (IStorageFile file in selected)
+        {
+            if (file.TryGetLocalPath() is not { } path || string.IsNullOrEmpty(path))
+            {
+                continue;
+            }
+
+            string fullPath = Path.GetFullPath(path);
+            if (SoundFonts.Any(row => string.Equals(
+                    row.FullPath,
+                    fullPath,
+                    StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            lastAdded = new SoundFontRow(
+                fullPath,
+                enabled: true,
+                hasTarget: false,
+                bankMsb: 0,
+                bankLsb: 0,
+                program: 0);
+            AddSoundFontRow(lastAdded);
+        }
+
+        if (lastAdded is not null)
+        {
+            SoundFontListBox.SelectedItem = lastAdded;
+            UpdateSelectedSoundFontCount();
+        }
     }
 
     private void OnRemoveSoundFontClick(object? sender, RoutedEventArgs e)
@@ -303,7 +410,7 @@ public partial class ApplicationPreferencesDialog : Window
 
     private void OnRestoreDefaultsClick(object? sender, RoutedEventArgs e)
     {
-        PopulateDefaults();
+        PopulateFromPreferences(ApplicationPreferences.Default);
         DeviceStatusText.Text = "Defaults restored in the form. Select Apply to persist them.";
         HideValidation();
     }
@@ -357,20 +464,51 @@ public partial class ApplicationPreferencesDialog : Window
             return;
         }
 
-        Result = new PreferencesDraft(
-            DeviceBox.SelectedIndex <= 0 ? null : DeviceBox.SelectedItem as string,
-            renderAhead,
-            deviceRequest,
-            voices,
-            quotaGib,
-            masterVolumeDecibels,
-            PlaybackLimiterBox.IsChecked == true,
-            stopCursorBehavior,
-            LanguageBox.SelectedItem as string ?? "English",
-            EventLaneLinesBox.IsChecked == true,
-            SoundFonts.Select(row => row.ToSummary()).ToArray());
+        List<ApplicationSoundFontPreference> soundFonts = [];
+        foreach (SoundFontRow row in SoundFonts)
+        {
+            if (row.ToPreference() is not { } preference)
+            {
+                ShowValidation(
+                    $"SoundFont '{row.FileName}' needs a complete Bank MSB/LSB/Program target in 0-127.");
+                _ = SoundFontListBox.Focus();
+                return;
+            }
+
+            soundFonts.Add(preference.Normalize());
+        }
+
+        string? deviceId = DeviceBox.SelectedIndex <= 0
+            ? null
+            : DeviceIdForSelection(DeviceBox.SelectedIndex);
+        long maximumReusableBytes = checked((long)(quotaGib * BytesPerGibibyte));
+        Preferences = _original with
+        {
+            RealtimeAudio = new RealtimeAudioPreferences(
+                deviceId,
+                renderAhead,
+                deviceRequest,
+                voices),
+            AudioCache = _original.AudioCache with { MaximumReusableBytes = maximumReusableBytes },
+            SoundFonts = soundFonts,
+            Playback = new PlaybackPreferences(
+                masterVolumeDecibels,
+                PlaybackLimiterBox.IsChecked == true,
+                stopCursorBehavior == StopCursorChoice.StayAtStoppedTick
+                    ? StopCursorBehavior.StayAtStoppedTick
+                    : StopCursorBehavior.ReturnToPlaybackStart),
+            Appearance = _original.Appearance with
+            {
+                ShowEventLaneLines = EventLaneLinesBox.IsChecked == true
+            }
+        };
         Close();
     }
+
+    private string? DeviceIdForSelection(int selectedIndex) =>
+        selectedIndex > 0 && selectedIndex <= _deviceIds.Count
+            ? _deviceIds[selectedIndex - 1]
+            : null;
 
     private bool TryInt(string? text, string label, int minimum, int maximum, out int result)
     {

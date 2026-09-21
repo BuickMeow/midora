@@ -14,8 +14,6 @@ public sealed partial class TimelineSurface
         double width,
         double height)
     {
-        DrawLaneBackgrounds(context, viewport, width, height);
-        FlushShapes(context);
         if (Source is null)
         {
             return;

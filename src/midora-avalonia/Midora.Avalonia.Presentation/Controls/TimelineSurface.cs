@@ -40,6 +40,14 @@ public sealed partial class TimelineSurface : Control
     private long _lastPointerTick = long.MinValue;
     private bool _suppressSelectionEvent;
     private readonly TimelineRulerGesture _rulerGesture = new();
+    private double _horizontalWheelResidual;
+    private double _laneWheelResidual;
+
+    /// <summary>
+    /// Per-event noise floor for wheel deltas. Trackpads report a small cross-axis component on
+    /// every event; without a floor it would accumulate into drift on the other axis.
+    /// </summary>
+    private const double WheelNoiseFloor = 0.05;
 
     static TimelineSurface()
     {
@@ -344,15 +352,21 @@ public sealed partial class TimelineSurface : Control
         return new Size(Math.Max(0, width), Math.Max(0, height));
     }
 
+    private int _renderFrameCount;
+    private double _renderTotalMilliseconds;
+    private double _renderMaximumMilliseconds;
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);
+        long renderStart = Environment.TickCount64;
 
         double width = Bounds.Width;
         double height = Bounds.Height;
         context.FillRectangle(SurfaceBrush, new Rect(0, 0, Math.Max(0, width), Math.Max(0, height)), 1f);
         if (width <= 0 || height <= 0)
         {
+            TraceRenderFrame(renderStart);
             return;
         }
 
@@ -360,6 +374,7 @@ public sealed partial class TimelineSurface : Control
         {
             RenderModeSurface(context, width, height);
             UpdateViewportMetrics();
+            TraceRenderFrame(renderStart);
             return;
         }
 
@@ -372,9 +387,13 @@ public sealed partial class TimelineSurface : Control
 
         if (!TryCreateViewport(out TimelineViewport viewport))
         {
+            TraceRenderFrame(renderStart);
             return;
         }
 
+        DrawLaneBackgrounds(context, viewport, width, height);
+        // Lane/key backgrounds are the base layer: they must be painted before the grid so the
+        // vertical bar and beat lines stay visible on white-key rows (SRS 18.1.7).
         DrawLaneBackgrounds(context, viewport, width, height);
         if (GridVisible)
         {
@@ -395,6 +414,7 @@ public sealed partial class TimelineSurface : Control
         if (Source is not null)
         {
             DrawSegmentPreviewDeferred(context, viewport);
+            FlushShapes(context);
         }
 
         DrawTimeRange(context, viewport, width, height);
@@ -402,6 +422,32 @@ public sealed partial class TimelineSurface : Control
         DrawPlaybackCursor(context, viewport, height);
         DrawMarquee(context, width, height);
         UpdateViewportMetrics();
+        TraceRenderFrame(renderStart);
+    }
+
+    /// <summary>
+    /// Review-only frame cost trace (MIDORA_TIMELINE_TRACE=1): reports the average and worst
+    /// render duration every 60 frames so preview/tile regressions stay measurable.
+    /// </summary>
+    private void TraceRenderFrame(long renderStart)
+    {
+        if (Environment.GetEnvironmentVariable("MIDORA_TIMELINE_TRACE") != "1")
+        {
+            return;
+        }
+
+        double elapsed = Environment.TickCount64 - renderStart;
+        _renderFrameCount++;
+        _renderTotalMilliseconds += elapsed;
+        _renderMaximumMilliseconds = Math.Max(_renderMaximumMilliseconds, elapsed);
+        if (_renderFrameCount % 60 != 0)
+        {
+            return;
+        }
+
+        Console.Out.WriteLine(
+            $"MIDORA-RENDER frames={_renderFrameCount} avg={_renderTotalMilliseconds / _renderFrameCount:F2} ms max={_renderMaximumMilliseconds:F0} ms");
+        Console.Out.Flush();
     }
 
     /// <summary>
@@ -743,12 +789,12 @@ public sealed partial class TimelineSurface : Control
             return;
         }
 
-        if (hasX)
+        if (hasX && Math.Abs(deltaX) > WheelNoiseFloor)
         {
             PanHorizontally(deltaX);
         }
 
-        if (hasY)
+        if (hasY && Math.Abs(deltaY) > WheelNoiseFloor)
         {
             PanVertically(deltaY);
         }
@@ -756,11 +802,24 @@ public sealed partial class TimelineSurface : Control
         e.Handled = true;
     }
 
-    /// <summary>Horizontal wheel/trackpad delta: positive scrolls toward later ticks.</summary>
+    /// <summary>
+    /// Horizontal wheel/trackpad delta. Positive deltas scroll toward earlier ticks, matching the
+    /// WPF reference and the vertical convention.
+    /// </summary>
     private void PanHorizontally(double delta)
     {
         long step = Math.Max(1, (long)Math.Round(Math.Max(1, TickSpan) * WheelPanFraction));
-        SetCurrentValue(StartTickProperty, TimelineTickMath.Pan(StartTick, (long)Math.Round(delta * step)));
+        // Trackpads report sub-unit deltas, so accumulate them instead of forcing a whole step
+        // per event (which also destroyed the direction for tiny deltas).
+        _horizontalWheelResidual += delta;
+        long whole = (long)Math.Truncate(_horizontalWheelResidual);
+        if (whole == 0)
+        {
+            return;
+        }
+
+        _horizontalWheelResidual -= whole;
+        SetCurrentValue(StartTickProperty, TimelineTickMath.Pan(StartTick, -whole * step));
     }
 
     /// <summary>Vertical wheel/trackpad delta: scrolls lanes, or the value window in value modes.</summary>
@@ -778,11 +837,20 @@ public sealed partial class TimelineSurface : Control
             return;
         }
 
-        int step = Math.Max(1, (int)Math.Round(3 * delta));
+        // Three lanes per wheel notch, accumulated across sub-unit trackpad deltas so a small
+        // vertical component cannot be forced into an upward step (SRS 20.1.5 panning).
+        _laneWheelResidual += delta * 3;
+        int whole = (int)Math.Truncate(_laneWheelResidual);
+        if (whole == 0)
+        {
+            return;
+        }
+
+        _laneWheelResidual -= whole;
         int maximumFirstLane = Math.Max(0, Math.Max(1, LaneCount) - viewport.LaneCount);
         SetCurrentValue(
             FirstLaneProperty,
-            Math.Clamp(viewport.FirstLane - step, 0, maximumFirstLane));
+            Math.Clamp(viewport.FirstLane - whole, 0, maximumFirstLane));
     }
 
     /// <summary>
@@ -876,7 +944,10 @@ public sealed partial class TimelineSurface : Control
             return false;
         }
 
-        ZoomBy(origin, scale > 1 ? 1 / ZoomStep : ZoomStep);
+        // Use the reported scale so the gesture tracks the fingers, clamped against a single
+        // extreme event (SRS 20.1.5 zoom bounds still apply inside ZoomBy).
+        double factor = 1 / Math.Clamp(scale, 0.2, 5);
+        ZoomBy(origin, factor);
         return true;
     }
 

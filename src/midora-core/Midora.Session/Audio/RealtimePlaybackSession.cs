@@ -89,6 +89,8 @@ public sealed class RealtimePlaybackSession : IDisposable
                     preferences.Playback.LimiterEnabled),
                 preferences.Playback.StopCursorBehavior);
             session = new(backend, playback);
+            // Kick the default-plan prewarm so the first Play only pays for the range compile.
+            playback.BeginDefaultPlaybackPreparation();
             failure = null;
             return true;
         }
@@ -102,8 +104,28 @@ public sealed class RealtimePlaybackSession : IDisposable
     }
 
     /// <summary>Prepares the worker and SoundFont host so the first Play does not pay for them.</summary>
-    public Task WarmUpAsync(CancellationToken cancellationToken = default) =>
-        Task.Run(() => _playback.WarmUpAudioBackend(cancellationToken), cancellationToken);
+    public async Task WarmUpAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            await Task.Run(() => _playback.WarmUpAudioBackend(cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+            stopwatch.Stop();
+            if (Environment.GetEnvironmentVariable("MIDORA_PLAYBACK_TRACE") == "1")
+            {
+                Console.Out.WriteLine($"MIDORA-PLAYBACK warm-up finished in {stopwatch.ElapsedMilliseconds} ms");
+                Console.Out.Flush();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            FailureMessage = "Audio warm-up failed: " + exception.Message;
+        }
+    }
 
     public void Start(long? cursorTick = null, long? endTick = null)
     {

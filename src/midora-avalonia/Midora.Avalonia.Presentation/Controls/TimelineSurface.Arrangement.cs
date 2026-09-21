@@ -260,6 +260,9 @@ public sealed partial class TimelineSurface
         }
     }
 
+    /// <summary>Upper bound for the per-frame fallback preview, above which only tiles are used.</summary>
+    private const int MaximumFallbackPreviewPrimitives = 4_000;
+
     private void DrawSegmentPreviewDeferred(DrawingContext context, TimelineViewport viewport)
     {
         foreach (PendingSegmentPreview pending in _pendingSegmentPreviews)
@@ -303,21 +306,26 @@ public sealed partial class TimelineSurface
         double devicePixel = GetDevicePixelWidth();
         using (context.PushClip(bounds))
         {
+            // The tile cache normally covers the preview. While tiles are still being rasterized
+            // the fallback runs, so it queues batched shapes instead of issuing one drawing call
+            // per note/event and skips pathologically dense previews (SRS 24.11 LOD intent).
             if (preview.HasNoteContent)
             {
                 _previewNotes.Clear();
                 preview.QueryNotes(0, 1, _previewNotes);
-                foreach (TimelineSegmentPreviewNote note in _previewNotes)
+                if (_previewNotes.Count <= MaximumFallbackPreviewPrimitives)
                 {
-                    double x = SnapToDevicePixel(
-                        bounds.X + Math.Clamp(note.NormalizedStart, 0, 1) * bounds.Width,
-                        devicePixel);
-                    double pitch = Math.Clamp(note.Pitch, 0, 127);
-                    double top = bounds.Y + (127 - pitch) / 127d * bounds.Height;
-                    context.FillRectangle(
-                        SegmentNotePreviewBrush,
-                        new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)),
-                        1f);
+                    foreach (TimelineSegmentPreviewNote note in _previewNotes)
+                    {
+                        double x = SnapToDevicePixel(
+                            bounds.X + Math.Clamp(note.NormalizedStart, 0, 1) * bounds.Width,
+                            devicePixel);
+                        double pitch = Math.Clamp(note.Pitch, 0, 127);
+                        double top = bounds.Y + (127 - pitch) / 127d * bounds.Height;
+                        AddFill(
+                            SegmentNotePreviewBrush,
+                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
+                    }
                 }
             }
 
@@ -325,17 +333,19 @@ public sealed partial class TimelineSurface
             {
                 _previewEvents.Clear();
                 preview.QueryEvents(0, 1, _previewEvents);
-                foreach (TimelineSegmentPreviewEvent value in _previewEvents)
+                if (_previewEvents.Count <= MaximumFallbackPreviewPrimitives)
                 {
-                    double x = SnapToDevicePixel(
-                        bounds.X + Math.Clamp(value.NormalizedTick, 0, 1) * bounds.Width,
-                        devicePixel);
-                    double top = bounds.Y
-                        + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * bounds.Height;
-                    context.FillRectangle(
-                        EventPreviewBrush,
-                        new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)),
-                        1f);
+                    foreach (TimelineSegmentPreviewEvent value in _previewEvents)
+                    {
+                        double x = SnapToDevicePixel(
+                            bounds.X + Math.Clamp(value.NormalizedTick, 0, 1) * bounds.Width,
+                            devicePixel);
+                        double top = bounds.Y
+                            + (1 - Math.Clamp(value.NormalizedValue, 0, 1)) * bounds.Height;
+                        AddFill(
+                            EventPreviewBrush,
+                            new Rect(x, top, devicePixel, Math.Max(devicePixel, bounds.Bottom - top)));
+                    }
                 }
             }
         }

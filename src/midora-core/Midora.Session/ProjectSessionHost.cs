@@ -401,7 +401,13 @@ public sealed class ProjectSessionHost : IDisposable
             if (!RealtimePlaybackSession.TryCreate(compilation, preferences, out playback, out failure))
             {
                 playback = null;
+                return;
             }
+
+            // Spawn and prepare the worker in the background so the first Play is not blocked by
+            // process start, BASS initialization and SoundFont loading.
+            RealtimePlaybackSession warmUp = playback!;
+            _ = Task.Run(() => warmUp.WarmUpAsync(CancellationToken.None));
         }
     }
 }

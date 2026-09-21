@@ -635,3 +635,39 @@
 - `SHELL-SMOKE failures=0`、`WINDOW-SMOKE total=44 failures=0`；Avalonia 解决方案 0 警告 0 错误。
 - 未覆盖：headless 合成指针在移动时会释放 capture，因此拖动阈值逻辑由状态机单测覆盖，
   真实拖动需人工确认；值轴（Velocity/Event/Parameter）纵向滚动仍属未实现（SRS 20.1.5 后续项）。
+
+## Slice O：滚轮方向、Piano Roll 绘制顺序、预览绘制成本与播放预热（2026-09-21）
+
+### 1. 触控板方向与漂移（SRS 20.1.5）
+
+- 症状：水平方向反向；用垂直滚动条后再滚动"无论方向都向上"；纯水平滑动也会向上漂。
+- 根因：`Math.Round(delta * 3)` 在触控板亚单位增量（±0.05～0.1）下恒为 0，随后被 `Math.Max(1, …)`
+  强制成 `+1`，方向信息丢失；水平符号与 WPF 约定相反。
+- 修复：两个轴各自累积残量（`_horizontalWheelResidual` / `_laneWheelResidual`），只有整步才移动；
+  水平符号改为"正增量向更早 tick"（与 WPF `StartTick -= delta` 及垂直约定一致）；
+  每事件 `WheelNoiseFloor = 0.05` 抑制交叉轴噪声累积。
+- 验证：新增 `SubUnitTrackpadDeltasAccumulateWithoutLosingDirection` 等 headless 用例。
+
+### 2. Piano Roll 垂直网格缺失（SRS 18.1.7 绘制层次）
+
+- 根因：`RenderModeSurface` 先画网格，四个 mode 函数随后才画 lane/key 背景，白键行的底色把竖线盖掉。
+- 修复：lane/key 背景统一提前到网格之前绘制一次（四个 mode 函数不再各自绘制背景），
+  即"底层黑白条 → 网格 → 内容"。Arrangement 路径本来就是该顺序。
+
+### 3. 预览/自动化绘制成本（SRS 24.11 可视 tile 与 LOD）
+
+- 现状：音符与事件预览共用 tile 缓存（后台 `TimelineRasterCache` 栅格）与批量形状通道；
+  但瓦片未就绪时的回退路径是**逐图元** `DrawingContext.FillRectangle`，整轨 Segment（一轨一个
+  Segment 之后）事件多时每帧数千次调用。
+- 修复：回退路径改走批量形状通道（`AddFill` + 一次 `FlushShapes`），并设
+  `MaximumFallbackPreviewPrimitives = 4_000` 上限，超密预览只等瓦片。
+- 实测（12 轨整曲导入 + 播放中持续重绘）：`MIDORA-RENDER` 平均 **1.1 ms/帧**，最差 17 ms（首帧瓦片生成）。
+
+### 4. 首次播放延迟
+
+- 实测：点击 Play 阻塞 **735 ms**，其中一次性成本是 Worker 进程启动 + BASS 初始化 + SoundFont 加载
+  + 默认 plan 预热（后台预热实测 851 ms）。
+- 修复：`ProjectSessionHost` 在工程接管后后台预热 Worker（`RealtimePlaybackSession.WarmUpAsync`），
+  `RealtimePlaybackSession.TryCreate` 调用 `BeginDefaultPlaybackPreparation`。
+- 实测（预热完成后）：Play 阻塞 **139 ms**（仅范围编译 + plan 投影 + 后端启动）。
+- 新增评审钩子 `MIDORA_AUTOPLAY_DELAY_MS` 与 `MIDORA_RENDER`/`MIDORA-TIMELINE` 计时 trace 便于复测。

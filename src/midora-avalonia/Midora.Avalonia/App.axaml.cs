@@ -79,7 +79,23 @@ public partial class App : global::Avalonia.Application
 
                 if (Environment.GetEnvironmentVariable("MIDORA_AUTOPLAY") == "1")
                 {
-                    mainWindow.Opened += (_, _) => mainWindow.StartPlaybackForReview();
+                    if (int.TryParse(
+                            Environment.GetEnvironmentVariable("MIDORA_AUTOPLAY_DELAY_MS"),
+                            out int autoplayDelayMilliseconds)
+                        && autoplayDelayMilliseconds > 0)
+                    {
+                        // Review-only: lets the background audio warm-up finish so the measured
+                        // Play latency reflects an interactive session.
+                        mainWindow.Opened += async (_, _) =>
+                        {
+                            await Task.Delay(autoplayDelayMilliseconds);
+                            mainWindow.StartPlaybackForReview();
+                        };
+                    }
+                    else
+                    {
+                        mainWindow.Opened += (_, _) => mainWindow.StartPlaybackForReview();
+                    }
                 }
 
                 var trackMode = Environment.GetEnvironmentVariable("MIDORA_TRACK_MODE");

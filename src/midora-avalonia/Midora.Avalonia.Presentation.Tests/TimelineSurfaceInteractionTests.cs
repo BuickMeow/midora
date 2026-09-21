@@ -116,10 +116,41 @@ public sealed class TimelineSurfaceInteractionTests
         surface.LaneCount = 40;
         surface.FirstLane = 10;
 
-        window.MouseWheel(new Point(400, ContentY), new Vector(1, 1), RawInputModifiers.None);
+        // Negative X scrolls toward later ticks; positive Y scrolls toward earlier lanes,
+        // matching the WPF reference convention.
+        window.MouseWheel(new Point(400, ContentY), new Vector(-1, 1), RawInputModifiers.None);
 
         Assert.True(surface.StartTick > 0, "a horizontal wheel delta must scroll time");
         Assert.True(surface.FirstLane < 10, "a vertical wheel delta must scroll lanes");
+    }
+
+    [AvaloniaFact]
+    public void SubUnitTrackpadDeltasAccumulateWithoutLosingDirection()
+    {
+        (Window window, TimelineSurface surface) = CreateSurface();
+        surface.LaneCount = 40;
+        surface.FirstLane = 10;
+
+        // A horizontal swipe with a tiny vertical component must not scroll lanes at all, and the
+        // horizontal direction must survive sub-unit deltas.
+        for (int step = 0; step < 12; step++)
+        {
+            window.MouseWheel(
+                new Point(400, ContentY),
+                new Vector(-0.1, 0.05),
+                RawInputModifiers.None);
+        }
+
+        Assert.True(surface.StartTick > 0, "accumulated horizontal deltas must scroll time");
+        Assert.Equal(10, surface.FirstLane);
+
+        // Repeating the same vertical direction must eventually scroll the expected way.
+        for (int step = 0; step < 40; step++)
+        {
+            window.MouseWheel(new Point(400, ContentY), new Vector(0, -0.1), RawInputModifiers.None);
+        }
+
+        Assert.True(surface.FirstLane > 10, "accumulated downward deltas must scroll later lanes");
     }
 
     [AvaloniaFact]
@@ -131,7 +162,7 @@ public sealed class TimelineSurfaceInteractionTests
 
         window.MouseWheel(
             new Point(400, ContentY),
-            new Vector(0, -1),
+            new Vector(0, 1),
             RawInputModifiers.Shift);
 
         Assert.True(surface.StartTick > 0, "Shift+wheel must keep scrolling time (SRS 20.1.5)");

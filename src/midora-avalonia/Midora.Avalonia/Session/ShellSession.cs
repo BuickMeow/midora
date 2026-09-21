@@ -1221,7 +1221,10 @@ public sealed class ShellSession : INotifyPropertyChanged
 
         try
         {
+            System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
             playback.Start(_playbackTick > 0 ? _playbackTick : null);
+            stopwatch.Stop();
+            TracePlayback($"started in {stopwatch.ElapsedMilliseconds} ms");
         }
         catch (Exception exception)
         {

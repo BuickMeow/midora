@@ -54,6 +54,15 @@ public partial class App : global::Avalonia.Application
             else
             {
                 var reviewMidi = Environment.GetEnvironmentVariable("MIDORA_MIDI_OPEN");
+                if (Environment.GetEnvironmentVariable("MIDORA_PORTMAP_DIALOG") == "1")
+                {
+                    mainWindow.Opened += (_, _) =>
+                    {
+                        mainWindow.Activate();
+                        mainWindow.ReviewPortMappingDialog();
+                    };
+                }
+
                 if (!string.IsNullOrEmpty(reviewMidi) && File.Exists(reviewMidi))
                 {
                     mainWindow.Opened += (_, _) =>

@@ -831,7 +831,8 @@ public sealed class ShellSession : INotifyPropertyChanged
         string name,
         string midiFilePath,
         IProgress<MidiProjectImportProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(midiFilePath);
         bool importTrace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
@@ -859,7 +860,8 @@ public sealed class ShellSession : INotifyPropertyChanged
                         midiFilePath,
                         name,
                         cancellationToken,
-                        progress),
+                        progress,
+                        zeroBasedPortMapping),
                     cancellationToken);
             }
             catch (OperationCanceledException)

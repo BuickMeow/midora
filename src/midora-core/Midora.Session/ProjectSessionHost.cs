@@ -143,7 +143,8 @@ public sealed class ProjectSessionHost : IDisposable
         string path,
         string projectName,
         CancellationToken cancellationToken = default,
-        IProgress<MidiProjectImportProgress>? progress = null)
+        IProgress<MidiProjectImportProgress>? progress = null,
+        IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         bool importTrace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
@@ -151,7 +152,7 @@ public sealed class ProjectSessionHost : IDisposable
         MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
             path,
             projectName,
-            zeroBasedPortMapping: null,
+            zeroBasedPortMapping,
             cancellationToken,
             progress);
         if (importTrace)

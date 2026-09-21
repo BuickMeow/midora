@@ -100,6 +100,21 @@ public partial class MainWindow : Window
     internal ShellSession Session { get; }
 
     /// <summary>
+    /// Review-only entry point that constructs the Port mapping dialog, so its XAML and the default
+    /// one-to-one assignment are verified without needing a file that triggers the review.
+    /// </summary>
+    internal async void ReviewPortMappingDialog()
+    {
+        IReadOnlyDictionary<byte, byte>? mapping =
+            await MidiPortMappingDialog.ShowAsync(this, [0, 32, 40]);
+        Console.Out.WriteLine(mapping is null
+            ? "MIDORA-PORTMAP-DIALOG cancelled"
+            : "MIDORA-PORTMAP-DIALOG "
+                + string.Join(",", mapping.Select(entry => $"{entry.Key}:{entry.Value}")));
+        Console.Out.Flush();
+    }
+
+    /// <summary>
     /// Review-only entry point that exercises the progress dialog import path, so the dialog XAML and
     /// the background streaming import can be verified without clicking the menu.
     /// </summary>
@@ -359,11 +374,30 @@ public partial class MainWindow : Window
             MidiImportProgressDialog.Show(this, System.IO.Path.GetFileName(path));
         try
         {
-            await Session.CreateProjectFromMidiFileAsync(
-                projectName,
-                path,
-                new Progress<Midora.Application.MidiProjectImportProgress>(dialog.Report),
-                dialog.CancellationToken);
+            IReadOnlyDictionary<byte, byte>? portMapping = ReviewPortMapping();
+            while (true)
+            {
+                try
+                {
+                    await Session.CreateProjectFromMidiFileAsync(
+                        projectName,
+                        path,
+                        new Progress<Midora.Application.MidiProjectImportProgress>(dialog.Report),
+                        dialog.CancellationToken,
+                        portMapping);
+                    break;
+                }
+                catch (Midora.Application.MidiImportPortMappingRequiredException mappingRequired)
+                    when (portMapping is null)
+                {
+                    portMapping = await MidiPortMappingDialog.ShowAsync(this, mappingRequired.SourcePorts);
+                    if (portMapping is null)
+                    {
+                        Session.SetStatusMessage("MIDI import cancelled before Port mapping review.");
+                        return;
+                    }
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -382,6 +416,33 @@ public partial class MainWindow : Window
         {
             dialog.Complete();
         }
+    }
+
+    /// <summary>
+    /// Review-only Port mapping override (<c>MIDORA_MIDI_PORTMAP=source:target,...</c>), so the
+    /// mapping retry path can be verified without the dialog.
+    /// </summary>
+    private static IReadOnlyDictionary<byte, byte>? ReviewPortMapping()
+    {
+        string? raw = Environment.GetEnvironmentVariable("MIDORA_MIDI_PORTMAP");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        Dictionary<byte, byte> mapping = [];
+        foreach (string pair in raw.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = pair.Split(':', StringSplitOptions.TrimEntries);
+            if (parts.Length == 2
+                && byte.TryParse(parts[0], out byte source)
+                && byte.TryParse(parts[1], out byte target))
+            {
+                mapping[source] = target;
+            }
+        }
+
+        return mapping.Count == 0 ? null : mapping;
     }
 
     private async void OnSaveProjectClick(object? sender, RoutedEventArgs e)

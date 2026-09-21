@@ -837,3 +837,16 @@ Skia lease 绘制；批自持 paint；批缓存按字节预算 LRU 淘汰并**�
 - `PureMidiPagedCanonicalSource` 构造期索引成本与 `Adopt` 剩余开销未再细分。
 - `SingleApplicationInstanceCoordinatorTests.TruncatedClientDoesNotTerminateThePrimaryListener`
   在 macOS 上偶发失败（命名管道 accept 的 `SocketException: Invalid argument`），与本次改动无关。
+
+### Slice U 补充：Port 映射（WPF 三件套之一）
+
+- `MidiImportPortMappingRequiredException` 在两条导入路径都会抛出（源 Port > 15 且未提供映射）；
+  Avalonia 侧此前未捕获，会直接以错误结束导入。
+- 新增 `MidiPortMappingDialog`：按源 Port 顺序为每个越界 Port 选择一个**未使用**的 Midora Port
+  （0–15），同号可用时预选同号，严格一对一；与 WPF 的 `ReviewMidiImportPortMapping` 语义一致。
+- `ImportMidiWithProgressAsync` 捕获该异常 → 显示映射对话框 → 用映射重试导入；取消则保持原状态。
+- `ProjectSessionHost.ImportMidiFile` 与 `ShellSession.CreateProjectFromMidiFileAsync` 增加
+  `zeroBasedPortMapping` 参数。
+- 验证：`MIDORA_MIDI_PORTMAP=32:1` 钩子验证重试路径（port 32 文件导入成功）；
+  `MIDORA_PORTMAP_DIALOG=1` 钩子验证对话框 XAML 加载与默认一对一分配（无异常、等待输入）。
+- 注意：普通 `FF 21` Port 元事件不必然产生越界源 Port；该分支只在确有越界源 Port 时触发。

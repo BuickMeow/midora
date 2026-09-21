@@ -229,3 +229,30 @@ App → Midora.Playback (PlaybackController/投影/render plan)
 2. W4：App 接线——偏好持久化（SoundFont 列表/设备/Render-Ahead）→ 打开/编译工程 → canonical → render plan → `PlaybackController` → Worker；Play/Stop/位置/设备切换走正式链路。
 3. W5：App 内离线渲染（worker `file-render` + `.tmp/AudioCache` + 原子发布）。
 4. 未验证：父死看门狗的端到端（应用崩溃后 worker 退出）需在 W3/W4 接线后实测；macOS 设备丢失/默认设备变化检测尚未实现（当前 `DeviceLost`/`DefaultDeviceChanged` 恒为 false，由工厂级重新枚举兜底）。
+
+## 12. 2026-09-21 Windows 独占代码跨平台化（除 WPF）
+
+产品所有者要求：除弃用的 WPF 外，所有 Windows 独占代码改为跨平台。已完成并验证：
+
+| 原 Windows 独占点 | 跨平台方案 | macOS 验证 |
+| --- | --- | --- |
+| 命名内存映射（`SharedAudioWorkerControl` / `SharedAudioFrameRingBuffer` / `MidiRenderEventStreamControl`） | .NET 命名映射在 macOS 直接 `PlatformNotSupportedException`，改为**文件支撑映射**：`SharedMemoryMapping` 在各自 owned 交换目录下创建 `.bin`，创建者释放时删除 | 控制块/音频环/MIDI 事件流协议测试 46/46；子进程 IPC 集成测试 2/2（样本与进程内一致） |
+| 命名管道名过长 | Unix 管道是 `Path.GetTempPath()/CoreFxPipe_<name>` 的 Unix domain socket，macOS 上限 104 字节（含 NUL），新增 `MidoraInterprocessPipeName` 按临时目录长度预算并在必要时改用短哈希名 | 子进程集成测试通过；单实例协调 14/14 |
+| 单实例协调显式拒绝非 Windows | `Mutex` + 命名管道在 Unix 上可用；转发改为按调用方超时预算重试（Unix 替换监听器会丢弃排队连接） | 14/14 含 8 路并发竞争 |
+| 原子发布的独占性只在 Windows 生效 | Unix `rename` 忽略建议锁，新增 `AtomicStorePublish`：Windows 依赖 sharing mode，Unix 在替换期间持有目标独占句柄，使并发写入 fail closed | RecentProjects/Preferences/Catalog 失败替换测试 4/4 |
+| `kernel32` 物理内存查询 | 统一 `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes`（两平台语义一致） | 构建 + 测试通过 |
+| `FSCTL_SET_SPARSE` | `TryEnableSparseFile`：仅 Windows 需要显式标记，Unix 扩展文件即稀疏 | 缓存暂存测试通过 |
+| `shell32` AppUserModelID | 重命名 `MidoraApplicationIdentity`，Unix 明确 no-op | 81/81 |
+| 原生库文件名/缓存身份/测试环境写死 `bass.dll` | 新增 `BassNativeFiles`（RID、`libbass.dylib`/`libbassmidi.dylib`、仅 Windows 的 wasapi），缓存身份标签按 RID | 缓存身份测试通过 |
+| `SupportedOSPlatform("windows")` 陈旧标注 | 从 worker host/session、子进程后端、设备诊断接口移除；Windows 专用 ABI 测试改为 64 位通用断言 | 全量构建 0 警告 0 错误 |
+
+音频测试在 macOS 上（`MIDORA_BASS_NATIVE_DIR` + `MIDORA_TEST_SOUNDFONT_PATH` 提供时）**246/257 通过**。剩余 11 项：
+
+1. 9 项需要 `MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER`（Native AOT worker 产物），属环境未提供；xUnit 动态跳过未被 runner 识别为 skip，故计为失败。
+2. 1 项需要 `MIDORA_TEST_SECOND_SOUNDFONT_PATH`（多 SoundFont 优先级）。
+3. 1 项真实差异待查：`MonitoringColdStartKillsPreRenderedFutureKeysBeforeRewindingTheEventCursor` 期望同 tick 128 个 NoteOn 后 pressed-key 诊断 = 128，macOS 实测 109（19 个未登记），疑与 BASS 在 macOS 的按键/发声状态跟踪或同 tick 提交上限有关，尚属诊断路径而非正式消费者语义。
+
+## 13. 关键实现修复（macOS 实测发现）
+
+- **环形缓冲 underrun latch**：CoreAudio 经 BASS 的拉取块大于启动预填充，导致首次回调即 latch `Buffering` 并永久静音（主进程恢复命令未发送）。worker 现在在生产者存活且环已回填过半时自行 `ReleaseBuffering`（监视循环与监视变更后重启输出两处）。修复后持久化实时路径 3/3 通过。
+- **实时采样率**：实时播放按设备实际采样率生成（CoreAudio 保持自身时钟，请求 48k 常得 44.1k）。`BassMidiAudioWorkerSession.Probe` 增加 `allowManagedTestWorker`，测试改为先探测设备实际速率再构建 plan；正式 app 侧同样必须如此（W4）。

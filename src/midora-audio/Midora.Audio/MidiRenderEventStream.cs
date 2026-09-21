@@ -303,15 +303,15 @@ internal sealed class MidiRenderEventDemandState
 
 public sealed record MidiRenderEventStreamDescriptor
 {
-    public MidiRenderEventStreamDescriptor(string controlMapName, string dataFilePath)
+    public MidiRenderEventStreamDescriptor(string controlFilePath, string dataFilePath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(controlMapName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(controlFilePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(dataFilePath);
-        ControlMapName = controlMapName;
+        ControlFilePath = controlFilePath;
         DataFilePath = dataFilePath;
     }
 
-    public string ControlMapName { get; }
+    public string ControlFilePath { get; }
     public string DataFilePath { get; }
 }
 

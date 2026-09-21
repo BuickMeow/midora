@@ -2,10 +2,10 @@ using System.Buffers.Binary;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO.Pipes;
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
+using Midora.Common;
 
 namespace Midora.Application;
 
@@ -88,7 +88,6 @@ public sealed class ApplicationInstanceStartResult
         new(ApplicationInstanceStartOutcome.Forwarded, null);
 }
 
-[SupportedOSPlatform("windows")]
 public sealed class SingleApplicationInstanceCoordinator : IAsyncDisposable
 {
     public const int MaximumPayloadBytes = 1024 * 1024;
@@ -130,11 +129,6 @@ public sealed class SingleApplicationInstanceCoordinator : IAsyncDisposable
         TimeSpan? connectTimeout = null,
         CancellationToken cancellationToken = default)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException(
-                "Midora single-application-instance coordination requires Windows.");
-        }
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationId);
         if (applicationId.Length > MaximumApplicationIdLength)
         {
@@ -155,31 +149,41 @@ public sealed class SingleApplicationInstanceCoordinator : IAsyncDisposable
         string pipeName = CreatePipeName(objectSuffix);
         Exception? lastForwardingError = null;
 
-        for (int attempt = 0; attempt < 2; attempt++)
+        // Claim the primary slot. A named mutex is released by the operating system when its
+        // process dies on every platform, so a crashed instance cannot block the next launch.
+        Mutex marker = new(initiallyOwned: false, mutexName, out bool createdNew);
+        if (createdNew)
+        {
+            try
+            {
+                return ApplicationInstanceStartResult.Primary(
+                    new SingleApplicationInstanceCoordinator(marker, pipeName));
+            }
+            catch
+            {
+                marker.Dispose();
+                throw;
+            }
+        }
+        marker.Dispose();
+
+        // Forward to the primary, retrying until the caller's timeout expires. The primary
+        // serves one connection at a time and re-creates its listener afterwards; Unix domain
+        // sockets drop connections queued on a listener that is being replaced, so a single
+        // retry is not enough there. Windows pipes queue the same way but keep the client
+        // waiting instead of failing it.
+        long deadline = Environment.TickCount64 + checked((long)Math.Ceiling(timeout.TotalMilliseconds));
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Mutex marker = new(initiallyOwned: false, mutexName, out bool createdNew);
-            if (createdNew)
-            {
-                try
-                {
-                    return ApplicationInstanceStartResult.Primary(
-                        new SingleApplicationInstanceCoordinator(marker, pipeName));
-                }
-                catch
-                {
-                    marker.Dispose();
-                    throw;
-                }
-            }
-            marker.Dispose();
-
+            TimeSpan remaining = TimeSpan.FromMilliseconds(
+                Math.Max(1, deadline - Environment.TickCount64));
             try
             {
                 await ApplicationInstanceProtocolV1.ForwardAsync(
                     pipeName,
                     frame,
-                    timeout,
+                    remaining,
                     cancellationToken).ConfigureAwait(false);
                 return ApplicationInstanceStartResult.Forwarded();
             }
@@ -192,11 +196,12 @@ public sealed class SingleApplicationInstanceCoordinator : IAsyncDisposable
             catch (Exception exception) when (exception is IOException or TimeoutException)
             {
                 lastForwardingError = exception;
-                if (attempt == 0)
+                if (Environment.TickCount64 >= deadline)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken)
-                        .ConfigureAwait(false);
+                    break;
                 }
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
 
@@ -328,16 +333,19 @@ public sealed class SingleApplicationInstanceCoordinator : IAsyncDisposable
 
     internal static string CreateObjectSuffix(string applicationId)
     {
+        // 128 bits of the identity hash keep the suffix short enough for the Unix named-pipe
+        // socket path budget (macOS allows about 104 bytes for sun_path, including the
+        // CoreFxPipe_ prefix) while staying collision-resistant across application identities.
         string identity = $"Midora.Application.Instance.v1\0{applicationId}\0{Process.GetCurrentProcess().SessionId}";
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
-        return Convert.ToHexStringLower(hash);
+        return Convert.ToHexStringLower(hash.AsSpan(0, 16));
     }
 
     internal static string CreateMutexName(string objectSuffix) =>
         $"Local\\Midora.Application.Instance.v1.{objectSuffix}";
 
     internal static string CreatePipeName(string objectSuffix) =>
-        $"Midora.Application.Instance.v1.{objectSuffix}";
+        MidoraInterprocessPipeName.Create($"Midora.Application.Instance.v1.{objectSuffix}");
 }
 
 internal enum ApplicationInstanceProtocolResponse : byte
@@ -347,7 +355,6 @@ internal enum ApplicationInstanceProtocolResponse : byte
     ProtocolRejected = 3
 }
 
-[SupportedOSPlatform("windows")]
 internal static class ApplicationInstanceProtocolV1
 {
     internal const uint Magic = 0x3141494D;

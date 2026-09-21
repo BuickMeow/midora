@@ -1,10 +1,8 @@
 using System.Globalization;
-using System.Runtime.Versioning;
 using Midora.Common;
 
 namespace Midora.Audio.Bass;
 
-[SupportedOSPlatform("windows")]
 internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorkerSession
 {
     private readonly PersistentBassMidiAudioWorkerHost _host;
@@ -115,7 +113,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
             string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
             MidiRenderPlanFile.Write(planPath, plan);
             string[] arguments = BuildPlaybackArguments(
-                host.Control.Name,
+                host.Control.Path,
                 planPath,
                 host.SoundFontPath,
                 host.NativeDirectory,

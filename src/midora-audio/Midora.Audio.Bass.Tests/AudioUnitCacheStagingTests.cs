@@ -18,9 +18,12 @@ public sealed class AudioUnitCacheStagingTests
         string manifests = Path.Combine(directory.Path, "manifests");
         Directory.CreateDirectory(native);
         Directory.CreateDirectory(manifests);
-        _ = WriteFile(native, "bass.dll", [2]);
-        _ = WriteFile(native, "bassmidi.dll", [3]);
-        _ = WriteFile(native, "basswasapi.dll", [4]);
+        byte[] nativeBytes = [2];
+        foreach (string fileName in Midora.NativeInterops.Bass.BassNativeFiles.RequiredFileNames)
+        {
+            _ = WriteFile(native, fileName, nativeBytes);
+            nativeBytes[0]++;
+        }
         MidiRenderPlan plan = CreateSegmentPlan();
         MidiSegmentRenderPlan segment = plan.Segments[0];
         string legacyKey = CreateLegacySegmentPcmCacheKey(
@@ -59,9 +62,7 @@ public sealed class AudioUnitCacheStagingTests
         string soundFont = WriteFile(directory.Path, "project.sf2", [1, 2, 3, 4]);
         string native = Path.Combine(directory.Path, "native");
         Directory.CreateDirectory(native);
-        _ = WriteFile(native, "bass.dll", [5]);
-        _ = WriteFile(native, "bassmidi.dll", [6]);
-        _ = WriteFile(native, "basswasapi.dll", [7]);
+        WriteNativeFiles(native, 5);
         MidiRenderPlan plan = CreatePlan(port: 0, channel: 0);
 
         using AudioCacheSessionStore store = new(cacheRoot, 4096);
@@ -129,9 +130,7 @@ public sealed class AudioUnitCacheStagingTests
         string soundFont = WriteFile(directory.Path, "project.sf2", [1]);
         string native = Path.Combine(directory.Path, "native");
         Directory.CreateDirectory(native);
-        _ = WriteFile(native, "bass.dll", [2]);
-        _ = WriteFile(native, "bassmidi.dll", [3]);
-        _ = WriteFile(native, "basswasapi.dll", [4]);
+        WriteNativeFiles(native, 2);
         using AudioCacheSessionStore store = new(cacheRoot, 4096);
         CacheAccess access = new(store);
         string stagingPath;
@@ -158,9 +157,7 @@ public sealed class AudioUnitCacheStagingTests
         string cacheRoot = Path.Combine(directory.Path, "cache");
         string native = Path.Combine(directory.Path, "native");
         Directory.CreateDirectory(native);
-        _ = WriteFile(native, "bass.dll", [2]);
-        _ = WriteFile(native, "bassmidi.dll", [3]);
-        _ = WriteFile(native, "basswasapi.dll", [4]);
+        WriteNativeFiles(native, 2);
         MidiRenderPlan original = CreatePlan(0, 0);
         MidiRenderPlan rolling = new(
             original.SampleRate,
@@ -192,9 +189,7 @@ public sealed class AudioUnitCacheStagingTests
         string manifests = Path.Combine(directory.Path, "manifests");
         Directory.CreateDirectory(native);
         Directory.CreateDirectory(manifests);
-        _ = WriteFile(native, "bass.dll", [2]);
-        _ = WriteFile(native, "bassmidi.dll", [3]);
-        _ = WriteFile(native, "basswasapi.dll", [4]);
+        WriteNativeFiles(native, 2);
         using AudioCacheSessionStore store = new(cacheRoot, 112);
         string retainedKey = AudioCacheSessionStore.ComputeKey([1]);
         string rejectedKey = AudioCacheSessionStore.ComputeKey([2]);
@@ -229,9 +224,7 @@ public sealed class AudioUnitCacheStagingTests
         string manifests = Path.Combine(directory.Path, "manifests");
         Directory.CreateDirectory(native);
         Directory.CreateDirectory(manifests);
-        _ = WriteFile(native, "bass.dll", [2]);
-        _ = WriteFile(native, "bassmidi.dll", [3]);
-        _ = WriteFile(native, "basswasapi.dll", [4]);
+        WriteNativeFiles(native, 2);
         using AudioCacheSessionStore store = new(cacheRoot, 4096);
         CacheAccess access = new(store);
 
@@ -432,6 +425,16 @@ public sealed class AudioUnitCacheStagingTests
             {
                 Directory.Delete(Path, recursive: true);
             }
+        }
+    }
+
+    private static void WriteNativeFiles(string native, byte firstByte)
+    {
+        byte[] bytes = [firstByte];
+        foreach (string fileName in Midora.NativeInterops.Bass.BassNativeFiles.RequiredFileNames)
+        {
+            _ = WriteFile(native, fileName, bytes);
+            bytes[0]++;
         }
     }
 }

@@ -1,12 +1,10 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipes;
-using System.Runtime.Versioning;
 using System.Threading.Channels;
 
 namespace Midora.Application.Tests;
 
-[SupportedOSPlatform("windows")]
 public sealed class SingleApplicationInstanceCoordinatorTests
 {
     private const string ChildModeEnvironmentVariable = "MIDORA_INSTANCE_TEST_CHILD";

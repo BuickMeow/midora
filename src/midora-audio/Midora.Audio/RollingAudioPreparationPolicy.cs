@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-
 namespace Midora.Audio;
 
 public static class RollingAudioPreparationPolicy
@@ -16,20 +14,9 @@ public static class RollingAudioPreparationPolicy
 
     public static long GetPhysicalMemoryBytes()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            MemoryStatusEx status = new()
-            {
-                Length = checked((uint)Marshal.SizeOf<MemoryStatusEx>())
-            };
-            if (GlobalMemoryStatusEx(ref status) && status.TotalPhysicalBytes != 0)
-            {
-                return status.TotalPhysicalBytes > long.MaxValue
-                    ? long.MaxValue
-                    : checked((long)status.TotalPhysicalBytes);
-            }
-        }
-
+        // The runtime reports the memory available to the process on every release platform
+        // (physical RAM outside containers, the configured limit inside one), which keeps the
+        // block-pool policy identical across platforms without native queries.
         long availableBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
         if (availableBytes <= 0)
         {
@@ -96,21 +83,4 @@ public static class RollingAudioPreparationPolicy
             ((long)sampleRate * milliseconds + 999) / 1_000));
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MemoryStatusEx
-    {
-        public uint Length;
-        public uint MemoryLoad;
-        public ulong TotalPhysicalBytes;
-        public ulong AvailablePhysicalBytes;
-        public ulong TotalPageFileBytes;
-        public ulong AvailablePageFileBytes;
-        public ulong TotalVirtualBytes;
-        public ulong AvailableVirtualBytes;
-        public ulong AvailableExtendedVirtualBytes;
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
 }

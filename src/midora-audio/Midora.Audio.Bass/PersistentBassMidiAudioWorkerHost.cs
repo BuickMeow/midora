@@ -1,12 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.Versioning;
 using Midora.Common;
 using Midora.AudioDevice;
 
 namespace Midora.Audio.Bass;
 
-[SupportedOSPlatform("windows")]
 internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
 {
     private readonly object _sync = new();
@@ -104,7 +102,8 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
         {
             soundFontSetPath = Path.Combine(_ownedDirectory, "soundfonts.masf");
             SoundFontSetFile.Write(soundFontSetPath, SoundFonts);
-            _control = SharedAudioWorkerControl.Create($"Midora.Audio.Host.{Guid.NewGuid():N}");
+            _control = SharedAudioWorkerControl.Create(
+                Path.Combine(_ownedDirectory, "control.bin"));
         }
         catch
         {
@@ -115,7 +114,7 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
         {
             ProcessStartInfo startInfo = CreateStartInfo(WorkerPath);
             startInfo.ArgumentList.Add("realtime-host");
-            startInfo.ArgumentList.Add(_control.Name);
+            startInfo.ArgumentList.Add(_control.Path);
             startInfo.ArgumentList.Add(_ownedDirectory);
             startInfo.ArgumentList.Add(soundFontSetPath);
             startInfo.ArgumentList.Add(NativeDirectory);

@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.Versioning;
 using Midora.Common;
 
 namespace Midora.Audio.Bass;
@@ -9,7 +8,6 @@ public readonly record struct BassMidiAudioWorkerProbeResult(
     int ActualSampleRate,
     int ActualDeviceBufferFrameCount);
 
-[SupportedOSPlatform("windows")]
 public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWorkerSession
 {
     private readonly MidoraOwnedTemporaryDirectoryLease _ownedTemporaryDirectoryLease;
@@ -202,12 +200,12 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
             string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
             MidiRenderPlanFile.Write(planPath, plan);
             createdControl = SharedAudioWorkerControl.Create(
-                $"Midora.Audio.Control.{Guid.NewGuid():N}");
+                Path.Combine(_ownedTemporaryDirectory, "control.bin"));
             _control = createdControl;
             ProcessStartInfo startInfo = CreateStartInfo(workerPath);
             AddPlaybackArguments(
                 startInfo,
-                _control.Name,
+                _control.Path,
                 planPath,
                 soundFontPath,
                 bassNativeDirectory,
@@ -286,10 +284,12 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         workerPath = Path.GetFullPath(workerPath);
         bassNativeDirectory = Path.GetFullPath(bassNativeDirectory);
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
-            $"Midora.Audio.Probe.{Guid.NewGuid():N}");
+            Path.Combine(
+                MidoraProgramData.Current.AudioWorkerExchangeDirectory,
+                $"probe-control-{Guid.NewGuid():N}.bin"));
         using Process process = StartProbe(
             workerPath,
-            control.Name,
+            control.Path,
             bassNativeDirectory,
             deviceId,
             deviceBufferRequestMilliseconds);

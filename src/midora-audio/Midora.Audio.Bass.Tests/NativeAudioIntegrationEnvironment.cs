@@ -18,17 +18,32 @@ internal static class NativeAudioIntegrationEnvironment
                 "Midora",
                 "Native",
                 "BASS",
-                "win-x64")
+                NativeRuntimeIdentifier)
             : Path.GetFullPath(configured);
-        string[] required = ["bass.dll", "bassmidi.dll"];
+        string[] required = [BassLibraryFileName, BassMidiLibraryFileName];
         if (!Directory.Exists(directory)
             || required.Any(name => !File.Exists(Path.Combine(directory, name))))
         {
             throw SkipException.ForSkip(
-                "Native BASS integration requires MIDORA_BASS_NATIVE_DIR with bass.dll and bassmidi.dll.");
+                $"Native BASS integration requires MIDORA_BASS_NATIVE_DIR with {BassLibraryFileName} and {BassMidiLibraryFileName}.");
         }
         return directory;
     }
+
+    internal static string NativeRuntimeIdentifier =>
+        OperatingSystem.IsWindows() ? "win-x64"
+        : OperatingSystem.IsMacOS() ? "osx-arm64"
+        : "linux-x64";
+
+    internal static string BassLibraryFileName =>
+        OperatingSystem.IsWindows() ? "bass.dll"
+        : OperatingSystem.IsMacOS() ? "libbass.dylib"
+        : "libbass.so";
+
+    internal static string BassMidiLibraryFileName =>
+        OperatingSystem.IsWindows() ? "bassmidi.dll"
+        : OperatingSystem.IsMacOS() ? "libbassmidi.dylib"
+        : "libbassmidi.so";
 
     public static string RequireSoundFontPath()
     {
@@ -74,8 +89,19 @@ internal static class NativeAudioIntegrationEnvironment
                 return;
             }
             string directory = RequireNativeDirectory();
-            _ = NativeLibrary.Load(Path.Combine(directory, "bass.dll"));
-            _ = NativeLibrary.Load(Path.Combine(directory, "bassmidi.dll"));
+            if (OperatingSystem.IsWindows())
+            {
+                _ = NativeLibrary.Load(Path.Combine(directory, BassLibraryFileName));
+                _ = NativeLibrary.Load(Path.Combine(directory, BassMidiLibraryFileName));
+            }
+            else
+            {
+                // The platform resolver maps libbass/libbassmidi to the operator directory.
+                Midora.NativeInterops.Bass.BassNativeLibrary.SetSearchDirectory(directory);
+                Midora.NativeInterops.BassMidi.BassMidiNativeLibrary.SetSearchDirectory(directory);
+                Midora.NativeInterops.Bass.BassNativeLibrary.EnsureRegistered();
+                Midora.NativeInterops.BassMidi.BassMidiNativeLibrary.EnsureRegistered();
+            }
             _bassMidiLoaded = true;
         }
     }
@@ -102,7 +128,7 @@ internal static class NativeAudioIntegrationEnvironment
         string[] candidates =
         [
             Path.Combine(targetDirectory, "Midora.Audio.Bass.Worker.dll"),
-            Path.Combine(targetDirectory, "win-x64", "Midora.Audio.Bass.Worker.dll")
+            Path.Combine(targetDirectory, NativeRuntimeIdentifier, "Midora.Audio.Bass.Worker.dll")
         ];
         string? path = candidates.FirstOrDefault(File.Exists);
         if (path is null)

@@ -161,9 +161,12 @@ public sealed class PlaybackSpanCacheStagingTests
             string soundFont = WriteFile(root, "project.sf2", [1, 2, 3]);
             string native = Path.Combine(root, "native");
             Directory.CreateDirectory(native);
-            _ = WriteFile(native, "bass.dll", [4]);
-            _ = WriteFile(native, "bassmidi.dll", [5]);
-            _ = WriteFile(native, "basswasapi.dll", [6]);
+            byte[] bytes = [4];
+            foreach (string fileName in Midora.NativeInterops.Bass.BassNativeFiles.RequiredFileNames)
+            {
+                _ = WriteFile(native, fileName, bytes);
+                bytes[0]++;
+            }
             return new(cache, soundFont, native);
         }
     }

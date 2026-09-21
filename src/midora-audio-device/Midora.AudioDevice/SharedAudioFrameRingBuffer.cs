@@ -1,10 +1,8 @@
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 
 namespace Midora.AudioDevice;
 
-[SupportedOSPlatform("windows")]
 public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDisposable
 {
     private const int HeaderByteCount = 72;
@@ -25,23 +23,30 @@ public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDis
     private const int ProducerFaultedOffset = 64;
     private readonly MemoryMappedFile _memoryMappedFile;
     private readonly MemoryMappedViewAccessor _view;
+    private readonly bool _ownsBackingFile;
     private byte* _basePointer;
     private bool _disposed;
 
     private SharedAudioFrameRingBuffer(
-        string name,
+        string path,
         MemoryMappedFile memoryMappedFile,
-        MemoryMappedViewAccessor view)
+        MemoryMappedViewAccessor view,
+        bool ownsBackingFile)
     {
-        Name = name;
+        Path = path;
         _memoryMappedFile = memoryMappedFile;
         _view = view;
+        _ownsBackingFile = ownsBackingFile;
         byte* pointer = null;
         view.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
         _basePointer = pointer + view.PointerOffset;
     }
 
-    public string Name { get; }
+    /// <summary>
+    /// Absolute path of the file that backs this ring. The worker receives it on its command line
+    /// and maps the same file.
+    /// </summary>
+    public string Path { get; }
 
     public AudioFormat Format => new(
         ReadInt32(SampleRateOffset),
@@ -75,11 +80,11 @@ public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDis
     public bool ProducerFaulted => Volatile.Read(ref Int32At(ProducerFaultedOffset)) != 0;
 
     public static SharedAudioFrameRingBuffer Create(
-        string name,
+        string path,
         AudioFormat format,
         int capacityFrameCount)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
         format.Validate();
         if (format.ChannelCount != 2 || format.SampleFormat != AudioSampleFormat.Float32)
         {
@@ -92,15 +97,12 @@ public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDis
         }
 
         long totalBytes = checked(HeaderByteCount + ((long)capacityFrameCount * format.BytesPerFrame));
-        MemoryMappedFile mapping = MemoryMappedFile.CreateNew(
-            name,
-            totalBytes,
-            MemoryMappedFileAccess.ReadWrite);
+        MemoryMappedFile mapping = SharedMemoryMapping.Create(path, totalBytes);
         MemoryMappedViewAccessor view = mapping.CreateViewAccessor(
             0,
             totalBytes,
             MemoryMappedFileAccess.ReadWrite);
-        SharedAudioFrameRingBuffer result = new(name, mapping, view);
+        SharedAudioFrameRingBuffer result = new(path, mapping, view, ownsBackingFile: true);
         NativeMemory.Clear(result._basePointer, (nuint)totalBytes);
         result.WriteInt32(MagicOffset, Magic);
         result.WriteInt32(VersionOffset, ProtocolVersion);
@@ -111,17 +113,15 @@ public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDis
         return result;
     }
 
-    public static SharedAudioFrameRingBuffer Open(string name)
+    public static SharedAudioFrameRingBuffer Open(string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
-            name,
-            MemoryMappedFileRights.ReadWrite);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        MemoryMappedFile mapping = SharedMemoryMapping.Open(path);
         MemoryMappedViewAccessor view = mapping.CreateViewAccessor(
             0,
             0,
             MemoryMappedFileAccess.ReadWrite);
-        SharedAudioFrameRingBuffer result = new(name, mapping, view);
+        SharedAudioFrameRingBuffer result = new(path, mapping, view, ownsBackingFile: false);
         try
         {
             result.ValidateHeader();
@@ -232,6 +232,10 @@ public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDis
 
         _view.Dispose();
         _memoryMappedFile.Dispose();
+        if (_ownsBackingFile)
+        {
+            SharedMemoryMapping.TryDelete(Path);
+        }
     }
 
     private void ValidateHeader()

@@ -1,6 +1,6 @@
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
+using Midora.AudioDevice;
 using Midora.Midi;
 
 namespace Midora.Audio;
@@ -65,7 +65,6 @@ public readonly record struct AudioWorkerStatus(
 /// The mapping contains status scalars and a single-producer/single-consumer command ring; it never
 /// carries PCM frames or serialized object graphs.
 /// </summary>
-[SupportedOSPlatform("windows")]
 public sealed unsafe class SharedAudioWorkerControl : IDisposable
 {
     public const int ProtocolVersion = 7;
@@ -98,31 +97,35 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
 
     private readonly MemoryMappedFile _mapping;
     private readonly MemoryMappedViewAccessor _view;
+    private readonly bool _ownsBackingFile;
     private byte* _basePointer;
     private bool _disposed;
 
     private SharedAudioWorkerControl(
-        string name,
+        string path,
         MemoryMappedFile mapping,
-        MemoryMappedViewAccessor view)
+        MemoryMappedViewAccessor view,
+        bool ownsBackingFile)
     {
-        Name = name;
+        Path = path;
         _mapping = mapping;
         _view = view;
+        _ownsBackingFile = ownsBackingFile;
         byte* pointer = null;
         view.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
         _basePointer = pointer + view.PointerOffset;
     }
 
-    public string Name { get; }
+    /// <summary>
+    /// Absolute path of the file that backs this control block. The worker receives it on its
+    /// command line and maps the same file.
+    /// </summary>
+    public string Path { get; }
 
-    public static SharedAudioWorkerControl Create(string name)
+    public static SharedAudioWorkerControl Create(string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        MemoryMappedFile mapping = MemoryMappedFile.CreateNew(
-            name,
-            TotalByteCount,
-            MemoryMappedFileAccess.ReadWrite);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        MemoryMappedFile mapping = SharedMemoryMapping.Create(path, TotalByteCount);
         MemoryMappedViewAccessor? view = null;
         SharedAudioWorkerControl? result = null;
         try
@@ -131,7 +134,7 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
                 0,
                 TotalByteCount,
                 MemoryMappedFileAccess.ReadWrite);
-            result = new(name, mapping, view);
+            result = new(path, mapping, view, ownsBackingFile: true);
             NativeMemory.Clear(result._basePointer, (nuint)TotalByteCount);
             result.Int32At(MagicOffset) = Magic;
             result.Int32At(VersionOffset) = ProtocolVersion;
@@ -154,12 +157,10 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         }
     }
 
-    public static SharedAudioWorkerControl Open(string name)
+    public static SharedAudioWorkerControl Open(string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
-            name,
-            MemoryMappedFileRights.ReadWrite);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        MemoryMappedFile mapping = SharedMemoryMapping.Open(path);
         MemoryMappedViewAccessor? view = null;
         SharedAudioWorkerControl? result = null;
         try
@@ -168,7 +169,7 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
                 0,
                 TotalByteCount,
                 MemoryMappedFileAccess.ReadWrite);
-            result = new(name, mapping, view);
+            result = new(path, mapping, view, ownsBackingFile: false);
             if (result.Int32At(MagicOffset) != Magic
                 || result.Int32At(VersionOffset) != ProtocolVersion
                 || result.Int32At(CapacityOffset) != CommandCapacity
@@ -617,6 +618,10 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         }
         _view.Dispose();
         _mapping.Dispose();
+        if (_ownsBackingFile)
+        {
+            SharedMemoryMapping.TryDelete(Path);
+        }
     }
 
     private bool TryEnqueue(AudioWorkerControlCommand command)

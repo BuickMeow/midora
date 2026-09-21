@@ -9,7 +9,7 @@ public sealed class SharedAudioFrameRingBufferTests
     [Fact]
     public unsafe void SharesBoundedFramesAndStateWithoutManagedAllocation()
     {
-        string name = $"Midora.Audio.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         AudioFormat format = new(48_000, 2, AudioSampleFormat.Float32);
         using SharedAudioFrameRingBuffer producer = SharedAudioFrameRingBuffer.Create(name, format, 32);
         using SharedAudioFrameRingBuffer consumer = SharedAudioFrameRingBuffer.Open(name);
@@ -45,7 +45,7 @@ public sealed class SharedAudioFrameRingBufferTests
     [Fact]
     public unsafe void UnderrunReturnsZeroConsumedFramesAndPreservesSharedReadPosition()
     {
-        string name = $"Midora.Audio.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         AudioFormat format = new(48_000, 2, AudioSampleFormat.Float32);
         using SharedAudioFrameRingBuffer producer = SharedAudioFrameRingBuffer.Create(name, format, 32);
         using SharedAudioFrameRingBuffer consumer = SharedAudioFrameRingBuffer.Open(name);

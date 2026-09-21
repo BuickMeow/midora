@@ -120,7 +120,7 @@ public static class MidiRenderPlanFile
             writer.Write(plan.EventStreamDescriptor is not null);
             if (plan.EventStreamDescriptor is MidiRenderEventStreamDescriptor streamDescriptor)
             {
-                writer.Write(streamDescriptor.ControlMapName);
+                writer.Write(streamDescriptor.ControlFilePath);
                 writer.Write(Path.GetFullPath(streamDescriptor.DataFilePath));
             }
         }
@@ -421,11 +421,11 @@ public static class MidiRenderPlanFile
             bool hasEventStream = reader.ReadBoolean();
             if (hasEventStream)
             {
-                string controlMapName = reader.ReadString();
+                string controlFilePath = reader.ReadString();
                 string dataFilePath = reader.ReadString();
-                if (controlMapName.Length > 512 || dataFilePath.Length > 32_767)
+                if (controlFilePath.Length > 512 || dataFilePath.Length > 32_767)
                     throw new InvalidDataException("The IPC rolling MIDI event stream descriptor is invalid.");
-                eventStreamDescriptor = new(controlMapName, dataFilePath);
+                eventStreamDescriptor = new(controlFilePath, dataFilePath);
             }
 
             if (stream.Position != payloadLength)
@@ -550,7 +550,7 @@ public static class MidiRenderPlanFile
         if (plan.EventStreamDescriptor is MidiRenderEventStreamDescriptor descriptor)
         {
             payloadByteCount = checked(payloadByteCount
-                + System.Text.Encoding.UTF8.GetByteCount(descriptor.ControlMapName)
+                + System.Text.Encoding.UTF8.GetByteCount(descriptor.ControlFilePath)
                 + System.Text.Encoding.UTF8.GetByteCount(descriptor.DataFilePath)
                 + 10);
         }

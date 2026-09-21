@@ -7,7 +7,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void RoundTripsChannelModeSystemExclusivePayload()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -43,7 +42,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void ExactPcmHitSuppressesDemandAwareSourceBeforeIpc()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -71,7 +69,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void PcmMissProducesDemandAwareSourceEvents()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -99,7 +96,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void MixedPcmHitAndMissProducesOnlyTheMissSource()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -132,7 +128,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public async Task MonitoringChangePermanentlyBypassesAnExactPcmOwnerForFutureWindows()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -172,7 +167,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void MonitoringAfterSuppressedPrefixRebuildsAReadableGenerationFromTheAudibleFrame()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -212,7 +206,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void MonitoringInterruptsADenseUnpublishedWindowBeforeEnumeratingItsEntireSuffix()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -239,7 +232,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void ReaderSeekCannotMixOldPublishedCountsWithTheNewMonitoringGeneration()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -277,7 +269,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void MonitoringSeekFiltersOlderRecordsPublishedAfterTheSeekSnapshot()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = CreateDirectory();
         try
         {
@@ -323,7 +314,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void RollingStreamExposesPartialSafeFrontierWhenCommittedWindowExceedsRing()
     {
-        if (!OperatingSystem.IsWindows()) return;
         const int eventCount = 300_000;
         const long eventFrame = 100;
         string directory = Path.Combine(
@@ -378,7 +368,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void RollingStreamBackpressuresMoreThanOneRingAtTheSameFrameWithoutLoss()
     {
-        if (!OperatingSystem.IsWindows()) return;
         const int eventCount = 300_000;
         string directory = Path.Combine(
             Path.GetTempPath(),
@@ -427,7 +416,6 @@ public sealed class MidiRenderEventStreamProtocolTests
     [Fact]
     public void RollingStreamSeekFindsFirstEventAtOrAfterFrame()
     {
-        if (!OperatingSystem.IsWindows()) return;
         string directory = Path.Combine(
             Path.GetTempPath(),
             "midora-midi-event-stream-tests",

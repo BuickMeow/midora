@@ -110,13 +110,18 @@ public static class MidoraProgramData
             RequireOrdinaryDirectory(directory, mustExist: true);
         }
 
-        // A leading dot is a visible naming convention on Windows. Never set Hidden.
-        FileAttributes temporaryAttributes = File.GetAttributes(paths.TemporaryRoot);
-        if ((temporaryAttributes & FileAttributes.Hidden) != 0)
+        // On Windows a leading dot is only a naming convention, so an explicit Hidden attribute
+        // must be cleared. On Unix the leading dot is the platform's own hidden convention and the
+        // attribute is derived from the name, so there is nothing to clear.
+        if (OperatingSystem.IsWindows())
         {
-            File.SetAttributes(
-                paths.TemporaryRoot,
-                temporaryAttributes & ~FileAttributes.Hidden);
+            FileAttributes temporaryAttributes = File.GetAttributes(paths.TemporaryRoot);
+            if ((temporaryAttributes & FileAttributes.Hidden) != 0)
+            {
+                File.SetAttributes(
+                    paths.TemporaryRoot,
+                    temporaryAttributes & ~FileAttributes.Hidden);
+            }
         }
 
         ProbeTransactionalDirectory(paths.DataRoot);

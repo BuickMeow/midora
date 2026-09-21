@@ -9,9 +9,10 @@ namespace Midora.Audio.Bass.Tests;
 public sealed unsafe class NativeInteropAbiTests
 {
     [Fact]
-    public void FormalRuntimeUsesPinnedWindowsX64PrimitiveWidths()
+    public void FormalRuntimeUsesPinnedSixtyFourBitPrimitiveWidths()
     {
-        Assert.True(OperatingSystem.IsWindows());
+        // Every release platform is 64-bit (win-x64, osx-arm64), so the native primitive widths
+        // the interop structs rely on are identical and are pinned here for all of them.
         Assert.True(Environment.Is64BitProcess);
         Assert.Equal(8, IntPtr.Size);
         Assert.Equal(4, sizeof(int));

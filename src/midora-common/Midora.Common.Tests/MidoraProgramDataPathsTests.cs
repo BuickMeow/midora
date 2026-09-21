@@ -39,9 +39,12 @@ public sealed class MidoraProgramDataPathsTests
         Assert.True(Directory.Exists(paths.DiagnosticsDirectory));
         Assert.True(Directory.Exists(paths.AudioCacheDirectory));
         Assert.True(Directory.Exists(paths.AudioWorkerExchangeDirectory));
+        // Windows expresses hidden as an attribute that Midora must clear. On Unix the leading dot
+        // is the hidden convention itself, so the platform reports Hidden and nothing was set.
+        FileAttributes hidden = File.GetAttributes(paths.TemporaryRoot) & FileAttributes.Hidden;
         Assert.Equal(
-            FileAttributes.None,
-            File.GetAttributes(paths.TemporaryRoot) & FileAttributes.Hidden);
+            OperatingSystem.IsWindows() ? FileAttributes.None : FileAttributes.Hidden,
+            hidden);
         Assert.Empty(Directory.GetFileSystemEntries(
             paths.DataRoot,
             ".midora-capability-probe-*",
@@ -83,8 +86,18 @@ public sealed class MidoraProgramDataPathsTests
     public void RelativeAndUncProgramRootsAreRejected()
     {
         Assert.Throws<ArgumentException>(() => MidoraProgramData.Resolve("relative"));
-        Assert.Throws<InvalidOperationException>(() =>
-            MidoraProgramData.Resolve(@"\\server\share\Midora"));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Throws<InvalidOperationException>(() =>
+                MidoraProgramData.Resolve(@"\\server\share\Midora"));
+        }
+        else
+        {
+            // A backslash path is not fully qualified on Unix, so it is rejected earlier. Network
+            // roots are rejected by the fixed-local-drive probe instead.
+            Assert.Throws<ArgumentException>(() =>
+                MidoraProgramData.Resolve(@"\\server\share\Midora"));
+        }
     }
 
     private sealed class TemporaryDirectory : IDisposable

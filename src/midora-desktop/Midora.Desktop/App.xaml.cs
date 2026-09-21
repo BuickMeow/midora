@@ -23,7 +23,7 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
-        _ = MidoraWindowsApplicationIdentity.TryApplyToCurrentProcess();
+        _ = MidoraApplicationIdentity.TryApplyToCurrentProcess();
         base.OnStartup(e);
         try
         {

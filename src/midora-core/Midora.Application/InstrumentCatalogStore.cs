@@ -126,7 +126,7 @@ public sealed class InstrumentCatalogStore
             }
             if (File.Exists(_filePath))
             {
-                File.Replace(temporaryPath, _filePath, destinationBackupFileName: null);
+                AtomicStorePublish.ReplaceExisting(temporaryPath, _filePath);
             }
             else
             {

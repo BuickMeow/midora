@@ -2,13 +2,11 @@ using Midora.AudioDevice;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipes;
-using System.Runtime.Versioning;
 using System.Text;
 using Midora.Common;
 
 namespace Midora.Audio.Bass;
 
-[SupportedOSPlatform("windows")]
 internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDisposable
 {
     private const int MonitoringProtocolMagic = 0x4d43444d;
@@ -77,8 +75,8 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
 
         _consumptionMode = consumptionMode;
 
-        string mapName = $"Midora.Audio.{Guid.NewGuid():N}";
-        string controlPipeName = $"Midora.Audio.Control.{Guid.NewGuid():N}";
+        string controlPipeName = MidoraInterprocessPipeName.Create(
+            $"Midora.Audio.Control.{Guid.NewGuid():N}");
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         _totalFrameCount = plan.TotalFrameCount;
         int capacityFrames = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
@@ -102,7 +100,8 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
             }
             string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
             MidiRenderPlanFile.Write(planPath, plan);
-            createdRing = SharedAudioFrameRingBuffer.Create(mapName, format, capacityFrames);
+            string ringPath = Path.Combine(_ownedTemporaryDirectory, "ring.bin");
+            createdRing = SharedAudioFrameRingBuffer.Create(ringPath, format, capacityFrames);
             _ring = createdRing;
             _controlPipe = new NamedPipeServerStream(
                 controlPipeName,
@@ -113,7 +112,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
             ProcessStartInfo startInfo = CreateStartInfo(workerPath);
             AddWorkerArguments(
                 startInfo,
-                mapName,
+                ringPath,
                 controlPipeName,
                 planPath,
                 soundFontPath,

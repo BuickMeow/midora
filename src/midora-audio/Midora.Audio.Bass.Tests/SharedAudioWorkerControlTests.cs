@@ -17,7 +17,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void OutputDeviceUnavailableIsAValidNonFaultTerminalStatus()
     {
-        string name = $"Midora.Audio.Control.Tests.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
 
@@ -39,7 +39,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void BufferingRecoveryProgressKeepsConsumerFrozenAndPublishesPreparedFrontier()
     {
-        string name = $"Midora.Audio.Control.Recovery.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
 
@@ -54,7 +54,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void FixedSharedMemoryAbiTransfersStatusAndCommands()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
 
@@ -148,7 +148,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void MonitoringBatchDequeueStopsAtTheNextControlCommand()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         MidiMonitoringCommand[] expected =
@@ -173,7 +173,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void PendingStopTakesPriorityOverOlderMonitoringCommands()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         Assert.True(producer.TryEnqueueMonitoringCommands(
@@ -193,7 +193,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void PendingMonitoringCanSupersedeRecoveryWithoutBeingConsumed()
     {
-        string name = $"Midora.Audio.Control.RecoveryMonitoring.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         MidiMonitoringCommand expected = MidiMonitoringCommand.DisableSource(3);
@@ -214,7 +214,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void HeldPreviewStatusPublishesFrontierAndAcknowledgedPlanGenerationAtomically()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
 
@@ -240,7 +240,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void PersistentPlaybackAcceptancePublishesGenerationAndPreparingAtomically()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
 
@@ -254,7 +254,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void PersistentResponsePublicationStartsUnpublishedAndAdvancesMonotonically()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
 
@@ -274,11 +274,14 @@ public sealed class SharedAudioWorkerControlTests
     [InlineData(112, 1)]
     public void OpenRejectsCorruptFixedHeaderAndReservedFields(int offset, int value)
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl owner = SharedAudioWorkerControl.Create(name);
-        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+        using MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
             name,
-            MemoryMappedFileRights.ReadWrite);
+            FileMode.Open,
+            mapName: null,
+            capacity: 0,
+            MemoryMappedFileAccess.ReadWrite);
         using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
         view.Write(offset, value);
 
@@ -288,7 +291,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void CommandRingAppliesBoundedBackpressureWithoutPartialBatch()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         MidiMonitoringCommand[] full = new MidiMonitoringCommand[
@@ -308,7 +311,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void RuntimeCommandTransferAllocatesNoManagedMemoryAfterWarmup()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         MidiMonitoringCommand command = MidiMonitoringCommand.Send(
@@ -343,7 +346,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void InvalidMonitoringBatchIsRejectedBeforePublishingAnyCommand()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         MidiMonitoringCommand[] commands =
@@ -361,12 +364,15 @@ public sealed class SharedAudioWorkerControlTests
     [InlineData(0, SharedAudioWorkerControl.CommandCapacity + 1)]
     public void CorruptRingPositionsAreRejectedBeforePointerArithmetic(long read, long write)
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
-        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+        using MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
             name,
-            MemoryMappedFileRights.ReadWrite);
+            FileMode.Open,
+            mapName: null,
+            capacity: 0,
+            MemoryMappedFileAccess.ReadWrite);
         using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
         view.Write(72, read);
         view.Write(80, write);
@@ -378,11 +384,14 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void MaximumRingPositionIsRejectedBeforeIncrementWrapsNegative()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(name);
-        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+        using MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
             name,
-            MemoryMappedFileRights.ReadWrite);
+            FileMode.Open,
+            mapName: null,
+            capacity: 0,
+            MemoryMappedFileAccess.ReadWrite);
         using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
         view.Write(72, long.MaxValue);
         view.Write(80, long.MaxValue);
@@ -395,13 +404,16 @@ public sealed class SharedAudioWorkerControlTests
     [InlineData(140, (byte)1)]
     public void CorruptCommandKindAndReservedPayloadAreRejected(int offset, byte value)
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         Assert.True(producer.TryEnqueueStop());
-        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+        using MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
             name,
-            MemoryMappedFileRights.ReadWrite);
+            FileMode.Open,
+            mapName: null,
+            capacity: 0,
+            MemoryMappedFileAccess.ReadWrite);
         using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
         view.Write(offset, value);
 
@@ -415,11 +427,14 @@ public sealed class SharedAudioWorkerControlTests
     [InlineData(104, -2L)]
     public void CorruptStatusStateAndCountersAreRejected(int offset, long value)
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(name);
-        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+        using MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
             name,
-            MemoryMappedFileRights.ReadWrite);
+            FileMode.Open,
+            mapName: null,
+            capacity: 0,
+            MemoryMappedFileAccess.ReadWrite);
         using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
         if (offset == 12)
         {
@@ -436,11 +451,14 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void OddStatusSequenceFailsAfterBoundedRetryInsteadOfReturningMixedData()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
-        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+        using MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
             name,
-            MemoryMappedFileRights.ReadWrite);
+            FileMode.Open,
+            mapName: null,
+            capacity: 0,
+            MemoryMappedFileAccess.ReadWrite);
         using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
         view.Write(68, 1);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
@@ -452,12 +470,15 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void StatusSequenceWrapPreservesEvenPublicationAndReadableSnapshot()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
-        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+        using MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
             name,
-            MemoryMappedFileRights.ReadWrite);
+            FileMode.Open,
+            mapName: null,
+            capacity: 0,
+            MemoryMappedFileAccess.ReadWrite);
         using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
         view.Write(68, int.MaxValue - 1);
 
@@ -476,7 +497,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public async Task ConcurrentStatusStressNeverReturnsCrossPublicationSnapshot()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         const int publicationCount = 100_000;
@@ -522,7 +543,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void StatusReadAndPublicationAllocateNoManagedMemoryAfterWarmup()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         producer.PublishRuntimeStatus(AudioWorkerState.Playing, 1, 2, 3, 4, 5);
@@ -552,7 +573,7 @@ public sealed class SharedAudioWorkerControlTests
     [Fact]
     public void PitchAuditionHotUpdatesAllocateNoManagedMemoryAfterWarmup()
     {
-        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string name = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
         using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
         Assert.True(producer.TryEnqueuePitchAuditionUpdate(64, 100));
@@ -579,7 +600,7 @@ public sealed class SharedAudioWorkerControlTests
     public void DisposedControlRejectsAllPointerBackedEntryPoints()
     {
         SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
-            $"Midora.Audio.Control.Test.{Guid.NewGuid():N}");
+            Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin"));
         control.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => _ = control.ReadStatus());

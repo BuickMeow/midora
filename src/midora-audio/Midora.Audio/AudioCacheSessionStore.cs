@@ -744,9 +744,9 @@ public sealed class AudioCacheSessionStore : IDisposable
                     FileOptions.SequentialScan);
                 try
                 {
-                    if (sparse && OperatingSystem.IsWindows())
+                    if (sparse)
                     {
-                        MarkSparse(stream);
+                        TryEnableSparseFile(stream);
                     }
                     stream.SetLength(lengthBytes);
                     stream.Position = 0;
@@ -1464,6 +1464,20 @@ public sealed class AudioCacheSessionStore : IDisposable
         }
     }
 
+
+    /// <summary>
+    /// Marks the staging file sparse where the platform requires an explicit opt-in. Unix file
+    /// systems (APFS, ext4) create holes implicitly when the file is extended with SetLength and
+    /// written at sparse offsets, so only Windows needs the FSCTL request before the extension.
+    /// </summary>
+    private static void TryEnableSparseFile(FileStream stream)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        MarkSparse(stream);
+    }
 
     private static void MarkSparse(FileStream stream)
     {

@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
+using Midora.AudioDevice;
 using Midora.Midi;
 
 namespace Midora.Audio;
@@ -43,7 +44,7 @@ public sealed class MidiRenderEventStreamProducer : IDisposable
         Directory.CreateDirectory(directory);
         string identity = Guid.NewGuid().ToString("N");
         string dataPath = Path.Combine(directory, $"midi-events-{identity}.mres");
-        string controlName = $"Midora.MidiEvents.{identity}";
+        string controlPath = Path.Combine(directory, $"midi-events-{identity}.mrec");
         _data = new FileStream(
             dataPath,
             FileMode.CreateNew,
@@ -51,8 +52,8 @@ public sealed class MidiRenderEventStreamProducer : IDisposable
             FileShare.Read | FileShare.Delete,
             1024 * 1024,
             FileOptions.SequentialScan);
-        _control = MidiRenderEventStreamControl.Create(controlName);
-        Descriptor = new(controlName, dataPath);
+        _control = MidiRenderEventStreamControl.Create(controlPath);
+        Descriptor = new(controlPath, dataPath);
         long startupFrames = Math.Min(
             totalFrameCount,
             RollingAudioPreparationPolicy.MillisecondsToFrames(
@@ -330,6 +331,7 @@ public sealed class MidiRenderEventStreamProducer : IDisposable
         _rewindApplied.Dispose();
         _cancellation.Dispose();
         try { File.Delete(Descriptor.DataFilePath); } catch (IOException) { }
+        try { File.Delete(Descriptor.ControlFilePath); } catch (IOException) { }
     }
 }
 
@@ -371,7 +373,7 @@ public sealed class MidiRenderEventStreamReader : IDisposable
     public MidiRenderEventStreamReader(MidiRenderEventStreamDescriptor descriptor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
-        _control = MidiRenderEventStreamControl.Open(descriptor.ControlMapName);
+        _control = MidiRenderEventStreamControl.Open(descriptor.ControlFilePath);
         _data = new FileStream(
             descriptor.DataFilePath,
             FileMode.Open,
@@ -707,11 +709,9 @@ internal sealed class MidiRenderEventStreamControl : IDisposable
         }
     }
 
-    public static MidiRenderEventStreamControl Create(string name)
+    public static MidiRenderEventStreamControl Create(string path)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("Named MIDI event streams require Windows.");
-        MemoryMappedFile mapping = MemoryMappedFile.CreateNew(name, Capacity);
+        MemoryMappedFile mapping = SharedMemoryMapping.Create(path, Capacity);
         MemoryMappedViewAccessor view = mapping.CreateViewAccessor(0, Capacity);
         MidiRenderEventStreamControl result = new(mapping, view);
         view.Write(MagicOffset, Magic);
@@ -719,11 +719,9 @@ internal sealed class MidiRenderEventStreamControl : IDisposable
         return result;
     }
 
-    public static MidiRenderEventStreamControl Open(string name)
+    public static MidiRenderEventStreamControl Open(string path)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("Named MIDI event streams require Windows.");
-        MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(name);
+        MemoryMappedFile mapping = SharedMemoryMapping.Open(path);
         MemoryMappedViewAccessor view = mapping.CreateViewAccessor(0, Capacity);
         if (view.ReadInt64(MagicOffset) != Magic || view.ReadInt32(VersionOffset) != Version)
         {

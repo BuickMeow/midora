@@ -1,11 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.Versioning;
 using Midora.Common;
 
 namespace Midora.Audio.Bass;
 
-[SupportedOSPlatform("windows")]
 public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
 {
     private readonly string _workerPath;
@@ -71,9 +69,9 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
             "soundfonts.masf");
         SoundFontSetFile.Write(soundFontSetPath, preparation.SoundFonts);
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
-            $"Midora.Audio.FileProbe.{Guid.NewGuid():N}");
+            Path.Combine(ownedDirectoryLease.DirectoryPath, "probe-control.bin"));
         using Process process = Start(
-            CreateProbeStartInfo(preparation, control.Name, soundFontSetPath));
+            CreateProbeStartInfo(preparation, control.Path, soundFontSetPath));
         await ObserveProcessAsync(
             process,
             control,
@@ -144,11 +142,11 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
             MidiRenderPlanFile.Write(planPath, plan);
             SoundFontSetFile.Write(soundFontSetPath, request.SoundFonts);
             using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
-                $"Midora.Audio.FileRender.{Guid.NewGuid():N}");
+                Path.Combine(ownedDirectory, "control.bin"));
             using Process process = Start(
                 CreateRenderStartInfo(
                     request,
-                    control.Name,
+                    control.Path,
                     planPath,
                     soundFontSetPath,
                     temporaryOutputPath,

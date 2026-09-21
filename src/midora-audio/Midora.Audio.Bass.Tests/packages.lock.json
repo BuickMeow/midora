@@ -159,6 +159,7 @@
         "type": "Project",
         "dependencies": {
           "Midora.Audio.Bass": "[1.0.0-dev, )",
+          "Midora.AudioDevice.Bass": "[1.0.0-dev, )",
           "Midora.AudioDevice.BassWasapi": "[1.0.0-dev, )",
           "Midora.AudioDevice.Wave": "[1.0.0-dev, )",
           "Midora.Compiler": "[1.0.0-dev, )",
@@ -169,6 +170,13 @@
       },
       "midora.audiodevice": {
         "type": "Project"
+      },
+      "midora.audiodevice.bass": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )"
+        }
       },
       "midora.audiodevice.basswasapi": {
         "type": "Project",

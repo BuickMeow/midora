@@ -5,7 +5,6 @@ using Midora.Midi;
 using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using System.Text;
 using NativeBass = Midora.NativeInterops.Bass.BASS;
 using NativeBassMidi = Midora.NativeInterops.BassMidi.BASSMIDI;
@@ -13,7 +12,6 @@ using NativeBassWasapi = Midora.NativeInterops.BassWasapi.BASSWASAPI;
 
 namespace Midora.Audio.Bass.Worker;
 
-[SupportedOSPlatform("windows")]
 public static class Program
 {
     private const int LegacyMonitoringProtocolMagic = 0x4d43444d;
@@ -25,7 +23,7 @@ public static class Program
 
     public static unsafe int Main(string[] args)
     {
-        _ = MidoraWindowsApplicationIdentity.TryApplyToCurrentProcess();
+        _ = MidoraApplicationIdentity.TryApplyToCurrentProcess();
         WorkerParentWatchdog.Start();
         SharedAudioWorkerControl? control = null;
         try
@@ -262,7 +260,7 @@ public static class Program
                             }
                             audition.SuspendForFormalPlayback();
                             string[] probeArgs =
-                                ["probe", control.Name, nativeDirectory, request[0], request[1]];
+                                ["probe", control.Path, nativeDirectory, request[0], request[1]];
                             _ = RunProbe(probeArgs, control, librariesLoaded: true);
                             AudioWorkerStatus status = control.ReadStatus();
                             PublishPersistentResponse(
@@ -1406,7 +1404,7 @@ public static class Program
         LegacyControlThreadState? controlState = null;
         try
         {
-            string mapName = args[0];
+            string ringPath = args[0];
             string controlPipeName = args[1];
             string planPath = args[2];
             string soundFontPath = args[3];
@@ -1420,7 +1418,7 @@ public static class Program
                 ParseSingle(args[9]),
                 ParseInt32(args[10]) != 0);
 
-            ring = SharedAudioFrameRingBuffer.Open(mapName);
+            ring = SharedAudioFrameRingBuffer.Open(ringPath);
             controlPipe = new NamedPipeClientStream(
                 ".",
                 controlPipeName,

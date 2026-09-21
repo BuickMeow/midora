@@ -6,8 +6,6 @@ namespace Midora.Audio.Bass;
 
 internal sealed class AudioUnitCacheStaging : IDisposable
 {
-    private static readonly string[] NativeFileNames =
-        ["bass.dll", "bassmidi.dll", "basswasapi.dll"];
     private readonly Entry[] _entries;
     private AudioCacheSessionStore.AudioRecoverySpool? _spool;
 
@@ -240,8 +238,9 @@ internal sealed class AudioUnitCacheStaging : IDisposable
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_BASS_NATIVE_BASELINE_WIN_X64_V1");
-            foreach (string fileName in NativeFileNames)
+            writer.Write(
+                $"MIDORA_BASS_NATIVE_BASELINE_{Midora.NativeInterops.Bass.BassNativeFiles.RuntimeIdentifier}_V1");
+            foreach (string fileName in Midora.NativeInterops.Bass.BassNativeFiles.RequiredFileNames)
             {
                 writer.Write(fileName);
                 writer.Write(HashFile(Path.Combine(nativeDirectory, fileName)));

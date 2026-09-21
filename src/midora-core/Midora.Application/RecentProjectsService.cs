@@ -144,7 +144,7 @@ public sealed class RecentProjectsStore
             }
             if (File.Exists(_filePath))
             {
-                File.Replace(temporaryPath, _filePath, destinationBackupFileName: null);
+                AtomicStorePublish.ReplaceExisting(temporaryPath, _filePath);
             }
             else
             {

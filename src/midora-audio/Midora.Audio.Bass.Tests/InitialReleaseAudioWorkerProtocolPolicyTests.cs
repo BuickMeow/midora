@@ -157,7 +157,7 @@ public sealed class InitialReleaseAudioWorkerProtocolPolicyTests
     public async Task ManagedWorkerPublishesFaultForRelativeFormalInputPath()
     {
         string workerPath = NativeAudioIntegrationEnvironment.RequireManagedWorkerPath();
-        string controlName = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        string controlName = Path.Combine(Path.GetTempPath(), $"midora-ipc-{Guid.NewGuid():N}.bin");
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(controlName);
         ProcessStartInfo startInfo = new()
         {

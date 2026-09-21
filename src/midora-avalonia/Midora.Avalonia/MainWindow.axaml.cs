@@ -122,10 +122,10 @@ public partial class MainWindow : Window
                 Console.Out.Flush();
             }
 
-            Session.CreateProjectFromMidi(
+            Session.CreateProjectFromMidiFile(
                 System.IO.Path.GetFileNameWithoutExtension(path),
-                project,
-                bytes);
+                path,
+                project);
             if (trace)
             {
                 Console.Out.WriteLine(

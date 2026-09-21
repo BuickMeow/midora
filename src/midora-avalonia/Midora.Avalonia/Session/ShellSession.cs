@@ -782,17 +782,36 @@ public sealed class ShellSession : INotifyPropertyChanged
     public void CreateProjectFromMidi(
         string name,
         ImportedMidiProject project,
-        byte[]? sourceBytes = null)
+        byte[]? sourceBytes = null) =>
+        CreateProjectCore(name, project, sourceBytes, midiFilePath: null);
+
+    /// <summary>
+    /// Creates a Project from a MIDI file on disk through the streaming import path, so large Pure
+    /// MIDI Segments keep their paged content instead of being materialized.
+    /// </summary>
+    public void CreateProjectFromMidiFile(
+        string name,
+        string midiFilePath,
+        ImportedMidiProject project) =>
+        CreateProjectCore(name, project, sourceBytes: null, midiFilePath: midiFilePath);
+
+    private void CreateProjectCore(
+        string name,
+        ImportedMidiProject project,
+        byte[]? sourceBytes,
+        string? midiFilePath)
     {
         bool importTrace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
         long importStarted = Environment.TickCount64;
         ProjectActivation? activation = null;
         string? adoptionError = null;
-        if (sourceBytes is not null && _projectHost is not null)
+        if (_projectHost is not null && (midiFilePath is not null || sourceBytes is not null))
         {
             try
             {
-                activation = _projectHost.ImportMidi(sourceBytes, name);
+                activation = midiFilePath is not null
+                    ? _projectHost.ImportMidiFile(midiFilePath, name)
+                    : _projectHost.ImportMidi(sourceBytes!, name);
             }
             catch (Exception exception)
             {

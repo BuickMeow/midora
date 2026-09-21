@@ -123,6 +123,57 @@ public sealed class ProjectSessionHost : IDisposable
             Console.Out.Flush();
         }
 
+        ProjectActivation activation = AdoptImportedProject(imported);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT adopt+activation={Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
+
+        return activation;
+    }
+
+    /// <summary>
+    /// Imports a MIDI file from disk through the streaming path, so large Pure MIDI Segments keep
+    /// their paged content instead of being materialized. The caller may observe
+    /// <see cref="MidiProjectImportProgress"/> for the import dialog.
+    /// </summary>
+    public ProjectActivation ImportMidiFile(
+        string path,
+        string projectName,
+        CancellationToken cancellationToken = default,
+        IProgress<MidiProjectImportProgress>? progress = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        bool importTrace = Environment.GetEnvironmentVariable("MIDORA_IMPORT_TRACE") == "1";
+        long importStart = Environment.TickCount64;
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            path,
+            projectName,
+            zeroBasedPortMapping: null,
+            cancellationToken,
+            progress);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT streamImportService={Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
+
+        ProjectActivation activation = AdoptImportedProject(imported);
+        if (importTrace)
+        {
+            Console.Out.WriteLine(
+                $"MIDORA-IMPORT adopt+activation={Environment.TickCount64 - importStart} ms");
+            Console.Out.Flush();
+        }
+
+        return activation;
+    }
+
+    private ProjectActivation AdoptImportedProject(MidiProjectImportResult imported)
+    {
         NewProjectCreationResult adopted;
         try
         {
@@ -134,23 +185,7 @@ public sealed class ProjectSessionHost : IDisposable
             throw;
         }
 
-        if (importTrace)
-        {
-            Console.Out.WriteLine(
-                $"MIDORA-IMPORT adopt={Environment.TickCount64 - importStart} ms");
-            Console.Out.Flush();
-        }
-
-        ProjectActivation activation =
-            Adopt(ProjectContext.FromCreation(_packages, adopted, _options), adopted);
-        if (importTrace)
-        {
-            Console.Out.WriteLine(
-                $"MIDORA-IMPORT activation={Environment.TickCount64 - importStart} ms");
-            Console.Out.Flush();
-        }
-
-        return activation;
+        return Adopt(ProjectContext.FromCreation(_packages, adopted, _options), adopted);
     }
 
     /// <summary>

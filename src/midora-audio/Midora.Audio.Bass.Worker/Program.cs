@@ -1040,6 +1040,7 @@ public static class Program
                 continue;
             }
 
+            ReleaseRingBufferingWhenRefilled(ring);
             completed = ring.ProducerCompleted && ring.AvailableFrameCount == 0;
             AudioWorkerState state = completed
                 ? AudioWorkerState.Completed
@@ -1149,6 +1150,24 @@ public static class Program
         return true;
     }
 
+    /// <summary>
+    /// A short read latches the ring's Buffering state, and the latch is sticky by design so that a
+    /// main-process recovery command can rebuild sample-domain state. When the producer is still
+    /// alive and has already refilled the ring, the worker releases its own latch instead: some
+    /// output backends (CoreAudio through BASS on macOS) pull larger blocks than the startup
+    /// prefill, which would otherwise latch on the first callback and stay silent forever.
+    /// </summary>
+    private static void ReleaseRingBufferingWhenRefilled(AudioFrameRingBuffer ring)
+    {
+        if (ring.IsBuffering
+            && !ring.ProducerCompleted
+            && !ring.ProducerFaulted
+            && ring.AvailableFrameCount >= ring.CapacityFrameCount / 2)
+        {
+            ring.ReleaseBuffering();
+        }
+    }
+
     private static bool TryStartOutputAndConfirmMonitoringProgress(
         WorkerAudioOutputDevice output,
         AudioFrameRingBuffer ring,
@@ -1158,11 +1177,12 @@ public static class Program
         ref bool flushOnStop)
     {
         long callbackCountBeforeStart = output.CallbackCount;
+        ReleaseRingBufferingWhenRefilled(ring);
         output.Start();
         if (!output.IsProcessingStarted)
         {
             throw new MidoraAudioDeviceException(
-                "BASS_WASAPI_Start returned successfully, but the output device is not processing.");
+                "The output device reported success but is not processing.");
         }
 
         long deadline = Environment.TickCount64
@@ -1180,6 +1200,7 @@ public static class Program
                 throw new MidoraAudioDeviceException(
                     "The output device faulted while resuming after a monitoring change.");
             }
+            ReleaseRingBufferingWhenRefilled(ring);
             if (output.CallbackCount > callbackCountBeforeStart
                 && (output.ConsumedFrameCount > consumerFrontierFrame
                     || ring.ProducerCompleted && ring.AvailableFrameCount == 0))

@@ -163,6 +163,7 @@ public sealed class BassWasapiChildPlaybackBackend
                     _selectedDeviceId,
                     _options.DeviceBufferRequestMilliseconds,
                     _options.PreparingTimeout,
+                    allowManagedTestWorker: false,
                     cancellationToken)
                 : EnsurePersistentHost().Probe(
                     _selectedDeviceId,

@@ -273,6 +273,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         string? deviceId,
         int deviceBufferRequestMilliseconds,
         TimeSpan timeout,
+        bool allowManagedTestWorker = false,
         CancellationToken cancellationToken = default)
     {
         ValidateCommon(
@@ -280,7 +281,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
             bassNativeDirectory,
             deviceBufferRequestMilliseconds,
             timeout,
-            allowManagedTestWorker: false);
+            allowManagedTestWorker);
         workerPath = Path.GetFullPath(workerPath);
         bassNativeDirectory = Path.GetFullPath(bassNativeDirectory);
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(

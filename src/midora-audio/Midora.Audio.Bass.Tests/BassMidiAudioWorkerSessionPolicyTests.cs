@@ -592,7 +592,17 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
     {
         string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
         string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
-        MidiRenderPlan initial = new(48_000, 480_000, []);
+        // Realtime playback is generated at the rate the output device actually runs at, which is
+        // not necessarily the requested rate (CoreAudio keeps its own clock).
+        BassMidiAudioWorkerProbeResult probe = BassMidiAudioWorkerSession.Probe(
+            workerPath,
+            nativeDirectory,
+            deviceId: null,
+            deviceBufferRequestMilliseconds: 50,
+            timeout: TimeSpan.FromSeconds(30),
+            allowManagedTestWorker);
+        int sampleRate = probe.ActualSampleRate;
+        MidiRenderPlan initial = new(sampleRate, checked(sampleRate * 10L), []);
         using BassMidiAudioWorkerSession session = new(
             initial,
             soundFontPath,
@@ -609,7 +619,10 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         long frontier = session.PauseHeldPreviewAtProducerFrontier(TimeSpan.FromSeconds(5));
         Assert.True(frontier > 0);
         Assert.Equal(AudioWorkerState.HeldPreviewPaused, session.Status.State);
-        MidiRenderPlan replacement = new(48_000, Math.Max(576_000, frontier + 48_000), []);
+        MidiRenderPlan replacement = new(
+            sampleRate,
+            Math.Max(checked(sampleRate * 12L), frontier + sampleRate),
+            []);
 
         session.ReplaceHeldPreviewFutureAndResume(
             replacement,
